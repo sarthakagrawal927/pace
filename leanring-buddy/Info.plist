@@ -23,7 +23,7 @@
 	<key>LocalPlannerModelIdentifier</key>
 	<string>qwen/qwen3-14b</string>
 	<key>EnableActions</key>
-	<string>false</string>
+	<string>true</string>
 	<key>AgentMaxSteps</key>
 	<string>8</string>
 	<key>PushToTalkShortcut</key>
