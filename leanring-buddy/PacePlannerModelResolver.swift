@@ -80,7 +80,21 @@ enum PacePlannerModelResolver {
         cachedResolvedIdentifier = resolvedIdentifier
         cachedResolvedIdentifierLock.unlock()
 
+        logModelSizeAdviceIfWarranted(forResolvedIdentifier: resolvedIdentifier)
+
         return resolvedIdentifier
+    }
+
+    /// If the resolved planner is in a too-large-for-voice size class,
+    /// print a one-line actionable tip so the user has a clear path to
+    /// the millisecond regime. Pace is positioned on speed; a 14B
+    /// model on prefill cannot physically be sub-second on any prompt
+    /// of interesting size — we've measured this. A 1.7B model can.
+    private static func logModelSizeAdviceIfWarranted(forResolvedIdentifier identifier: String) {
+        let approximateBillions = approximateParameterBillions(from: identifier)
+        guard approximateBillions >= 8 else { return }
+        let estimatedTTFTSeconds = max(2, Int(approximateBillions * 0.5))
+        print("⚡ Speed tip: '\(identifier)' is \(approximateBillions)B params — expect ~\(estimatedTTFTSeconds)s TTFT on typical prompts. For sub-second voice, download `qwen3-1.7b-instruct` (~1.5GB) in LM Studio. Pace's resolver will auto-pick it.")
     }
 
     // MARK: - HTTP
