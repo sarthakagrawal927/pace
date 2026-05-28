@@ -97,13 +97,34 @@ struct BlueCursorView: View {
         self.isFirstAppearance = isFirstAppearance
         self.companionManager = companionManager
 
-        // Seed the cursor position from the current mouse location so the
-        // buddy doesn't flash at (0,0) before onAppear fires.
-        let mouseLocation = NSEvent.mouseLocation
-        let localX = mouseLocation.x - screenFrame.origin.x
-        let localY = screenFrame.height - (mouseLocation.y - screenFrame.origin.y)
-        _cursorPosition = State(initialValue: CGPoint(x: localX + 35, y: localY + 25))
-        _isCursorOnThisScreen = State(initialValue: screenFrame.contains(mouseLocation))
+        // Seed the cursor position from the avatar's current anchor so the
+        // buddy doesn't flash at (0,0) before onAppear fires. If the avatar
+        // isn't showing yet, park off-screen and let onAppear reposition.
+        if let avatarScreenPoint = companionManager.avatarOverlayManager?.currentAvatarAnchorPoint() {
+            let parkInLocalCoords = Self.parkCoordinatesForAvatarScreenPoint(
+                avatarScreenPoint,
+                onScreenWithFrame: screenFrame
+            )
+            _cursorPosition = State(initialValue: parkInLocalCoords)
+            _isCursorOnThisScreen = State(initialValue: screenFrame.contains(avatarScreenPoint))
+        } else {
+            _cursorPosition = State(initialValue: CGPoint(x: -200, y: -200))
+            _isCursorOnThisScreen = State(initialValue: false)
+        }
+    }
+
+    /// Computes the SwiftUI-local coordinate where the cursor should park
+    /// given the avatar's anchor point in global AppKit (screen) coords.
+    /// Static so the init can call it before `self` is fully formed.
+    private static func parkCoordinatesForAvatarScreenPoint(
+        _ avatarScreenPoint: CGPoint,
+        onScreenWithFrame screenFrame: CGRect
+    ) -> CGPoint {
+        let localX = avatarScreenPoint.x - screenFrame.origin.x
+        let localY = screenFrame.height - (avatarScreenPoint.y - screenFrame.origin.y)
+        // Offset so the cursor sits visibly above-and-right of the avatar's
+        // head, not overlapping the character body.
+        return CGPoint(x: localX + 20, y: localY - 16)
     }
     @State private var timer: Timer?
     @State private var welcomeText: String = ""
@@ -265,7 +286,7 @@ struct BlueCursorView: View {
                 .shadow(color: DS.Colors.overlayCursorBlue.opacity(0.85), radius: 8 + (buddyFlightScale - 1.0) * 20, x: 0, y: 0)
                 .shadow(color: Color.black.opacity(0.25), radius: 2, x: 0, y: 1)
                 .scaleEffect(buddyFlightScale)
-                .opacity(buddyIsVisibleOnThisScreen && (companionManager.voiceState == .idle || companionManager.voiceState == .responding) ? cursorOpacity : 0)
+                .opacity(arrowShouldBeVisible ? cursorOpacity : 0)
                 .position(cursorPosition)
                 .animation(
                     buddyNavigationMode == .followingCursor
@@ -297,12 +318,16 @@ struct BlueCursorView: View {
         .frame(width: screenFrame.width, height: screenFrame.height)
         .ignoresSafeArea()
         .onAppear {
-            // Set initial cursor position immediately before starting animation
-            let mouseLocation = NSEvent.mouseLocation
-            isCursorOnThisScreen = screenFrame.contains(mouseLocation)
-
-            let swiftUIPosition = convertScreenPointToSwiftUICoordinates(mouseLocation)
-            self.cursorPosition = CGPoint(x: swiftUIPosition.x + 35, y: swiftUIPosition.y + 25)
+            // Snap to the avatar's current position immediately, then keep
+            // tracking. The cursor stays parked next to the walking character;
+            // it no longer follows the user's mouse.
+            if let avatarScreenPoint = companionManager.avatarOverlayManager?.currentAvatarAnchorPoint() {
+                isCursorOnThisScreen = screenFrame.contains(avatarScreenPoint)
+                self.cursorPosition = Self.parkCoordinatesForAvatarScreenPoint(
+                    avatarScreenPoint,
+                    onScreenWithFrame: screenFrame
+                )
+            }
 
             startTrackingCursor()
 
@@ -364,37 +389,42 @@ struct BlueCursorView: View {
 
     // MARK: - Cursor Tracking
 
+    /// Whether the arrow cursor should be rendered right now. Hidden when
+    /// nothing's happening (no voice activity, no flight) so it doesn't
+    /// hover idly next to the avatar. Visible during AI response playback
+    /// or any flight/pointing state — i.e., only when the user expects to
+    /// see the cursor doing something.
+    private var arrowShouldBeVisible: Bool {
+        guard buddyIsVisibleOnThisScreen else { return false }
+        if buddyNavigationMode != .followingCursor { return true }
+        return companionManager.voiceState == .responding
+    }
+
     private func startTrackingCursor() {
-        timer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { _ in
-            let mouseLocation = NSEvent.mouseLocation
-            self.isCursorOnThisScreen = self.screenFrame.contains(mouseLocation)
-
-            // During forward flight or pointing, the buddy is NOT interrupted by
-            // mouse movement — it completes its full animation and return flight.
-            // Only during the RETURN flight do we allow cursor movement to cancel
-            // (so the buddy snaps to following if the user moves while it's flying back).
-            if self.buddyNavigationMode == .navigatingToTarget && self.isReturningToCursor {
-                let currentMouseInSwiftUI = self.convertScreenPointToSwiftUICoordinates(mouseLocation)
-                let distanceFromNavigationStart = hypot(
-                    currentMouseInSwiftUI.x - self.cursorPositionWhenNavigationStarted.x,
-                    currentMouseInSwiftUI.y - self.cursorPositionWhenNavigationStarted.y
-                )
-                if distanceFromNavigationStart > 100 {
-                    cancelNavigationAndResumeFollowing()
-                }
-                return
-            }
-
-            // During forward navigation or pointing, just skip cursor tracking
+        // Poll the avatar's position 30× per second. The cursor is anchored
+        // to the walking avatar (which strolls along the bottom of the
+        // screen), so as the avatar moves the cursor moves with it. Mouse
+        // position is no longer consulted — the user's pointer can wander
+        // anywhere without disturbing pace.
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { _ in
+            // During any active flight or pointing, the bezier animator owns
+            // the cursor position frame-by-frame. Don't fight it.
             if self.buddyNavigationMode != .followingCursor {
                 return
             }
 
-            // Normal cursor following
-            let swiftUIPosition = self.convertScreenPointToSwiftUICoordinates(mouseLocation)
-            let buddyX = swiftUIPosition.x + 35
-            let buddyY = swiftUIPosition.y + 25
-            self.cursorPosition = CGPoint(x: buddyX, y: buddyY)
+            guard let avatarScreenPoint = self.companionManager.avatarOverlayManager?.currentAvatarAnchorPoint() else {
+                // Avatar isn't visible right now (e.g. user disabled it).
+                // Leave the cursor where it was — opacity is already gated
+                // by voice state so it won't be visible anyway at rest.
+                return
+            }
+
+            self.isCursorOnThisScreen = self.screenFrame.contains(avatarScreenPoint)
+            self.cursorPosition = Self.parkCoordinatesForAvatarScreenPoint(
+                avatarScreenPoint,
+                onScreenWithFrame: self.screenFrame
+            )
         }
     }
 
@@ -429,10 +459,11 @@ struct BlueCursorView: View {
             y: max(20, min(offsetTarget.y, screenFrame.height - 20))
         )
 
-        // Record the current cursor position so we can detect if the user
-        // moves the mouse enough to cancel the return flight
-        let mouseLocation = NSEvent.mouseLocation
-        cursorPositionWhenNavigationStarted = convertScreenPointToSwiftUICoordinates(mouseLocation)
+        // Record the buddy's launch position. With avatar-following, the
+        // return flight always targets the (possibly walked-elsewhere)
+        // avatar at the time of return, so this is informational rather
+        // than load-bearing for cancel logic.
+        cursorPositionWhenNavigationStarted = cursorPosition
 
         // Enter navigation mode — stop cursor following
         buddyNavigationMode = .navigatingToTarget
@@ -587,18 +618,28 @@ struct BlueCursorView: View {
         }
     }
 
-    /// Flies the buddy back to the current cursor position after pointing is done.
+    /// Flies the buddy back to the avatar's current position after
+    /// pointing is done. The cursor's home base is the walking avatar,
+    /// not the user's mouse.
     private func startFlyingBackToCursor() {
-        let mouseLocation = NSEvent.mouseLocation
-        let cursorInSwiftUI = convertScreenPointToSwiftUICoordinates(mouseLocation)
-        let cursorWithTrackingOffset = CGPoint(x: cursorInSwiftUI.x + 35, y: cursorInSwiftUI.y + 25)
+        let returnDestination: CGPoint = {
+            if let avatarScreenPoint = companionManager.avatarOverlayManager?.currentAvatarAnchorPoint() {
+                return Self.parkCoordinatesForAvatarScreenPoint(
+                    avatarScreenPoint,
+                    onScreenWithFrame: screenFrame
+                )
+            }
+            // Avatar not visible — return to wherever the cursor currently
+            // sits rather than flying off to (0,0).
+            return cursorPosition
+        }()
 
-        cursorPositionWhenNavigationStarted = cursorInSwiftUI
+        cursorPositionWhenNavigationStarted = returnDestination
 
         buddyNavigationMode = .navigatingToTarget
         isReturningToCursor = true
 
-        animateBezierFlightArc(to: cursorWithTrackingOffset) {
+        animateBezierFlightArc(to: returnDestination) {
             self.finishNavigationAndResumeFollowing()
         }
     }
