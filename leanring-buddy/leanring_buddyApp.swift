@@ -102,6 +102,9 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         }
         avatarOverlayManager.hide()
         companionManager.stop()
+        // Stop the keepalive heartbeat so it doesn't race with the
+        // unload below and immediately re-trigger a load.
+        PaceLMStudioModelLoader.stopKeepaliveLoop()
         // Free the planner + VLM weights so Pace doesn't leave 5-20 GB
         // of model RAM resident after the user quits. Synchronous via
         // `lms` CLI; ~100-300ms on the way out.

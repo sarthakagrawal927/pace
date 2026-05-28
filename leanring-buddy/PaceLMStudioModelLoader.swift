@@ -33,14 +33,29 @@ enum PaceLMStudioModelLoader {
     private static let lmStudioBaseURL = URL(string: "http://localhost:1234")!
     private static let warmupTimeoutSeconds: TimeInterval = 120
 
+    /// How often the keepalive pings each configured model. LM Studio's
+    /// idle-auto-unload defaults vary by version and user setting; 60s
+    /// is short enough to beat any default we've seen and infrequent
+    /// enough to add ~zero perceptible CPU/GPU load. Each ping is a
+    /// `max_tokens: 1` chat completion that costs the model less than
+    /// a real turn's prefill.
+    private static let keepaliveIntervalSeconds: TimeInterval = 60
+
+    /// The running keepalive task. Cancelled on app quit (after the
+    /// shutdown unload completes). One task drives pings for every
+    /// configured model.
+    private static var keepaliveTask: Task<Void, Never>?
+
     // MARK: - Launch: load + warm models
 
     /// Kick off warmup for the configured planner (and VLM, if
     /// enabled). Fire-and-forget — returns immediately so the rest of
     /// app launch isn't blocked. Each model warmup runs concurrently.
+    /// After warmup finishes, starts the periodic keepalive heartbeat.
     static func warmUpConfiguredModelsAsync() {
         Task.detached(priority: .userInitiated) {
             await warmUpConfiguredModels()
+            await startKeepaliveLoopIfNotRunning()
         }
     }
 
@@ -166,6 +181,83 @@ enum PaceLMStudioModelLoader {
             let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
             print("⚠️  LM Studio warmup (\(role)/\(modelIdentifier)) failed after \(elapsedMs)ms: \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - Keepalive: prevent idle auto-unload
+
+    /// Start a recurring background task that pings each configured
+    /// model every `keepaliveIntervalSeconds`. The ping is a
+    /// `max_tokens: 1` chat completion — minimal real cost, but enough
+    /// activity that LM Studio's idle-unload timer never fires. Without
+    /// this, eval runs showed the model state degrading turn-over-turn
+    /// because LM Studio was partial-unloading between calls.
+    @MainActor
+    static func startKeepaliveLoopIfNotRunning() {
+        guard keepaliveTask == nil else { return }
+        keepaliveTask = Task.detached(priority: .background) {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(keepaliveIntervalSeconds * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                await sendKeepalivePings()
+            }
+        }
+        print("💓 LM Studio keepalive: pings every \(Int(keepaliveIntervalSeconds))s")
+    }
+
+    @MainActor
+    static func stopKeepaliveLoop() {
+        keepaliveTask?.cancel()
+        keepaliveTask = nil
+    }
+
+    /// Issue one keepalive ping per configured model, in parallel.
+    /// Failures are silent — the model is either temporarily busy or
+    /// has been unloaded by another agent; either way the next ping
+    /// will catch it.
+    private static func sendKeepalivePings() async {
+        let plannerIdentifier = PacePlannerModelResolver.resolvedIdentifier
+            ?? AppBundleConfiguration.stringValue(forKey: "LocalPlannerModelIdentifier")
+            ?? "qwen3-4b-instruct"
+        let useLocalVLM = AppBundleConfiguration
+            .stringValue(forKey: "UseLocalVLMForScreenContext")?
+            .lowercased() == "true"
+        let vlmIdentifier = AppBundleConfiguration
+            .stringValue(forKey: "LocalVLMModelIdentifier")
+            ?? "ui-venus-1.5-2b"
+
+        async let plannerPing: Void = sendSingleKeepalivePing(modelIdentifier: plannerIdentifier)
+        async let vlmPing: Void = {
+            guard useLocalVLM else { return }
+            await sendSingleKeepalivePing(modelIdentifier: vlmIdentifier)
+        }()
+        _ = await (plannerPing, vlmPing)
+    }
+
+    private static func sendSingleKeepalivePing(modelIdentifier: String) async {
+        var request = URLRequest(url: lmStudioBaseURL.appendingPathComponent("v1/chat/completions"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer lm-studio", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 10
+
+        let requestBody: [String: Any] = [
+            "model": modelIdentifier,
+            "messages": [["role": "user", "content": "."]],
+            "max_tokens": 1,
+            "temperature": 0,
+            "stream": false
+        ]
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        } catch {
+            return
+        }
+
+        let keepaliveSession = URLSession(configuration: warmupURLSessionConfiguration())
+        defer { keepaliveSession.invalidateAndCancel() }
+        _ = try? await keepaliveSession.data(for: request)
+        // Intentionally don't log per-ping — at 1/min for two models
+        // that's 2,880 lines a day of console spam for normal idle.
     }
 
     // MARK: - Quit: unload models
