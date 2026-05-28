@@ -14,9 +14,11 @@
 #
 # Usage
 # -----
-#   ./scripts/eval-pace.sh                  # run every fixture
-#   ./scripts/eval-pace.sh qa-no-screen     # run a single fixture by name
-#   ./scripts/eval-pace.sh --no-latency     # only correctness checks
+#   ./scripts/eval-pace.sh                       # run every fixture
+#   ./scripts/eval-pace.sh qa-no-screen          # one fixture by name
+#   ./scripts/eval-pace.sh --no-latency          # correctness only
+#   ./scripts/eval-pace.sh --model qwen/qwen3-30b-a3b
+#                                                # A/B against a different model
 #
 # Exits non-zero if any fixture fails.
 
@@ -35,9 +37,17 @@ fi
 
 ENFORCE_LATENCY_CHECKS=true
 SINGLE_FIXTURE_NAME=""
+MODEL_OVERRIDE=""
+PARSE_NEXT_AS_MODEL=false
 for argument in "$@"; do
+    if [[ "$PARSE_NEXT_AS_MODEL" == "true" ]]; then
+        MODEL_OVERRIDE="$argument"
+        PARSE_NEXT_AS_MODEL=false
+        continue
+    fi
     case "$argument" in
         --no-latency) ENFORCE_LATENCY_CHECKS=false ;;
+        --model) PARSE_NEXT_AS_MODEL=true ;;
         --help|-h)
             sed -n '2,22p' "$0"
             exit 0
@@ -57,6 +67,13 @@ PLANNER_BASE_URL=$(read_plist_string "LocalPlannerBaseURL")
 [[ -z "$PLANNER_BASE_URL" ]] && PLANNER_BASE_URL="http://localhost:1234/v1"
 PLANNER_MODEL_IDENTIFIER=$(read_plist_string "LocalPlannerModelIdentifier")
 [[ -z "$PLANNER_MODEL_IDENTIFIER" ]] && PLANNER_MODEL_IDENTIFIER="qwen/qwen3-14b"
+
+# `--model <id>` overrides the Info.plist value for this run only.
+# Use it to A/B test a different model loaded in LM Studio without
+# editing Info.plist + rebuilding the app.
+if [[ -n "$MODEL_OVERRIDE" ]]; then
+    PLANNER_MODEL_IDENTIFIER="$MODEL_OVERRIDE"
+fi
 
 CHAT_COMPLETIONS_URL="${PLANNER_BASE_URL%/}/chat/completions"
 
