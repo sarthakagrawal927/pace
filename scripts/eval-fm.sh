@@ -208,11 +208,16 @@ run_one_fixture() {
     fixture_name=$(basename "$fixture_path" .txt)
 
     # Parse fixture: USER: line is the transcript, ELEMENT: lines
-    # are appended (without prefix) to the element map.
+    # are appended (without prefix) to the element map. EXPECT_*
+    # lines are scoring metadata and ignored by this script — the
+    # Python harness in scripts/eval-planners.py reads them directly.
+    # `|| true` is intentional: fixtures with no ELEMENT lines (e.g.
+    # empty-screen-refuse) make grep return 1, which under `set -e
+    # -o pipefail` would silently abort the whole loop.
     local transcript
-    transcript=$(grep -m1 '^USER: ' "$fixture_path" | sed 's/^USER: //')
+    transcript=$({ grep -m1 '^USER: ' "$fixture_path" || true; } | sed 's/^USER: //')
     local element_map
-    element_map=$(grep '^ELEMENT: ' "$fixture_path" | sed 's/^ELEMENT: //')
+    element_map=$({ grep '^ELEMENT: ' "$fixture_path" || true; } | sed 's/^ELEMENT: //')
 
     if [[ -z "$transcript" ]]; then
         echo "⚠️  Fixture $fixture_name has no USER: line — skipping"
