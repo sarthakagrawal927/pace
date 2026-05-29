@@ -81,4 +81,41 @@ struct LocalVLMScreenAnalysisDecoderTests {
             _ = try JSONDecoder().decode(LocalVLMScreenAnalysis.self, from: noElementsJSON)
         }
     }
+
+    // MARK: - Role sanitization
+    //
+    // ui-venus emits pipe-separated multi-role strings for composite
+    // elements ("window|text_area|image"). The element list later gets
+    // formatted as `[N] role|x,y|label|text` for the planner — leaving
+    // pipes in the role corrupts that line. Collapse to first token.
+
+    @Test func singleRoleIsUnchanged() throws {
+        #expect(LocalVLMScreenElement.sanitizeRoleValue("button") == "button")
+        #expect(LocalVLMScreenElement.sanitizeRoleValue("text_field") == "text_field")
+    }
+
+    @Test func pipeSeparatedRoleCollapsesToFirstToken() throws {
+        #expect(LocalVLMScreenElement.sanitizeRoleValue("window|text_area|image") == "window")
+        #expect(LocalVLMScreenElement.sanitizeRoleValue("button|link") == "button")
+    }
+
+    @Test func roleWithLeadingPipeFallsThroughToFirstNonEmpty() throws {
+        // Defensive — VLM probably won't do this but the function shouldn't crash.
+        #expect(LocalVLMScreenElement.sanitizeRoleValue("|button|link") == "button")
+    }
+
+    @Test func decodingElementWithPipeRoleSanitizesIt() throws {
+        let elementWithPipeRoleJSON = """
+        {
+          "elements": [
+            {"label": "Xcode window", "role": "window|text_area|image", "bbox": [107, 39, 865, 942]}
+          ],
+          "description": ""
+        }
+        """.data(using: .utf8)!
+
+        let analysis = try JSONDecoder().decode(LocalVLMScreenAnalysis.self, from: elementWithPipeRoleJSON)
+
+        #expect(analysis.elements.first?.role == "window", "pipe-roles must be collapsed at decode time")
+    }
 }

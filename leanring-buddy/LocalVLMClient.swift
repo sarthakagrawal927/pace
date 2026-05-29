@@ -26,12 +26,50 @@ struct LocalVLMScreenElement: Codable, Hashable {
     let label: String
     /// Role taxonomy borrowed from the macOS accessibility tree:
     /// "button", "text_field", "static_text", "link", "image", etc.
+    ///
+    /// Why this is sanitized at decode time: ui-venus-1.5-2b sometimes
+    /// emits multi-role values like `"window|text_area|image"` for
+    /// composite elements. CompanionManager later formats element lines
+    /// as `[N] role|x,y|label|text` for the planner — an unsanitized
+    /// pipe-role would split that line incorrectly. We collapse to the
+    /// first non-empty token so the role stays a single taxonomy value.
     let role: String
     /// `[x, y, width, height]` of the element's bounding box, in pixels
     /// from the top-left of the screenshot.
     let bbox: [Int]
     /// Verbatim text content if the element contains readable text.
     let text: String?
+
+    init(label: String, role: String, bbox: [Int], text: String?) {
+        self.label = label
+        self.role = role
+        self.bbox = bbox
+        self.text = text
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.label = try container.decode(String.self, forKey: .label)
+        let rawRole = try container.decode(String.self, forKey: .role)
+        self.role = LocalVLMScreenElement.sanitizeRoleValue(rawRole)
+        self.bbox = try container.decode([Int].self, forKey: .bbox)
+        self.text = try container.decodeIfPresent(String.self, forKey: .text)
+    }
+
+    /// Returns the first non-empty pipe-separated token, trimmed.
+    /// `"window|text_area|image"` → `"window"`. Single roles pass
+    /// through unchanged.
+    static func sanitizeRoleValue(_ raw: String) -> String {
+        let firstToken = raw
+            .split(separator: "|", omittingEmptySubsequences: true)
+            .first
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        return firstToken?.isEmpty == false ? firstToken! : raw.trimmingCharacters(in: .whitespaces)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case label, role, bbox, text
+    }
 }
 
 struct LocalVLMScreenAnalysis: Codable {
