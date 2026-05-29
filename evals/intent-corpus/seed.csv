@@ -1,0 +1,201 @@
+transcript,intent
+what app is this,screenDescription
+explain what's shown,screenDescription
+what does mitochondria actually do,pureKnowledge
+what is the kernel,pureKnowledge
+type lorem ipsum,screenAction
+got it,chitchat
+focus settings,screenAction
+launch the file menu,screenAction
+tap preferences,screenAction
+click the first tab,screenAction
+nice work,chitchat
+really see you,chitchat
+you're awesome,chitchat
+talk later,chitchat
+focus the second tab,screenAction
+what's up,chitchat
+okay how are you,chitchat
+what's the deal with machine learning,pureKnowledge
+what can you see right now,screenDescription
+alright what's in front of me,screenDescription
+hey what can you see right now,screenDescription
+well nice work,chitchat
+well sounds good,chitchat
+uh what app is this,screenDescription
+uh explain what's shown,screenDescription
+nice,chitchat
+really how's it going,chitchat
+okay appreciate it,chitchat
+tell me about the law of demeter,pureKnowledge
+alright what's on the screen,screenDescription
+how does react work,pureKnowledge
+what is regex,pureKnowledge
+what does this say,screenDescription
+thank you,chitchat
+how's it going,chitchat
+later pace,chitchat
+type thanks,screenAction
+what does the silk road actually do,pureKnowledge
+in plain english what is photosynthesis,pureKnowledge
+explain git,pureKnowledge
+remind me what javascript means,pureKnowledge
+give me a quick intro to the gulf stream,pureKnowledge
+tap the save button,screenAction
+catch you later,chitchat
+hey what's on the screen,screenDescription
+thanks a lot,chitchat
+launch the save button,screenAction
+how does the federal reserve work,pureKnowledge
+in plain english what is react,pureKnowledge
+hi there,chitchat
+uh describe my current view,screenDescription
+hey there,chitchat
+toggle preferences,screenAction
+explain the federal reserve,pureKnowledge
+okay nice work,chitchat
+really you're great,chitchat
+explain the gulf stream,pureKnowledge
+alright what's this window about,screenDescription
+alright tell me what's open,screenDescription
+click the menu icon,screenAction
+uh what's this window about,screenDescription
+type pizza,screenAction
+what is currying,pureKnowledge
+hey what does this show,screenDescription
+really hi pace,chitchat
+what's this all about,screenDescription
+explain kubernetes,pureKnowledge
+alright lay out what's on the screen,screenDescription
+uh what's this all about,screenDescription
+press cmd c to copy,screenAction
+well how's it going,chitchat
+tap the inbox,screenAction
+in plain english what is neural networks,pureKnowledge
+tap the search bar,screenAction
+ok what's visible on this screen,screenDescription
+give me the gist of this,screenDescription
+see you,chitchat
+can you describe sourdough,pureKnowledge
+choose the menu icon,screenAction
+well okay cool,chitchat
+uh what's visible on this screen,screenDescription
+give me a quick intro to the heap,pureKnowledge
+well catch you later,chitchat
+how does async await work,pureKnowledge
+hey tell me what's open,screenDescription
+type yes please,screenAction
+ok scan the screen and tell me,screenDescription
+can you describe compound interest,pureKnowledge
+explain css,pureKnowledge
+hey what's this window about,screenDescription
+alright what can you see right now,screenDescription
+select the inbox,screenAction
+hit the save button,screenAction
+ok what can you see right now,screenDescription
+well see you,chitchat
+how does json work,pureKnowledge
+alright,chitchat
+uh what's happening on screen,screenDescription
+how are you,chitchat
+alright describe what i'm looking at,screenDescription
+sounds good,chitchat
+explain https,pureKnowledge
+what's the deal with the law of demeter,pureKnowledge
+can you describe the stack,pureKnowledge
+what does css actually do,pureKnowledge
+hey scan the screen and tell me,screenDescription
+open the send button,screenAction
+remind me what udp means,pureKnowledge
+hit the send button,screenAction
+scroll to the top,screenAction
+what's the deal with udp,pureKnowledge
+ok what does this show,screenDescription
+in plain english what is general relativity,pureKnowledge
+okay good morning,chitchat
+scroll up,screenAction
+how does javascript work,pureKnowledge
+alright what page am i on,screenDescription
+good morning,chitchat
+ok what page am i on,screenDescription
+describe my current view,screenDescription
+good evening,chitchat
+what's the deal with the silk road,pureKnowledge
+launch the search bar,screenAction
+press return,screenAction
+page up,screenAction
+uh describe what i'm looking at,screenDescription
+give me a quick intro to git,pureKnowledge
+focus the file menu,screenAction
+really good evening,chitchat
+tell me about world war two,pureKnowledge
+type my email address,screenAction
+select all with cmd a,screenAction
+toggle the search bar,screenAction
+well you're great,chitchat
+uh summarise this page,screenDescription
+press settings,screenAction
+hit preferences,screenAction
+remind me what the kernel means,pureKnowledge
+okay see you,chitchat
+can you describe currying,pureKnowledge
+describe this,screenDescription
+how does embeddings work,pureKnowledge
+save with the keyboard shortcut,screenAction
+press cmd v to paste,screenAction
+what's the deal with regex,pureKnowledge
+alright scan the screen and tell me,screenDescription
+select the menu icon,screenAction
+in plain english what is the silk road,pureKnowledge
+can you describe css,pureKnowledge
+perfect,chitchat
+appreciate it,chitchat
+focus the search bar,screenAction
+select the send button,screenAction
+uh what's on the screen,screenDescription
+explain the kernel,pureKnowledge
+open that field,screenAction
+tap the file menu,screenAction
+focus the menu icon,screenAction
+how does tcp work,pureKnowledge
+you're great,chitchat
+okay how's it going,chitchat
+ok describe what i'm looking at,screenDescription
+what does https actually do,pureKnowledge
+what is newton's laws,pureKnowledge
+how does machine learning work,pureKnowledge
+uh what's on display,screenDescription
+hey what's this all about,screenDescription
+hey what app is this,screenDescription
+hey what does this say,screenDescription
+can you describe world war two,pureKnowledge
+ok what's on the screen,screenDescription
+well good evening,chitchat
+really nice,chitchat
+really how are you,chitchat
+type this is a test,screenAction
+hey lay out what's on the screen,screenDescription
+explain transformers,pureKnowledge
+okay perfect,chitchat
+can you describe transformers,pureKnowledge
+select this link,screenAction
+type hello world,screenAction
+hey summarise this page,screenDescription
+well appreciate it,chitchat
+okay cool,chitchat
+press this link,screenAction
+scroll down a bit,screenAction
+uh scan the screen and tell me,screenDescription
+thanks,chitchat
+okay sounds good,chitchat
+scroll to the bottom,screenAction
+choose preferences,screenAction
+ok summarise this page,screenDescription
+hey describe this,screenDescription
+bye for now,chitchat
+explain the silk road,pureKnowledge
+focus this link,screenAction
+select the search bar,screenAction
+hey what's visible on this screen,screenDescription
+click that field,screenAction
+hi pace,chitchat

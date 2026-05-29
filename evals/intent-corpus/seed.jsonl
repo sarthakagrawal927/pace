@@ -1,0 +1,200 @@
+{"transcript": "what app is this", "intent": "screenDescription"}
+{"transcript": "explain what's shown", "intent": "screenDescription"}
+{"transcript": "what does mitochondria actually do", "intent": "pureKnowledge"}
+{"transcript": "what is the kernel", "intent": "pureKnowledge"}
+{"transcript": "type lorem ipsum", "intent": "screenAction"}
+{"transcript": "got it", "intent": "chitchat"}
+{"transcript": "focus settings", "intent": "screenAction"}
+{"transcript": "launch the file menu", "intent": "screenAction"}
+{"transcript": "tap preferences", "intent": "screenAction"}
+{"transcript": "click the first tab", "intent": "screenAction"}
+{"transcript": "nice work", "intent": "chitchat"}
+{"transcript": "really see you", "intent": "chitchat"}
+{"transcript": "you're awesome", "intent": "chitchat"}
+{"transcript": "talk later", "intent": "chitchat"}
+{"transcript": "focus the second tab", "intent": "screenAction"}
+{"transcript": "what's up", "intent": "chitchat"}
+{"transcript": "okay how are you", "intent": "chitchat"}
+{"transcript": "what's the deal with machine learning", "intent": "pureKnowledge"}
+{"transcript": "what can you see right now", "intent": "screenDescription"}
+{"transcript": "alright what's in front of me", "intent": "screenDescription"}
+{"transcript": "hey what can you see right now", "intent": "screenDescription"}
+{"transcript": "well nice work", "intent": "chitchat"}
+{"transcript": "well sounds good", "intent": "chitchat"}
+{"transcript": "uh what app is this", "intent": "screenDescription"}
+{"transcript": "uh explain what's shown", "intent": "screenDescription"}
+{"transcript": "nice", "intent": "chitchat"}
+{"transcript": "really how's it going", "intent": "chitchat"}
+{"transcript": "okay appreciate it", "intent": "chitchat"}
+{"transcript": "tell me about the law of demeter", "intent": "pureKnowledge"}
+{"transcript": "alright what's on the screen", "intent": "screenDescription"}
+{"transcript": "how does react work", "intent": "pureKnowledge"}
+{"transcript": "what is regex", "intent": "pureKnowledge"}
+{"transcript": "what does this say", "intent": "screenDescription"}
+{"transcript": "thank you", "intent": "chitchat"}
+{"transcript": "how's it going", "intent": "chitchat"}
+{"transcript": "later pace", "intent": "chitchat"}
+{"transcript": "type thanks", "intent": "screenAction"}
+{"transcript": "what does the silk road actually do", "intent": "pureKnowledge"}
+{"transcript": "in plain english what is photosynthesis", "intent": "pureKnowledge"}
+{"transcript": "explain git", "intent": "pureKnowledge"}
+{"transcript": "remind me what javascript means", "intent": "pureKnowledge"}
+{"transcript": "give me a quick intro to the gulf stream", "intent": "pureKnowledge"}
+{"transcript": "tap the save button", "intent": "screenAction"}
+{"transcript": "catch you later", "intent": "chitchat"}
+{"transcript": "hey what's on the screen", "intent": "screenDescription"}
+{"transcript": "thanks a lot", "intent": "chitchat"}
+{"transcript": "launch the save button", "intent": "screenAction"}
+{"transcript": "how does the federal reserve work", "intent": "pureKnowledge"}
+{"transcript": "in plain english what is react", "intent": "pureKnowledge"}
+{"transcript": "hi there", "intent": "chitchat"}
+{"transcript": "uh describe my current view", "intent": "screenDescription"}
+{"transcript": "hey there", "intent": "chitchat"}
+{"transcript": "toggle preferences", "intent": "screenAction"}
+{"transcript": "explain the federal reserve", "intent": "pureKnowledge"}
+{"transcript": "okay nice work", "intent": "chitchat"}
+{"transcript": "really you're great", "intent": "chitchat"}
+{"transcript": "explain the gulf stream", "intent": "pureKnowledge"}
+{"transcript": "alright what's this window about", "intent": "screenDescription"}
+{"transcript": "alright tell me what's open", "intent": "screenDescription"}
+{"transcript": "click the menu icon", "intent": "screenAction"}
+{"transcript": "uh what's this window about", "intent": "screenDescription"}
+{"transcript": "type pizza", "intent": "screenAction"}
+{"transcript": "what is currying", "intent": "pureKnowledge"}
+{"transcript": "hey what does this show", "intent": "screenDescription"}
+{"transcript": "really hi pace", "intent": "chitchat"}
+{"transcript": "what's this all about", "intent": "screenDescription"}
+{"transcript": "explain kubernetes", "intent": "pureKnowledge"}
+{"transcript": "alright lay out what's on the screen", "intent": "screenDescription"}
+{"transcript": "uh what's this all about", "intent": "screenDescription"}
+{"transcript": "press cmd c to copy", "intent": "screenAction"}
+{"transcript": "well how's it going", "intent": "chitchat"}
+{"transcript": "tap the inbox", "intent": "screenAction"}
+{"transcript": "in plain english what is neural networks", "intent": "pureKnowledge"}
+{"transcript": "tap the search bar", "intent": "screenAction"}
+{"transcript": "ok what's visible on this screen", "intent": "screenDescription"}
+{"transcript": "give me the gist of this", "intent": "screenDescription"}
+{"transcript": "see you", "intent": "chitchat"}
+{"transcript": "can you describe sourdough", "intent": "pureKnowledge"}
+{"transcript": "choose the menu icon", "intent": "screenAction"}
+{"transcript": "well okay cool", "intent": "chitchat"}
+{"transcript": "uh what's visible on this screen", "intent": "screenDescription"}
+{"transcript": "give me a quick intro to the heap", "intent": "pureKnowledge"}
+{"transcript": "well catch you later", "intent": "chitchat"}
+{"transcript": "how does async await work", "intent": "pureKnowledge"}
+{"transcript": "hey tell me what's open", "intent": "screenDescription"}
+{"transcript": "type yes please", "intent": "screenAction"}
+{"transcript": "ok scan the screen and tell me", "intent": "screenDescription"}
+{"transcript": "can you describe compound interest", "intent": "pureKnowledge"}
+{"transcript": "explain css", "intent": "pureKnowledge"}
+{"transcript": "hey what's this window about", "intent": "screenDescription"}
+{"transcript": "alright what can you see right now", "intent": "screenDescription"}
+{"transcript": "select the inbox", "intent": "screenAction"}
+{"transcript": "hit the save button", "intent": "screenAction"}
+{"transcript": "ok what can you see right now", "intent": "screenDescription"}
+{"transcript": "well see you", "intent": "chitchat"}
+{"transcript": "how does json work", "intent": "pureKnowledge"}
+{"transcript": "alright", "intent": "chitchat"}
+{"transcript": "uh what's happening on screen", "intent": "screenDescription"}
+{"transcript": "how are you", "intent": "chitchat"}
+{"transcript": "alright describe what i'm looking at", "intent": "screenDescription"}
+{"transcript": "sounds good", "intent": "chitchat"}
+{"transcript": "explain https", "intent": "pureKnowledge"}
+{"transcript": "what's the deal with the law of demeter", "intent": "pureKnowledge"}
+{"transcript": "can you describe the stack", "intent": "pureKnowledge"}
+{"transcript": "what does css actually do", "intent": "pureKnowledge"}
+{"transcript": "hey scan the screen and tell me", "intent": "screenDescription"}
+{"transcript": "open the send button", "intent": "screenAction"}
+{"transcript": "remind me what udp means", "intent": "pureKnowledge"}
+{"transcript": "hit the send button", "intent": "screenAction"}
+{"transcript": "scroll to the top", "intent": "screenAction"}
+{"transcript": "what's the deal with udp", "intent": "pureKnowledge"}
+{"transcript": "ok what does this show", "intent": "screenDescription"}
+{"transcript": "in plain english what is general relativity", "intent": "pureKnowledge"}
+{"transcript": "okay good morning", "intent": "chitchat"}
+{"transcript": "scroll up", "intent": "screenAction"}
+{"transcript": "how does javascript work", "intent": "pureKnowledge"}
+{"transcript": "alright what page am i on", "intent": "screenDescription"}
+{"transcript": "good morning", "intent": "chitchat"}
+{"transcript": "ok what page am i on", "intent": "screenDescription"}
+{"transcript": "describe my current view", "intent": "screenDescription"}
+{"transcript": "good evening", "intent": "chitchat"}
+{"transcript": "what's the deal with the silk road", "intent": "pureKnowledge"}
+{"transcript": "launch the search bar", "intent": "screenAction"}
+{"transcript": "press return", "intent": "screenAction"}
+{"transcript": "page up", "intent": "screenAction"}
+{"transcript": "uh describe what i'm looking at", "intent": "screenDescription"}
+{"transcript": "give me a quick intro to git", "intent": "pureKnowledge"}
+{"transcript": "focus the file menu", "intent": "screenAction"}
+{"transcript": "really good evening", "intent": "chitchat"}
+{"transcript": "tell me about world war two", "intent": "pureKnowledge"}
+{"transcript": "type my email address", "intent": "screenAction"}
+{"transcript": "select all with cmd a", "intent": "screenAction"}
+{"transcript": "toggle the search bar", "intent": "screenAction"}
+{"transcript": "well you're great", "intent": "chitchat"}
+{"transcript": "uh summarise this page", "intent": "screenDescription"}
+{"transcript": "press settings", "intent": "screenAction"}
+{"transcript": "hit preferences", "intent": "screenAction"}
+{"transcript": "remind me what the kernel means", "intent": "pureKnowledge"}
+{"transcript": "okay see you", "intent": "chitchat"}
+{"transcript": "can you describe currying", "intent": "pureKnowledge"}
+{"transcript": "describe this", "intent": "screenDescription"}
+{"transcript": "how does embeddings work", "intent": "pureKnowledge"}
+{"transcript": "save with the keyboard shortcut", "intent": "screenAction"}
+{"transcript": "press cmd v to paste", "intent": "screenAction"}
+{"transcript": "what's the deal with regex", "intent": "pureKnowledge"}
+{"transcript": "alright scan the screen and tell me", "intent": "screenDescription"}
+{"transcript": "select the menu icon", "intent": "screenAction"}
+{"transcript": "in plain english what is the silk road", "intent": "pureKnowledge"}
+{"transcript": "can you describe css", "intent": "pureKnowledge"}
+{"transcript": "perfect", "intent": "chitchat"}
+{"transcript": "appreciate it", "intent": "chitchat"}
+{"transcript": "focus the search bar", "intent": "screenAction"}
+{"transcript": "select the send button", "intent": "screenAction"}
+{"transcript": "uh what's on the screen", "intent": "screenDescription"}
+{"transcript": "explain the kernel", "intent": "pureKnowledge"}
+{"transcript": "open that field", "intent": "screenAction"}
+{"transcript": "tap the file menu", "intent": "screenAction"}
+{"transcript": "focus the menu icon", "intent": "screenAction"}
+{"transcript": "how does tcp work", "intent": "pureKnowledge"}
+{"transcript": "you're great", "intent": "chitchat"}
+{"transcript": "okay how's it going", "intent": "chitchat"}
+{"transcript": "ok describe what i'm looking at", "intent": "screenDescription"}
+{"transcript": "what does https actually do", "intent": "pureKnowledge"}
+{"transcript": "what is newton's laws", "intent": "pureKnowledge"}
+{"transcript": "how does machine learning work", "intent": "pureKnowledge"}
+{"transcript": "uh what's on display", "intent": "screenDescription"}
+{"transcript": "hey what's this all about", "intent": "screenDescription"}
+{"transcript": "hey what app is this", "intent": "screenDescription"}
+{"transcript": "hey what does this say", "intent": "screenDescription"}
+{"transcript": "can you describe world war two", "intent": "pureKnowledge"}
+{"transcript": "ok what's on the screen", "intent": "screenDescription"}
+{"transcript": "well good evening", "intent": "chitchat"}
+{"transcript": "really nice", "intent": "chitchat"}
+{"transcript": "really how are you", "intent": "chitchat"}
+{"transcript": "type this is a test", "intent": "screenAction"}
+{"transcript": "hey lay out what's on the screen", "intent": "screenDescription"}
+{"transcript": "explain transformers", "intent": "pureKnowledge"}
+{"transcript": "okay perfect", "intent": "chitchat"}
+{"transcript": "can you describe transformers", "intent": "pureKnowledge"}
+{"transcript": "select this link", "intent": "screenAction"}
+{"transcript": "type hello world", "intent": "screenAction"}
+{"transcript": "hey summarise this page", "intent": "screenDescription"}
+{"transcript": "well appreciate it", "intent": "chitchat"}
+{"transcript": "okay cool", "intent": "chitchat"}
+{"transcript": "press this link", "intent": "screenAction"}
+{"transcript": "scroll down a bit", "intent": "screenAction"}
+{"transcript": "uh scan the screen and tell me", "intent": "screenDescription"}
+{"transcript": "thanks", "intent": "chitchat"}
+{"transcript": "okay sounds good", "intent": "chitchat"}
+{"transcript": "scroll to the bottom", "intent": "screenAction"}
+{"transcript": "choose preferences", "intent": "screenAction"}
+{"transcript": "ok summarise this page", "intent": "screenDescription"}
+{"transcript": "hey describe this", "intent": "screenDescription"}
+{"transcript": "bye for now", "intent": "chitchat"}
+{"transcript": "explain the silk road", "intent": "pureKnowledge"}
+{"transcript": "focus this link", "intent": "screenAction"}
+{"transcript": "select the search bar", "intent": "screenAction"}
+{"transcript": "hey what's visible on this screen", "intent": "screenDescription"}
+{"transcript": "click that field", "intent": "screenAction"}
+{"transcript": "hi pace", "intent": "chitchat"}
