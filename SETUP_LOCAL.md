@@ -11,9 +11,9 @@ For first-time setup, run the provisioning script — it installs LM Studio via 
 ./scripts/setup-local.sh status    # just print state of the world
 ```
 
-You still need to do **two manual steps** afterward:
-1. **Xcode → File → Add Package Dependencies → `https://github.com/argmaxinc/WhisperKit`** (one-time SPM dep for local STT).
-2. **Cmd+R in Xcode** to build and run. Do NOT use `xcodebuild` from the terminal — it invalidates TCC permissions per `AGENTS.md`.
+After the script finishes, just **Cmd+R in Xcode** to build and run. Do NOT use `xcodebuild` from the terminal — it invalidates TCC permissions per `AGENTS.md`. When the app prompts on first launch, grant Microphone, Accessibility, Screen Recording, and Speech Recognition.
+
+WhisperKit is an OPTIONAL alternative STT backend; Apple Speech is the default and needs no SPM dependency. Skip the WhisperKit section below unless you specifically want to swap.
 
 The detailed manual steps below explain what the script does and what to tweak.
 
@@ -32,7 +32,9 @@ The detailed manual steps below explain what the script does and what to tweak.
 | Cursor | **Codex-style arrow** — sharp pointer with linear gradient + highlight stroke. |
 | Walking avatar | **`PaceAvatarOverlay`** — small character that walks along the bottom of the cursor screen. Click to open the menu-bar panel. Toggleable. |
 
-## 1. Add the WhisperKit Swift Package
+## 1. (Optional) Add the WhisperKit Swift Package
+
+**Skip this section if you're using the default Apple Speech provider.** WhisperKit is only needed if you want CoreML/ANE Whisper instead of Apple's built-in SFSpeechRecognizer.
 
 Open the Xcode project, then:
 
@@ -40,8 +42,9 @@ Open the Xcode project, then:
 2. Paste: `https://github.com/argmaxinc/WhisperKit`
 3. Choose **Up to Next Major** from the latest tagged release.
 4. Add the `WhisperKit` library product to the **leanring-buddy** target.
+5. Set `VoiceTranscriptionProvider=whisperkit` in `leanring-buddy/Info.plist`.
 
-The provider source file is gated by `#if canImport(WhisperKit)`, so the build will succeed even if you skip this step — local STT just won't be available.
+The provider source file is gated by `#if canImport(WhisperKit)`, so the build will succeed even if you skip this step. Apple Speech remains active.
 
 ## 2. Install LM Studio and load both a VLM and a reasoner
 

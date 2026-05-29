@@ -3,10 +3,13 @@
 # setup-local.sh — Provisions LM Studio + the local models pace needs.
 #
 # Idempotent: safe to re-run. Skips work that's already done. The only
-# thing this script CAN'T do is add the WhisperKit Swift Package
-# dependency to the Xcode project (a Cmd-click in Xcode → Add Package
-# Dependencies), or build the app (per AGENTS.md you must Cmd+R in
-# Xcode, not run xcodebuild from a terminal).
+# thing this script CAN'T do is build the app (per AGENTS.md you must
+# Cmd+R in Xcode, not run xcodebuild from a terminal).
+#
+# WhisperKit is OPTIONAL — the default voice provider is Apple Speech
+# (on-device, zero setup). Only add the WhisperKit SPM package if you
+# specifically want to swap STT backends via VoiceTranscriptionProvider=
+# whisperkit in Info.plist.
 #
 # Usage:
 #   ./scripts/setup-local.sh          # full provision
@@ -213,10 +216,12 @@ case "${1:-provision}" in
         print_loaded_models_and_suggested_info_plist_values
         print_step "Next manual steps:"
         echo "    1. Open leanring-buddy.xcodeproj in Xcode"
-        echo "    2. File → Add Package Dependencies → https://github.com/argmaxinc/WhisperKit"
-        echo "       (only the *WhisperKit* product; add it to the leanring-buddy target)"
-        echo "    3. Cmd+R to build and run. DO NOT run xcodebuild from terminal — it invalidates TCC permissions."
-        echo "    4. When prompted, grant: Microphone, Accessibility, Screen Recording, Speech Recognition."
+        echo "    2. Cmd+R to build and run. DO NOT run xcodebuild from terminal — it invalidates TCC permissions."
+        echo "    3. When prompted, grant: Microphone, Accessibility, Screen Recording, Speech Recognition."
+        echo
+        echo "    Optional: to use WhisperKit STT instead of Apple Speech,"
+        echo "    File → Add Package Dependencies → https://github.com/argmaxinc/WhisperKit"
+        echo "    then set VoiceTranscriptionProvider=whisperkit in Info.plist."
         print_ok "Provisioning complete."
         ;;
     *)
