@@ -255,28 +255,11 @@ final class CompanionManager: ObservableObject {
     @Published var isPaceCursorEnabled: Bool = PaceUserPreferencesStore
         .bool(.isPaceCursorEnabled, default: true)
 
-    func setPaceCursorEnabled(_ enabled: Bool) {
-        isPaceCursorEnabled = enabled
-        PaceUserPreferencesStore.setBool(enabled, for: .isPaceCursorEnabled)
-        transientHideTask?.cancel()
-        transientHideTask = nil
-
-        if enabled {
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
-        } else {
-            overlayWindowManager.hideOverlay()
-            isOverlayVisible = false
-        }
-    }
-
     /// Pace skips the upstream first-run flow entirely — no welcome video,
     /// no email gate, no demo pointing animation. The cursor overlay shows
-    /// as soon as all permissions are granted. These constants exist only
-    /// so the panel UI's existing conditional branches stay simple.
+    /// as soon as all permissions are granted. This constant exists only
+    /// so the panel UI's existing conditional branch stays simple.
     let hasCompletedOnboarding: Bool = true
-    let hasSubmittedEmail: Bool = true
 
     /// Tap-to-talk entry point from the walking avatar. Folds into the
     /// same pipeline as a keyboard PTT press by simulating the shortcut
@@ -455,17 +438,6 @@ final class CompanionManager: ObservableObject {
     }
 
     // MARK: - Private
-
-    /// Triggers the system microphone prompt if the user has never been asked.
-    /// Once granted/denied the status sticks and polling picks it up.
-    private func promptForMicrophoneIfNotDetermined() {
-        guard AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined else { return }
-        AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-            Task { @MainActor [weak self] in
-                self?.hasMicrophonePermission = granted
-            }
-        }
-    }
 
     /// Polls all permissions frequently so the UI updates live after the
     /// user grants them in System Settings. Screen Recording is the exception —
