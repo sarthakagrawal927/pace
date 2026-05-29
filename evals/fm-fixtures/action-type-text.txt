@@ -1,0 +1,6 @@
+USER: type hello world
+ELEMENT: [0] text_field|240,140|message input|Type a message…
+ELEMENT: [1] button|548,40|send button|Send
+FREE_TEXT_MODE: true
+SPOKEN_MUST_MATCH_REGEX: \[TYPE:hello world\]
+SPOKEN_MUST_NOT_CONTAIN: ID

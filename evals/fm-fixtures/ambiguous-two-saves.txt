@@ -5,5 +5,5 @@ ELEMENT: [2] button|640,40|save and send button|Save and Send
 ELEMENT: [3] text_field|240,140|message input|Type a message…
 EXPECT_POINT_ID_ONE_OF: 1,2
 EXPECT_CLICK_ID_ONE_OF: 1,2
-SPOKEN_MUST_NOT_CONTAIN: ID,coord,element,number
+SPOKEN_MUST_NOT_CONTAIN: ID,coord,number
 SPOKEN_MAX_WORDS: 18

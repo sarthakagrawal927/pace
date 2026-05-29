@@ -1,0 +1,8 @@
+USER: click the search bar and type pizza
+ELEMENT: [0] text_field|412,40|search bar|Search…
+ELEMENT: [1] button|548,40|search button|Search
+ELEMENT: [2] static_text|240,140|results count|0 results
+FREE_TEXT_MODE: true
+SPOKEN_MUST_MATCH_REGEX: \[CLICK:412,40[^\]]*\]
+SPOKEN_MUST_MATCH_REGEX: \[TYPE:pizza\]
+SPOKEN_MUST_NOT_CONTAIN: ID

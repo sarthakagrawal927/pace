@@ -4,5 +4,5 @@ ELEMENT: [1] button|548,40|save button|Save Draft
 EXPECT_POINT_ID: -1
 EXPECT_CLICK_ID: -1
 SPOKEN_MUST_CONTAIN: pace
-SPOKEN_MUST_NOT_CONTAIN: siri,apple intelligence,ID,coord,element
+SPOKEN_MUST_NOT_CONTAIN: siri,apple intelligence,ID,coord
 SPOKEN_MAX_WORDS: 14

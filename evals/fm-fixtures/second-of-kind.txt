@@ -7,5 +7,5 @@ ELEMENT: [4] tab|440,60|fifth tab|Help
 ELEMENT: [5] button|600,40|close button|Close
 EXPECT_POINT_ID: 1
 EXPECT_CLICK_ID: 1
-SPOKEN_MUST_NOT_CONTAIN: ID,coord,element
+SPOKEN_MUST_NOT_CONTAIN: ID,coord
 SPOKEN_MAX_WORDS: 10

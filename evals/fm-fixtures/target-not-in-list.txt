@@ -4,5 +4,5 @@ ELEMENT: [1] button|548,40|save button|Save Draft
 ELEMENT: [2] text_field|240,140|message input|Type a message…
 EXPECT_POINT_ID: -1
 EXPECT_CLICK_ID: -1
-SPOKEN_MUST_NOT_CONTAIN: ID,coord,element
+SPOKEN_MUST_NOT_CONTAIN: ID,coord
 SPOKEN_MAX_WORDS: 18

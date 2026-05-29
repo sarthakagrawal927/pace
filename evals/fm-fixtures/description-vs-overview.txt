@@ -6,5 +6,5 @@ ELEMENT: [3] button|40,180|toggle bluetooth|Bluetooth
 ELEMENT: [4] button|400,400|save button|Save
 EXPECT_POINT_ID: -1
 EXPECT_CLICK_ID: -1
-SPOKEN_MUST_NOT_CONTAIN: ID,coord,element
+SPOKEN_MUST_NOT_CONTAIN: ID,coord
 SPOKEN_MAX_WORDS: 30

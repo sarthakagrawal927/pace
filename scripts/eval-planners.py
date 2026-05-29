@@ -97,7 +97,44 @@ C. user named a target that is NOT in the element list: pointAtElementId = -1, c
 
 case C is critical. picking a wrong but nearby element from the list is FORBIDDEN. picking arbitrary IDs is FORBIDDEN. the only acceptable response when the target is missing is to refuse cleanly with both IDs set to -1."""
 
-SYSTEM_PROMPT = BASE_VOICE_RULES + "\n\n" + POINTING_RULES
+# Agent-mode rules — synced from CompanionSystemPrompt.swift. Included
+# unconditionally in the eval system prompt because production Pace runs
+# with EnableActions=true today. For the typed-JSON fixtures the response
+# schema constrains output to {spokenText, pointAtElementId, clickElementId}
+# so agent tags can't be emitted anyway; for FREE_TEXT_MODE fixtures they
+# unlock the [CLICK]/[TYPE]/[KEY]/[SCROLL] tag dialect.
+AGENT_MODE_RULES = """\
+agent mode — when the user asks you to *do* something (click, type, press, scroll), emit inline action tags in addition to or instead of [POINT]. tags are stripped before TTS and executed in order after you start speaking.
+
+available tags:
+- [CLICK:x,y]               left-click at screenshot pixel (x,y). add :screenN for non-cursor screens.
+- [DOUBLE_CLICK:x,y]        double-click, same coord space.
+- [TYPE:exact text]         types the literal text into whatever is focused.
+- [KEY:Return]              press a named key. modifiers chain with +: [KEY:cmd+s], [KEY:cmd+shift+t]. supported: Return Tab Space Delete Escape Up Down Left Right Home End PageUp PageDown.
+- [SCROLL:up:3]             scroll up 3 lines. [SCROLL:down:5] also works.
+
+only emit action tags when the user clearly asked you to *do* something. when unsure, point and ask. chaining is fine: [CLICK:400,300][TYPE:hello][KEY:Return]."""
+
+SYSTEM_PROMPT = BASE_VOICE_RULES + "\n\n" + POINTING_RULES + "\n\n" + AGENT_MODE_RULES
+
+# Free-text-mode pointing rules — use coordinate tags instead of the
+# typed-JSON `pointAtElementId` language. The typed language steers the
+# model toward JSON output even when response_format isn't enforced
+# (qwen3-30b-a3b kept emitting `spokenText="…"` style for the action
+# fixtures, hit max_tokens before finishing). Tag-language keeps it on
+# the inline-tag rails the action-chain fixtures need.
+FREE_TEXT_POINTING_RULES = """\
+on-screen elements are given to you in this format, one per line:
+    [N] role|x,y|label|text
+where N is just an ordinal — only the x,y coordinates matter for action tags.
+
+when you want to point the cursor at something, append [POINT:x,y:label] at the very end of your spoken text, where x,y are the pixel coordinates of the target element. example: if the list contains `[3] button|548,40|save button|Save Draft` and the user said "where's save", reply "right here [POINT:548,40:save]".
+
+if nothing to point at, append [POINT:none].
+
+point ONLY when the user named a SPECIFIC target. do NOT point for general questions, descriptions, summaries, or overviews."""
+
+FREE_TEXT_SYSTEM_PROMPT = BASE_VOICE_RULES + "\n\n" + FREE_TEXT_POINTING_RULES + "\n\n" + AGENT_MODE_RULES
 
 # JSON schema used as response_format for LM Studio models. Mirrors
 # PaceFMTurnResponse's @Generable schema.
@@ -133,6 +170,11 @@ class FixtureExpectations:
     spoken_must_contain: list[str] = field(default_factory=list)
     spoken_must_not_contain: list[str] = field(default_factory=list)
     spoken_max_words: Optional[int] = None
+    # Free-text-mode fixtures bypass the JSON schema and instead assert
+    # that the raw response (with <think>...</think> stripped) contains
+    # one or more regex patterns — typically the action tag the user's
+    # request should produce, like \\[TYPE:hello\\] or \\[KEY:cmd\\+s\\].
+    spoken_must_match_regex: list[str] = field(default_factory=list)
 
     @property
     def has_any_check(self) -> bool:
@@ -146,6 +188,7 @@ class FixtureExpectations:
                 self.spoken_must_contain,
                 self.spoken_must_not_contain,
                 self.spoken_max_words,
+                self.spoken_must_match_regex,
             )
         )
 
@@ -156,12 +199,18 @@ class Fixture:
     transcript: str
     element_map: str
     expectations: FixtureExpectations
+    # When true, the request is sent WITHOUT the response_format schema
+    # so the planner emits free text with [CLICK]/[TYPE]/[KEY]/[SCROLL]
+    # tags. Use for action-chain fixtures. Scoring is regex-based since
+    # there's no structured output to inspect.
+    free_text_mode: bool = False
 
 
 def parse_fixture(path: Path) -> Fixture:
     transcript = ""
     element_lines: list[str] = []
     expectations = FixtureExpectations()
+    free_text_mode = False
 
     with path.open() as fixture_file:
         for raw_line in fixture_file:
@@ -170,6 +219,12 @@ def parse_fixture(path: Path) -> Fixture:
                 transcript = line[len("USER: ") :]
             elif line.startswith("ELEMENT: "):
                 element_lines.append(line[len("ELEMENT: ") :])
+            elif line.startswith("FREE_TEXT_MODE: "):
+                free_text_mode = line[len("FREE_TEXT_MODE: ") :].strip().lower() in (
+                    "true",
+                    "1",
+                    "yes",
+                )
             elif line.startswith("EXPECT_POINT_ID: "):
                 expectations.point_id_exact = int(line[len("EXPECT_POINT_ID: ") :])
             elif line.startswith("EXPECT_CLICK_ID: "):
@@ -196,6 +251,11 @@ def parse_fixture(path: Path) -> Fixture:
                     for token in line[len("SPOKEN_MUST_NOT_CONTAIN: ") :].split(",")
                     if token.strip()
                 ]
+            elif line.startswith("SPOKEN_MUST_MATCH_REGEX: "):
+                # One regex per line; multiple lines allow ANDed patterns.
+                pattern = line[len("SPOKEN_MUST_MATCH_REGEX: ") :]
+                if pattern:
+                    expectations.spoken_must_match_regex.append(pattern)
             elif line.startswith("SPOKEN_MAX_WORDS: "):
                 expectations.spoken_max_words = int(line[len("SPOKEN_MAX_WORDS: ") :])
 
@@ -204,6 +264,7 @@ def parse_fixture(path: Path) -> Fixture:
         transcript=transcript,
         element_map="\n".join(element_lines),
         expectations=expectations,
+        free_text_mode=free_text_mode,
     )
 
 
@@ -271,6 +332,18 @@ def score_fixture(response: ModelResponse, expectations: FixtureExpectations) ->
                 f"spoken {word_count} words (max {expectations.spoken_max_words})"
             )
 
+    # Regex assertions run against the raw response text (which for
+    # free-text-mode fixtures includes action tags like [TYPE:hello]).
+    # The spoken_text field for free-text fixtures contains the raw
+    # response; for typed fixtures it's the JSON's spokenText. Run the
+    # regex against whichever we have.
+    for pattern in expectations.spoken_must_match_regex:
+        try:
+            if not re.search(pattern, response.spoken_text, flags=re.IGNORECASE | re.DOTALL):
+                failures.append(f"spoken did not match /{pattern}/")
+        except re.error as regex_compile_error:
+            failures.append(f"invalid regex /{pattern}/: {regex_compile_error}")
+
     return FixtureScore(passed=not failures, failures=failures)
 
 
@@ -290,17 +363,31 @@ def build_user_prompt(fixture: Fixture) -> str:
 
 
 def run_via_lm_studio(model_identifier: str, fixture: Fixture) -> ModelResponse:
-    request_body = {
+    active_system_prompt = (
+        FREE_TEXT_SYSTEM_PROMPT if fixture.free_text_mode else SYSTEM_PROMPT
+    )
+    # max_tokens budget: typed fixtures are JSON-schema-constrained so
+    # 400 tokens is comfortably enough. Free-text fixtures need room for
+    # qwen3-30b-a3b's <think>…</think> reasoning block PLUS the action
+    # tag answer — at 400-600 tokens the model was truncating mid-think,
+    # returning empty after <think> strip. 1500 leaves headroom; mean
+    # observed token count for free-text answers is well under 800.
+    max_tokens_budget = 1500 if fixture.free_text_mode else 400
+    request_body: dict = {
         "model": model_identifier,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": active_system_prompt},
             {"role": "user", "content": build_user_prompt(fixture)},
         ],
         "temperature": 0,
-        "max_tokens": 400,
-        "response_format": RESPONSE_SCHEMA,
+        "max_tokens": max_tokens_budget,
         "stream": False,
     }
+    # Typed-output fixtures use the JSON schema. Free-text fixtures
+    # bypass it so the planner can emit [CLICK]/[TYPE]/[KEY]/[SCROLL]
+    # tags that the schema would otherwise forbid.
+    if not fixture.free_text_mode:
+        request_body["response_format"] = RESPONSE_SCHEMA
     request = urllib.request.Request(
         LM_STUDIO_URL,
         data=json.dumps(request_body).encode("utf-8"),
@@ -340,6 +427,18 @@ def run_via_lm_studio(model_identifier: str, fixture: Fixture) -> ModelResponse:
         cleaned_content = re.sub(
             r"<think>.*?</think>", "", raw_content, flags=re.DOTALL | re.IGNORECASE
         ).strip()
+        # Free-text mode: the response IS the spoken text + action tags.
+        # No inner JSON to parse. Return the cleaned text as spoken_text
+        # so SPOKEN_MUST_MATCH_REGEX checks can run against it. The point
+        # / click IDs are left at -1 (typed-only concern).
+        if fixture.free_text_mode:
+            return ModelResponse(
+                spoken_text=cleaned_content,
+                point_at_element_id=-1,
+                click_element_id=-1,
+                elapsed_ms=elapsed_ms,
+                raw=raw_content,
+            )
         parsed = json.loads(cleaned_content)
         return ModelResponse(
             spoken_text=parsed.get("spokenText", ""),
@@ -563,6 +662,12 @@ def evaluate_model_on_fixtures(
             if not score.passed:
                 for failure_reason in score.failures:
                     print(f"      · {failure_reason}")
+                # On free-text failures, print the raw response so we can
+                # debug whether the model emitted nothing, malformed tags,
+                # or got truncated mid-output.
+                if fixture.free_text_mode and response.raw:
+                    raw_preview = response.raw[:600].replace("\n", "\\n")
+                    print(f"      raw[0:600]: {raw_preview}")
     finally:
         # Only unload if we were the ones who loaded it. Don't evict a
         # model some other caller (Pace.app, diag-pace.py, the user) is

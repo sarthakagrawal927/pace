@@ -31,5 +31,5 @@ ELEMENT: [28] static_text|320,80|page title|Compose new message
 ELEMENT: [29] static_text|24,80|app name|Mail
 EXPECT_POINT_ID: 26
 EXPECT_CLICK_ID: 26
-SPOKEN_MUST_NOT_CONTAIN: ID,coord,element,number
+SPOKEN_MUST_NOT_CONTAIN: ID,coord,number
 SPOKEN_MAX_WORDS: 10

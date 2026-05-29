@@ -1,0 +1,5 @@
+USER: press command s to save
+ELEMENT: [0] text_area|240,140|editor pane|untitled document with some text
+FREE_TEXT_MODE: true
+SPOKEN_MUST_MATCH_REGEX: \[KEY:cmd\+s\]
+SPOKEN_MUST_NOT_CONTAIN: ID

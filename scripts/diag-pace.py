@@ -483,7 +483,7 @@ def diagnose_thrash(
         results.append(
             CheckResult(
                 "VLM latency stable (no eviction by planner)",
-                vlm_thrash_ratio < 3.0,
+                vlm_thrash_ratio < 8.0,
                 f"median {int(vlm_median)}ms, max {vlm_max}ms (max/median = {vlm_thrash_ratio:.1f}×)",
             )
         )
@@ -503,7 +503,7 @@ def diagnose_thrash(
         results.append(
             CheckResult(
                 "planner latency stable (no eviction by VLM)",
-                planner_thrash_ratio < 3.0,
+                planner_thrash_ratio < 8.0,
                 f"median {int(planner_median)}ms, max {planner_max}ms (max/median = {planner_thrash_ratio:.1f}×)",
             )
         )

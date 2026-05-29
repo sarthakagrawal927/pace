@@ -1,0 +1,6 @@
+USER: scroll down a bit
+ELEMENT: [0] text_area|240,140|article body|Lorem ipsum dolor sit amet...
+ELEMENT: [1] static_text|412,11|Article|Article
+FREE_TEXT_MODE: true
+SPOKEN_MUST_MATCH_REGEX: \[SCROLL:down(?::\d+)?\]
+SPOKEN_MUST_NOT_CONTAIN: ID
