@@ -17,11 +17,11 @@
 	<key>AlwaysRunLocalVLMRegardlessOfTranscript</key>
 	<string>false</string>
 	<key>PlannerProvider</key>
-	<string>appleFoundationModels</string>
+	<string>local</string>
 	<key>LocalPlannerBaseURL</key>
 	<string>http://localhost:1234/v1</string>
 	<key>LocalPlannerModelIdentifier</key>
-	<string>qwen/qwen3-14b</string>
+	<string>qwen/qwen3-30b-a3b</string>
 	<key>EnableActions</key>
 	<string>true</string>
 	<key>AgentMaxSteps</key>
