@@ -935,6 +935,45 @@ final class CompanionManager: ObservableObject {
         }
     }
 
+    /// Explicit voice control for the watch loop. This runs before intent
+    /// classification because starting/stopping watch mode is a local mode
+    /// switch, not a planner task.
+    private func handleWatchModeCommand(_ command: PaceWatchModeCommand, transcript: String) {
+        let enabled: Bool
+        let spokenText: String
+
+        switch command {
+        case .start:
+            enabled = true
+            spokenText = isWatchModeEnabled ? "watch mode is already on" : "watch mode is on"
+        case .stop:
+            enabled = false
+            spokenText = isWatchModeEnabled ? "watch mode is off" : "watch mode is already off"
+        }
+
+        setWatchModeEnabled(enabled)
+        conversationHistory.append((userTranscript: transcript, assistantResponse: spokenText))
+        if conversationHistory.count > 1 {
+            conversationHistory.removeFirst(conversationHistory.count - 1)
+        }
+
+        responseOverlayManager.showOverlayAndBeginStreaming()
+        responseOverlayManager.updateStreamingText(spokenText)
+
+        currentResponseTask = Task {
+            voiceState = .responding
+            await streamingSentenceTTSPipeline.flushFinal(finalSpokenText: spokenText)
+            while ttsClient.isPlaying {
+                try? await Task.sleep(nanoseconds: 80_000_000)
+            }
+            responseOverlayManager.finishStreaming()
+            voiceState = .idle
+            if isWalkingAvatarEnabled {
+                avatarOverlayManager?.show()
+            }
+        }
+    }
+
     /// Multi-step agent loop: capture screens → optional local VLM →
     /// planner → execute actions → re-screenshot → repeat. Each step is
     /// at most one planner round-trip and one action sequence. The loop
@@ -956,6 +995,12 @@ final class CompanionManager: ObservableObject {
         // and bust the 4K context window. Stateless conformers (LocalPlanner)
         // no-op.
         plannerClient.resetForNewTurn()
+
+        if let watchModeCommand = PaceWatchModeCommandParser.parse(transcript) {
+            print("👀 Watch mode voice command: \(watchModeCommand)")
+            handleWatchModeCommand(watchModeCommand, transcript: transcript)
+            return
+        }
 
         // Fast-path chitchat ("hi pace", "thanks") with a canned response
         // — skips VLM + planner + agent loop entirely. ~2200ms → ~50ms.

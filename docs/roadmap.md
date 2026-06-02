@@ -5,7 +5,7 @@ ship MCP integrations.
 
 ## Priority 1: Approval And Safety
 
-Status: implemented; manual runtime verification still needed.
+Status: implemented; Xcode suite passing, manual runtime verification still needed.
 
 - Ask before executing local tool calls.
 - Keep approval default-on.
@@ -35,13 +35,15 @@ Status: implemented for first local tool pass; needs runtime verification per ap
 
 ## Priority 4: Watch Mode
 
-Status: implemented with panel trigger; voice trigger still optional follow-up.
+Status: implemented with panel and explicit voice triggers.
 
 - `PaceScreenImageDiffer` exists as the screen-change primitive.
 - `PaceScreenWatchModeController` samples the screen and emits events only when
   the image diff crosses a meaningful threshold.
 - The first watch mode is explicit through the `Watch Mode` panel toggle. Pace
   reports meaningful screen changes while it is on.
+- Voice commands such as "watch my screen" and "stop watching" toggle watch
+  mode before the planner/VLM pipeline.
 
 ## Priority 5: Local Intent Classifier
 
@@ -59,11 +61,12 @@ Status: implemented as a rule-based scaffold.
 
 ## Priority 6: Tests
 
-Status: ongoing.
+Status: implemented for unit/build coverage; manual runtime smoke coverage still needed.
 
 - Keep parser and image-diff tests current.
 - Parser tests cover registry aliases and Apple app tool parsing.
 - Image-diff tests cover watch-mode change throttling.
 - Intent tests cover the route mapping.
-- Still needed: Xcode-run smoke tests for approval prompts and action
-  cancellation.
+- Watch-mode command tests cover explicit start/stop routing.
+- Latest Xcode test run passed 112 tests after local test-target signing cleanup.
+- Still needed: physical smoke tests for approval prompts and action cancellation.

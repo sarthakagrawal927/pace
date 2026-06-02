@@ -33,6 +33,7 @@ The latest local `main` includes:
 - Action approval toggle and popup before local tools control the Mac.
 - Screen image diffing plus explicit watch-mode controller and panel toggle for
   meaningful change events.
+- Explicit watch-mode voice commands for "watch my screen" and "stop watching".
 - Rule-based intent classifier routes chitchat, pure-knowledge, screen-read,
   tool-action, and phone-large-model turns.
 - Parser, TTS-stripping, image-diff, watch-mode, registry, and intent tests.
@@ -46,10 +47,14 @@ The latest local `main` includes:
   passed.
 - `git diff --check` passed.
 - Xcode build via AppleScript succeeded before the local merge.
+- Xcode test via AppleScript passed 112 tests after the stale test-target signing
+  team was aligned with the app target.
+- Latest Xcode result has no `Info.plist` resource warning and no watch-command
+  actor-isolation warnings. Remaining warnings are the known Swift 6 concurrency
+  warnings called out in `AGENTS.md`.
 
 ## Still Needs Manual Verification
 
-- Run the Xcode test suite on a stable machine.
 - Physically click the notch capsule and confirm the companion panel opens and
   dismisses correctly.
 - Test the `Cursor Annotations` toggle in the app.
@@ -62,7 +67,6 @@ The latest local `main` includes:
   - Calendar reads
   - Reminder creation
   - Finder/Notes/Mail/Things/Shortcuts/Messages tools
-- Add optional voice command for watch mode start/stop.
 - Treat `EnableActions` carefully because enabled action mode can post real
   local input and system actions.
 - Keep `Approve Actions` on unless actively testing automation speed.
