@@ -398,6 +398,35 @@ struct PaceActionTagParserTests {
         #expect(actionPlan.approvalSummary.contains("Build the Pace registry"))
     }
 
+    @Test func notesToolParsesAppendAndSearchActions() async throws {
+        let parseResult = PaceActionTagParser.parseActions(from: """
+        handling notes.
+        <tool_calls>
+        [
+          [
+            {"tool":"notes","action":"append","title":"Idea","body":"Add this line"},
+            {"tool":"notes","action":"search","query":"roadmap"}
+          ]
+        ]
+        </tool_calls>
+        """)
+
+        #expect(parseResult.actions.count == 2)
+
+        guard case .appendNote(let appendRequest) = parseResult.actions[0] else {
+            Issue.record("Expected append note action")
+            return
+        }
+        #expect(appendRequest.title == "Idea")
+        #expect(appendRequest.body == "Add this line")
+
+        guard case .searchNotes(let query) = parseResult.actions[1] else {
+            Issue.record("Expected search notes action")
+            return
+        }
+        #expect(query == "roadmap")
+    }
+
     @Test func registryIncludesRequestedLocalToolAllowList() async throws {
         let requestedToolNames = [
             "open_app",

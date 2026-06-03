@@ -146,6 +146,10 @@ final class PaceActionExecutor {
             return await performFinderRequest(finderRequest)
         case .createNote(let noteRequest):
             return await createNote(noteRequest)
+        case .appendNote(let noteRequest):
+            return await appendNote(noteRequest)
+        case .searchNotes(let query):
+            return await searchNotes(query: query)
         case .composeMail(let mailDraft):
             return await composeMail(mailDraft)
         case .createThingsToDo(let thingsToDoRequest):
@@ -327,6 +331,32 @@ final class PaceActionExecutor {
             return PaceActionExecutionObservation(
                 toolName: "open_url",
                 summary: "Would open URL: \(url.absoluteString)"
+            )
+        }
+
+        if let preferredBrowser = PaceLocalMemoryStore.string(for: .preferredBrowser),
+           let browserURL = Self.findApplicationURL(named: preferredBrowser) {
+            let openErrorDescription: String? = await withCheckedContinuation { continuation in
+                let configuration = NSWorkspace.OpenConfiguration()
+                NSWorkspace.shared.open(
+                    [url],
+                    withApplicationAt: browserURL,
+                    configuration: configuration
+                ) { _, error in
+                    continuation.resume(returning: error?.localizedDescription)
+                }
+            }
+
+            if let openErrorDescription {
+                return PaceActionExecutionObservation(
+                    toolName: "open_url",
+                    summary: "Failed to open URL in \(preferredBrowser): \(openErrorDescription)"
+                )
+            }
+
+            return PaceActionExecutionObservation(
+                toolName: "open_url",
+                summary: "Opened URL in \(preferredBrowser): \(url.absoluteString)"
             )
         }
 
@@ -572,6 +602,95 @@ final class PaceActionExecutor {
         return PaceActionExecutionObservation(
             toolName: "notes",
             summary: "Created note: \(noteRequest.title)"
+        )
+    }
+
+    private func appendNote(_ noteRequest: PaceNoteRequest) async -> PaceActionExecutionObservation {
+        print("🧰 Notes append \"\(noteRequest.title)\" (enabled: \(actionsAreEnabled))")
+        guard actionsAreEnabled else {
+            return PaceActionExecutionObservation(
+                toolName: "notes",
+                summary: "Would append to note: \(noteRequest.title)"
+            )
+        }
+
+        await openApplication(named: "Notes")
+        let scriptResult = runAppleScript(source: """
+        tell application "Notes"
+            activate
+            set matchingNotes to notes whose name is "\(Self.appleScriptEscaped(noteRequest.title))"
+            if (count of matchingNotes) is 0 then
+                make new note at default account with properties {name:"\(Self.appleScriptEscaped(noteRequest.title))", body:"\(Self.appleScriptEscaped(noteRequest.body))"}
+            else
+                set targetNote to item 1 of matchingNotes
+                set body of targetNote to (body of targetNote) & "<br><br>" & "\(Self.appleScriptEscaped(noteRequest.body))"
+            end if
+        end tell
+        """)
+
+        if let errorDescription = scriptResult.errorDescription {
+            return PaceActionExecutionObservation(
+                toolName: "notes",
+                summary: "Failed to append note: \(errorDescription)"
+            )
+        }
+
+        return PaceActionExecutionObservation(
+            toolName: "notes",
+            summary: "Appended note: \(noteRequest.title)"
+        )
+    }
+
+    private func searchNotes(query: String) async -> PaceActionExecutionObservation {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        print("🧰 Notes search \"\(trimmedQuery)\" (enabled: \(actionsAreEnabled))")
+        guard !trimmedQuery.isEmpty else {
+            return PaceActionExecutionObservation(
+                toolName: "notes",
+                summary: "No note search query was provided."
+            )
+        }
+        guard actionsAreEnabled else {
+            return PaceActionExecutionObservation(
+                toolName: "notes",
+                summary: "Would search notes for: \(trimmedQuery)"
+            )
+        }
+
+        await openApplication(named: "Notes")
+        let scriptResult = runAppleScript(source: """
+        tell application "Notes"
+            set matchingTitles to {}
+            repeat with candidateNote in notes
+                set candidateName to name of candidateNote
+                set candidateBody to body of candidateNote
+                if candidateName contains "\(Self.appleScriptEscaped(trimmedQuery))" or candidateBody contains "\(Self.appleScriptEscaped(trimmedQuery))" then
+                    set end of matchingTitles to candidateName
+                end if
+            end repeat
+            set AppleScript's text item delimiters to linefeed
+            return matchingTitles as text
+        end tell
+        """)
+
+        if let errorDescription = scriptResult.errorDescription {
+            return PaceActionExecutionObservation(
+                toolName: "notes",
+                summary: "Failed to search notes: \(errorDescription)"
+            )
+        }
+
+        let output = scriptResult.output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !output.isEmpty else {
+            return PaceActionExecutionObservation(
+                toolName: "notes",
+                summary: "No notes found for: \(trimmedQuery)"
+            )
+        }
+
+        return PaceActionExecutionObservation(
+            toolName: "notes",
+            summary: "Notes found for \(trimmedQuery):\n\(output)"
         )
     }
 
@@ -1075,6 +1194,8 @@ enum PaceParsedAction {
     case createReminder(PaceReminderRequest)
     case finder(PaceFinderRequest)
     case createNote(PaceNoteRequest)
+    case appendNote(PaceNoteRequest)
+    case searchNotes(String)
     case composeMail(PaceMailDraft)
     case createThingsToDo(PaceThingsToDoRequest)
     case runShortcut(String)
@@ -1117,6 +1238,10 @@ enum PaceParsedAction {
                 return "Create note: \(noteRequest.title)"
             }
             return "Create note: \(noteRequest.title) — \(Self.truncatedForApproval(trimmedBody))"
+        case .appendNote(let noteRequest):
+            return "Append note: \(noteRequest.title) — \(Self.truncatedForApproval(noteRequest.body))"
+        case .searchNotes(let query):
+            return "Search notes: \(query)"
         case .composeMail(let mailDraft):
             return "Compose mail draft: \(mailDraft.subject)"
         case .createThingsToDo(let thingsToDoRequest):
@@ -1278,6 +1403,7 @@ enum PaceActionTagParser {
         let command: String?
         let direction: String?
         let title: String?
+        let query: String?
         let text: String?
         let body: String?
         let notes: String?
@@ -1295,7 +1421,7 @@ enum PaceActionTagParser {
         let screen: Int?
 
         enum CodingKeys: String, CodingKey {
-            case tool, app, name, url, command, direction, title, text, body, notes, range, key, path, action, to, subject, recipient, steps, amount, x, y, screen
+            case tool, app, name, url, command, direction, title, query, text, body, notes, range, key, path, action, to, subject, recipient, steps, amount, x, y, screen
         }
 
         init(from decoder: Decoder) throws {
@@ -1307,6 +1433,7 @@ enum PaceActionTagParser {
             self.command = Self.decodeStringIfPresent(from: container, forKey: .command)
             self.direction = Self.decodeStringIfPresent(from: container, forKey: .direction)
             self.title = Self.decodeStringIfPresent(from: container, forKey: .title)
+            self.query = Self.decodeStringIfPresent(from: container, forKey: .query)
             self.text = Self.decodeStringIfPresent(from: container, forKey: .text)
             self.body = Self.decodeStringIfPresent(from: container, forKey: .body)
             self.notes = Self.decodeStringIfPresent(from: container, forKey: .notes)
@@ -1742,16 +1869,32 @@ enum PaceActionTagParser {
     }
 
     private static func parseNoteToolCall(_ toolCall: ToolCallDTO) -> PaceParsedAction? {
+        let normalizedAction = (toolCall.action ?? "create")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
         let title = (toolCall.title ?? toolCall.name ?? "Pace note")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let body = (toolCall.body ?? toolCall.text ?? toolCall.notes ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty || !body.isEmpty else { return nil }
 
-        return .createNote(PaceNoteRequest(
+        if normalizedAction == "search" || normalizedAction == "find" {
+            let query = (toolCall.query ?? toolCall.text ?? toolCall.title ?? toolCall.name ?? body)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !query.isEmpty else { return nil }
+            return .searchNotes(query)
+        }
+
+        guard !title.isEmpty || !body.isEmpty else { return nil }
+        let noteRequest = PaceNoteRequest(
             title: title.isEmpty ? "Pace note" : title,
             body: body
-        ))
+        )
+
+        if normalizedAction == "append" || normalizedAction == "add" || normalizedAction == "update" {
+            return .appendNote(noteRequest)
+        }
+
+        return .createNote(noteRequest)
     }
 
     private static func parseMailToolCall(_ toolCall: ToolCallDTO) -> PaceParsedAction? {

@@ -123,7 +123,8 @@ enum CompanionSystemPrompt {
     \(PaceToolRegistry.plannerToolListText)
 
     tool choice rules:
-    - if the user asks to create, make, add, or save a note, use {"tool":"notes","title":"...","body":"..."} with the user's requested text in body. do not use open_app Notes for note creation.
+    - if the user asks to create, make, add, or save a note, use {"tool":"notes","action":"create","title":"...","body":"..."} with the user's requested text in body. do not use open_app Notes for note creation.
+    - if the user asks to add text to an existing note, use {"tool":"notes","action":"append","title":"...","body":"..."}. if they ask to find notes, use {"tool":"notes","action":"search","query":"..."}.
     - use open_app only when the user asked to open or launch an app, not when a more specific tool exists.
 
     legacy tags are still accepted:

@@ -20,6 +20,8 @@ struct PaceActionExecutorDryRunTests {
             .createReminder(PaceReminderRequest(title: "Dry run reminder", notes: nil)),
             .finder(PaceFinderRequest(path: "~/Downloads", action: .reveal)),
             .createNote(PaceNoteRequest(title: "Dry run note", body: "No note should be created.")),
+            .appendNote(PaceNoteRequest(title: "Dry run note", body: "Append nothing.")),
+            .searchNotes("Dry run"),
             .composeMail(PaceMailDraft(
                 recipients: ["alex@example.com"],
                 subject: "Dry run",
@@ -43,6 +45,8 @@ struct PaceActionExecutorDryRunTests {
         #expect(formattedObservations.contains("Would create reminder: Dry run reminder"))
         #expect(formattedObservations.contains("Would reveal path:"))
         #expect(formattedObservations.contains("Would create note: Dry run note"))
+        #expect(formattedObservations.contains("Would append to note: Dry run note"))
+        #expect(formattedObservations.contains("Would search notes for: Dry run"))
         #expect(formattedObservations.contains("Would compose mail draft"))
         #expect(formattedObservations.contains("Would create Things to-do: Dry run task"))
         #expect(formattedObservations.contains("Would run shortcut: Dry Run Shortcut"))

@@ -120,6 +120,20 @@ struct PaceScreenImageDifferTests {
         #expect(laterEvents.count == 1)
     }
 
+    @Test func watchEventCategoriesScaleWithDiffSize() async throws {
+        #expect(PaceScreenWatchChangeDetector.category(
+            for: PaceScreenImageDiff(meanPixelDelta: 8, changedPixelRatio: 0.05)
+        ) == .focusedRegionChange)
+
+        #expect(PaceScreenWatchChangeDetector.category(
+            for: PaceScreenImageDiff(meanPixelDelta: 16, changedPixelRatio: 0.15)
+        ) == .contentUpdate)
+
+        #expect(PaceScreenWatchChangeDetector.category(
+            for: PaceScreenImageDiff(meanPixelDelta: 32, changedPixelRatio: 0.40)
+        ) == .majorScreenChange)
+    }
+
     private func makeTestImageData(
         width: Int,
         height: Int,

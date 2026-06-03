@@ -206,8 +206,8 @@ enum PaceToolRegistry {
             kind: .notes,
             canonicalName: "notes",
             aliases: ["note"],
-            schemaExample: #"{"tool":"notes","title":"Idea","body":"note text"}"#,
-            description: "create a local Apple Notes note.",
+            schemaExample: #"{"tool":"notes","action":"create","title":"Idea","body":"note text"}"#,
+            description: "create, append, or search Apple Notes. actions: create, append, search.",
             riskLevel: .appOrSystemMutation,
             executionSummary: "Creates a note in Apple Notes with AppleScript.",
             observationSummary: "Reports note creation or AppleScript errors."
@@ -303,7 +303,7 @@ enum PaceToolRegistry {
             return definition(forToolName: "reminder")
         case .finder:
             return definition(forToolName: "finder")
-        case .createNote:
+        case .createNote, .appendNote, .searchNotes:
             return definition(forToolName: "notes")
         case .composeMail:
             return definition(forToolName: "mail")

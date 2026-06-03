@@ -49,6 +49,9 @@ final class CompanionManager: ObservableObject {
     @Published private(set) var hasRemindersPermission = false
     @Published private(set) var shouldRequestCalendarPermission = false
     @Published private(set) var shouldRequestRemindersPermission = false
+    @Published private(set) var recentActionResults: [PaceActionRunRecord] = []
+    @Published private(set) var localMemorySummary: String = PaceLocalMemoryStore.summaryText
+    let activeTTSVoiceSummary: PaceTTSVoiceSummary = PaceTTSVoiceSummary.current()
 
     /// True when the configured LM Studio (or compatible) HTTP server
     /// responds within a short timeout. Polled periodically so the panel
@@ -329,17 +332,18 @@ final class CompanionManager: ObservableObject {
     }
 
     private func handleWatchModeEvent(_ event: PaceScreenWatchEvent) async {
-        let summary = "Screen changed: \(event.screenLabel)"
+        let summary = "\(event.category.displayName): \(event.screenLabel)"
         latestWatchModeSummary = summary
         print("👀 Watch mode: \(summary) meanDelta=\(String(format: "%.2f", event.diff.meanPixelDelta)) changedRatio=\(String(format: "%.3f", event.diff.changedPixelRatio))")
 
         guard voiceState == .idle else { return }
 
         responseOverlayManager.showOverlayAndBeginStreaming()
-        responseOverlayManager.updateStreamingText("i noticed the screen changed.")
+        let spokenWatchModeSummary = "i noticed a \(event.category.displayName)."
+        responseOverlayManager.updateStreamingText(spokenWatchModeSummary)
         currentResponseTask = Task {
             voiceState = .responding
-            await streamingSentenceTTSPipeline.flushFinal(finalSpokenText: "i noticed the screen changed.")
+            await streamingSentenceTTSPipeline.flushFinal(finalSpokenText: spokenWatchModeSummary)
             while ttsClient.isPlaying {
                 try? await Task.sleep(nanoseconds: 80_000_000)
             }
@@ -348,9 +352,13 @@ final class CompanionManager: ObservableObject {
         }
     }
 
-    private func requestUserApprovalForActionPlan(_ actionExecutionPlan: PaceActionExecutionPlan) -> Bool {
+    private func requestUserApprovalForActionPlan(
+        _ actionExecutionPlan: PaceActionExecutionPlan,
+        preflightIssues: [PaceToolPreflightIssue] = []
+    ) -> Bool {
         let approvalRequest = PaceActionApprovalRequest(
             approvalSummary: actionExecutionPlan.approvalSummary,
+            preflightSummary: PaceToolPreflightIssue.formatForApproval(preflightIssues),
             requiresActionApproval: requiresActionApproval
         )
         guard let approvalRequest else {
@@ -381,6 +389,49 @@ final class CompanionManager: ObservableObject {
             .openURL("https://example.com")
         ])
         return requestUserApprovalForActionPlan(syntheticActionPlan)
+    }
+
+    private func appendActionResult(_ actionResult: PaceActionRunRecord) {
+        var updatedActionResults = recentActionResults
+        updatedActionResults.insert(actionResult, at: 0)
+        if updatedActionResults.count > 8 {
+            updatedActionResults.removeLast(updatedActionResults.count - 8)
+        }
+        recentActionResults = updatedActionResults
+    }
+
+    private func handleLocalMemoryCommand(_ command: PaceLocalMemoryCommand) {
+        let spokenText: String
+        switch command {
+        case .set(let key, let value):
+            PaceLocalMemoryStore.setString(value, for: key)
+            spokenText = "remembered \(value)."
+        case .forget(let key):
+            PaceLocalMemoryStore.setString(nil, for: key)
+            spokenText = "forgot that preference."
+        }
+
+        localMemorySummary = PaceLocalMemoryStore.summaryText
+        responseOverlayManager.showOverlayAndBeginStreaming()
+        responseOverlayManager.updateStreamingText(spokenText)
+        currentResponseTask = Task {
+            voiceState = .responding
+            await streamingSentenceTTSPipeline.flushFinal(finalSpokenText: spokenText)
+            while ttsClient.isPlaying {
+                try? await Task.sleep(nanoseconds: 80_000_000)
+            }
+            responseOverlayManager.finishStreaming()
+            voiceState = .idle
+        }
+    }
+
+    private func currentToolPreflightEnvironment() -> PaceToolPreflightEnvironment {
+        PaceToolPreflightEnvironment(
+            actionsAreEnabled: actionExecutor.actionsAreEnabled,
+            hasAccessibilityPermission: hasAccessibilityPermission,
+            hasCalendarPermission: hasCalendarPermission,
+            hasRemindersPermission: hasRemindersPermission
+        )
     }
 
     /// Pace skips the upstream first-run flow entirely — no welcome video,
@@ -1118,6 +1169,12 @@ final class CompanionManager: ObservableObject {
             return
         }
 
+        if let localMemoryCommand = PaceLocalMemoryCommandParser.parse(transcript) {
+            print("🧠 Local memory command: \(localMemoryCommand)")
+            handleLocalMemoryCommand(localMemoryCommand)
+            return
+        }
+
         // Fast-path chitchat ("hi pace", "thanks") with a canned response
         // — skips VLM + planner + agent loop entirely. ~2200ms → ~50ms.
         // Conservative: only fires when the classifier is confident
@@ -1356,8 +1413,20 @@ final class CompanionManager: ObservableObject {
                     var toolObservations: [PaceActionExecutionObservation] = []
                     var userDeniedActionApproval = false
                     if !actionParseResult.actions.isEmpty {
+                        let preflightIssues = PaceToolPreflight.evaluate(
+                            actionExecutionPlan: actionParseResult.executionPlan,
+                            environment: currentToolPreflightEnvironment()
+                        )
+                        appendActionResult(.planned(
+                            actionExecutionPlan: actionParseResult.executionPlan,
+                            preflightIssues: preflightIssues
+                        ))
+
                         if actionExecutor.actionsAreEnabled {
-                            if requestUserApprovalForActionPlan(actionParseResult.executionPlan) {
+                            if requestUserApprovalForActionPlan(
+                                actionParseResult.executionPlan,
+                                preflightIssues: preflightIssues
+                            ) {
                                 // Brief settle so the cursor flight visibly arrives
                                 // before the synthetic click fires.
                                 try? await Task.sleep(nanoseconds: 350_000_000)
@@ -1368,14 +1437,25 @@ final class CompanionManager: ObservableObject {
                                 )
                                 if !toolObservations.isEmpty {
                                     print("🧰 Tool observations:\n\(PaceActionExecutionObservation.formatForPlanner(toolObservations))")
+                                    appendActionResult(.completed(observations: toolObservations))
                                     pendingPostActionFeedbackText = PaceActionExecutionObservation
                                         .formatForUserFeedback(toolObservations)
                                 }
                             } else {
                                 userDeniedActionApproval = true
+                                appendActionResult(PaceActionRunRecord(
+                                    status: .denied,
+                                    title: "Action denied",
+                                    detail: actionParseResult.executionPlan.approvalSummary
+                                ))
                                 print("🛑 Pace action approval denied — stopping agent loop")
                             }
                         } else {
+                            appendActionResult(PaceActionRunRecord(
+                                status: .skipped,
+                                title: "Actions disabled",
+                                detail: "Parsed \(actionParseResult.actions.count) action(s), but EnableActions is false."
+                            ))
                             print("🤖 \(actionParseResult.actions.count) action(s) parsed but EnableActions is false — exiting loop after this step")
                         }
                     }

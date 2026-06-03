@@ -19,9 +19,27 @@ struct PaceScreenWatchConfiguration {
     )
 }
 
+enum PaceScreenWatchEventCategory: Equatable {
+    case majorScreenChange
+    case contentUpdate
+    case focusedRegionChange
+
+    var displayName: String {
+        switch self {
+        case .majorScreenChange:
+            return "major screen change"
+        case .contentUpdate:
+            return "content update"
+        case .focusedRegionChange:
+            return "focused region changed"
+        }
+    }
+}
+
 struct PaceScreenWatchEvent {
     let screenLabel: String
     let diff: PaceScreenImageDiff
+    let category: PaceScreenWatchEventCategory
     let capture: CompanionScreenCapture
     let detectedAt: Date
 }
@@ -68,6 +86,7 @@ struct PaceScreenWatchChangeDetector {
             events.append(PaceScreenWatchEvent(
                 screenLabel: capture.label,
                 diff: diff,
+                category: Self.category(for: diff),
                 capture: capture,
                 detectedAt: now
             ))
@@ -79,6 +98,18 @@ struct PaceScreenWatchChangeDetector {
     mutating func reset() {
         previousFingerprintByScreenLabel.removeAll()
         lastEventDateByScreenLabel.removeAll()
+    }
+
+    static func category(for diff: PaceScreenImageDiff) -> PaceScreenWatchEventCategory {
+        if diff.changedPixelRatio >= 0.35 || diff.meanPixelDelta >= 30 {
+            return .majorScreenChange
+        }
+
+        if diff.changedPixelRatio >= 0.12 || diff.meanPixelDelta >= 14 {
+            return .contentUpdate
+        }
+
+        return .focusedRegionChange
     }
 }
 

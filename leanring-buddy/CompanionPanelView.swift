@@ -34,6 +34,9 @@ struct CompanionPanelView: View {
                 activePlannerInfoRow
                     .padding(.horizontal, 16)
 
+                ttsVoiceInfoRow
+                    .padding(.horizontal, 16)
+
                 readScreenToggleRow
                     .padding(.horizontal, 16)
 
@@ -47,6 +50,14 @@ struct CompanionPanelView: View {
                     .padding(.horizontal, 16)
 
                 toolPermissionsSection
+                    .padding(.top, 10)
+                    .padding(.horizontal, 16)
+
+                actionResultCenterSection
+                    .padding(.top, 10)
+                    .padding(.horizontal, 16)
+
+                localMemorySection
                     .padding(.top, 10)
                     .padding(.horizontal, 16)
             }
@@ -636,6 +647,111 @@ struct CompanionPanelView: View {
             )
     }
 
+    private var actionResultCenterSection: some View {
+        VStack(spacing: 6) {
+            HStack {
+                Text("RECENT ACTIONS")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundColor(DS.Colors.textTertiary)
+
+                Spacer()
+
+                if companionManager.recentActionResults.isEmpty {
+                    Text("None")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DS.Colors.textTertiary)
+                }
+            }
+
+            if !companionManager.recentActionResults.isEmpty {
+                VStack(spacing: 6) {
+                    ForEach(companionManager.recentActionResults.prefix(3)) { actionResult in
+                        actionResultRow(actionResult)
+                    }
+                }
+            }
+        }
+    }
+
+    private func actionResultRow(_ actionResult: PaceActionRunRecord) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Circle()
+                .fill(color(for: actionResult.status))
+                .frame(width: 7, height: 7)
+                .padding(.top, 5)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(actionResult.status.displayName)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(color(for: actionResult.status))
+
+                    Text(actionResult.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.Colors.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
+                Text(actionResult.detail)
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.white.opacity(0.045))
+        )
+    }
+
+    private func color(for status: PaceActionRunStatus) -> Color {
+        switch status {
+        case .planned:
+            return DS.Colors.accent
+        case .completed:
+            return DS.Colors.success
+        case .failed, .skipped:
+            return DS.Colors.warning
+        case .denied:
+            return DS.Colors.textTertiary
+        }
+    }
+
+    private var localMemorySection: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("LOCAL MEMORY")
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundColor(DS.Colors.textTertiary)
+
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "brain")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .frame(width: 16)
+
+                Text(companionManager.localMemorySummary)
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.white.opacity(0.045))
+            )
+        }
+    }
+
     // MARK: - Read Screen Toggle
 
     private var readScreenToggleRow: some View {
@@ -775,6 +891,50 @@ struct CompanionPanelView: View {
             Spacer()
 
             Text(companionManager.activePlannerDisplayName)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(DS.Colors.textTertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(Color.white.opacity(0.06))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .stroke(DS.Colors.borderSubtle, lineWidth: 0.5)
+                )
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var ttsVoiceInfoRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: companionManager.activeTTSVoiceSummary.needsUpgrade
+                  ? "speaker.wave.2"
+                  : "speaker.wave.3.fill")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(companionManager.activeTTSVoiceSummary.needsUpgrade
+                                 ? DS.Colors.warning
+                                 : DS.Colors.success)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Voice")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(DS.Colors.textSecondary)
+
+                Text(companionManager.activeTTSVoiceSummary.recommendationText)
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+
+            Spacer()
+
+            Text(companionManager.activeTTSVoiceSummary.displayText)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(DS.Colors.textTertiary)
                 .lineLimit(1)

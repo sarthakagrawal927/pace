@@ -30,6 +30,17 @@ diagnostics or live app automation were run.
   Automation, Calendar, and Reminders.
 - Added System Settings deep links for Speech Recognition, Calendar, Reminders,
   and Automation.
+- Added Action Result Center state and panel rows for recent planned/completed/
+  failed/denied/skipped tool runs.
+- Added pure tool preflight checks for disabled actions, missing Accessibility,
+  Calendar, Reminders, and Automation prompts.
+- Added Watch Mode v2 event categories: major screen change, content update,
+  focused-region change.
+- Expanded Apple Notes skill support to create, append, and search notes.
+- Added local memory for preferred browser, including voice commands and
+  `open_url` execution behavior.
+- Added TTS voice resolver so Premium/Enhanced Apple voices override compact
+  fallback config, plus a panel voice-quality row.
 
 ## Low-Memory Validation Performed
 
@@ -45,11 +56,28 @@ diagnostics or live app automation were run.
   passed.
 - `git diff --check` passed.
 
+Additional lightweight checks after the feature batch:
+
+- `swiftc -parse -parse-as-library` over action/preflight/result/memory/watch/
+  TTS files passed.
+- `swiftc -parse -parse-as-library` over CompanionManager plus its new support
+  files passed.
+- `swiftc -parse -parse-as-library` over CompanionPanelView plus UI support
+  files passed.
+
 ## Not Run During This Pass
 
-- Xcode tests/build were intentionally skipped to avoid RAM pressure.
 - LM Studio diagnostics were intentionally skipped because they reload models.
 - Live Notes/Calendar/Reminders/Automation prompts were intentionally skipped.
+- Visual review of the taller panel was skipped.
+- Manual app launch was skipped after tests to avoid leaving Pace/model runtime
+  processes alive.
+
+## Latest Xcode Test
+
+- Xcode test action succeeded on 2026-06-03.
+- Latest result bundle: `Test-leanring-buddy-2026.06.03_14-14-49-+0530.xcresult`
+- Result count: 129 tests, 266 warnings, no reported error count.
 
 ## Manual Review Checklist
 

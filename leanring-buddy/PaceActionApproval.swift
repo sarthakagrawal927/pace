@@ -16,13 +16,20 @@ nonisolated enum PaceActionApprovalDecision: Equatable {
 
 nonisolated struct PaceActionApprovalRequest: Equatable {
     let approvalSummary: String
+    let preflightSummary: String?
 
-    init?(approvalSummary: String, requiresActionApproval: Bool) {
+    init?(
+        approvalSummary: String,
+        preflightSummary: String? = nil,
+        requiresActionApproval: Bool
+    ) {
         let trimmedApprovalSummary = approvalSummary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard requiresActionApproval, !trimmedApprovalSummary.isEmpty else {
             return nil
         }
         self.approvalSummary = trimmedApprovalSummary
+        let trimmedPreflightSummary = preflightSummary?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.preflightSummary = trimmedPreflightSummary?.isEmpty == false ? trimmedPreflightSummary : nil
     }
 
     var messageText: String {
@@ -34,6 +41,7 @@ nonisolated struct PaceActionApprovalRequest: Equatable {
         Pace wants to control your Mac:
 
         \(approvalSummary)
+        \(preflightSummary.map { "\n\n\($0)" } ?? "")
 
         Only approve this if it matches what you asked for.
         """

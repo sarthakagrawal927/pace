@@ -116,50 +116,7 @@ final class LocalTTSClient: NSObject, BuddyTTSClient {
     }
 
     private func bestAvailableVoice() -> AVSpeechSynthesisVoice? {
-        if let preferredVoiceIdentifier,
-           let voice = AVSpeechSynthesisVoice(identifier: preferredVoiceIdentifier) {
-            return voice
-        }
-
-        let englishVoices = AVSpeechSynthesisVoice.speechVoices()
-            .filter { $0.language.hasPrefix("en") }
-
-        // Pace's curated picks, in order of preference. AVSpeechSynthesisVoice
-        // .speechVoices() returns voices in registration order which can flip
-        // across OS updates — that's how the voice got worse without anyone
-        // touching the app. Pinning to a named voice keeps the pick stable.
-        //
-        // Ava and Evan are the Premium-quality neural voices Apple ships
-        // separately (require a one-time download). Samantha is the
-        // default en-US voice baked into macOS — Enhanced quality is also
-        // downloadable, Premium is not available for Samantha. Including
-        // her in the list lets us pick Samantha-Enhanced as a stopgap
-        // when no premium-tier voice is installed yet.
-        let preferredVoiceNamesInOrder = ["Ava", "Evan", "Samantha", "Zoe", "Nathan", "Joelle", "Noelle"]
-        for preferredName in preferredVoiceNamesInOrder {
-            if let namedPremiumVoice = englishVoices.first(where: {
-                $0.name == preferredName && $0.quality == .premium
-            }) {
-                return namedPremiumVoice
-            }
-        }
-        for preferredName in preferredVoiceNamesInOrder {
-            if let namedEnhancedVoice = englishVoices.first(where: {
-                $0.name == preferredName && $0.quality == .enhanced
-            }) {
-                return namedEnhancedVoice
-            }
-        }
-
-        // Generic fallback: any premium > any enhanced > en-US default.
-        if let premiumVoice = englishVoices.first(where: { $0.quality == .premium }) {
-            return premiumVoice
-        }
-        if let enhancedVoice = englishVoices.first(where: { $0.quality == .enhanced }) {
-            return enhancedVoice
-        }
-
-        return AVSpeechSynthesisVoice(language: "en-US")
+        PaceTTSVoiceResolver.bestAvailableVoice(preferredVoiceIdentifier: preferredVoiceIdentifier)
     }
 
     /// Prints a one-time, plain-language hint to the Xcode console when

@@ -195,3 +195,5 @@ If acceptance rate falls below ~0.5 (LM Studio logs it as `acc_rate=…`), specu
 **Local TTS sounds robotic:** Pace softens the compact macOS voices with `LocalTTSSpeechRate`, `LocalTTSPitchMultiplier`, and `LocalTTSVolume`, but the biggest jump still comes from installing a better Apple voice. Open System Settings → Accessibility → Spoken Content → System Voice → Manage Voices and download one of the Premium or Enhanced English voices. `LocalTTSClient` auto-prefers Premium > Enhanced > Default.
 
 **Notes says Apple Events are not authorized:** open System Settings → Privacy & Security → Automation, then enable Pace controlling Notes. If Pace does not appear there after a denial, run `tccutil reset AppleEvents com.pace.app`, restart Pace, and try the note action again so macOS can show the permission prompt.
+
+**Preferred browser:** say "remember my preferred browser is Safari" to store a local preference. Future `open_url` tool calls will use that browser when it is installed. Say "forget my preferred browser" to clear it.
