@@ -174,8 +174,8 @@ struct PaceSettingsWindowView: View {
                 )
             )
             settingsToggleRow(
-                title: "Approve actions",
-                subtitle: "Ask before local tools, clicks, and MCP calls execute.",
+                title: "Approve risky actions",
+                subtitle: "Ask before non-undoable local changes, message drafts, shortcuts, and MCP calls.",
                 isOn: Binding(
                     get: { companionManager.requiresActionApproval },
                     set: { companionManager.setRequiresActionApproval($0) }
@@ -322,6 +322,8 @@ struct PaceSettingsWindowView: View {
 
     private var voiceContent: some View {
         VStack(alignment: .leading, spacing: 12) {
+            infoRow(title: "Transcription", value: companionManager.buddyDictationManager.transcriptionProviderDisplayName)
+            infoRow(title: "Transcription model", value: companionManager.isTranscriptionModelReady ? "Ready" : "Loading")
             infoRow(title: "Active voice", value: companionManager.activeTTSVoiceSummary.displayText)
             if companionManager.activeTTSVoiceSummary.needsUpgrade {
                 Text(companionManager.activeTTSVoiceSummary.recommendationText)
@@ -347,6 +349,28 @@ struct PaceSettingsWindowView: View {
                     .font(.system(size: 12))
                     .foregroundColor(DS.Colors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                Text(companionManager.localRetrievalSummary)
+                    .font(.system(size: 12))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                settingsButton("Reset Retrieval", systemName: "arrow.counterclockwise") {
+                    companionManager.resetLocalRetrievalIndex()
+                }
+
+                localRetrievalFileRootsSection
+
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Retrieval sources")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(DS.Colors.textSecondary)
+                        .padding(.top, 8)
+
+                    ForEach(PaceRetrievalSource.allCases, id: \.rawValue) { source in
+                        retrievalSourceToggleRow(source)
+                    }
+                }
             }
 
             Divider()
@@ -380,6 +404,74 @@ struct PaceSettingsWindowView: View {
         }
     }
 
+    private var localRetrievalFileRootsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text("File folders")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(DS.Colors.textSecondary)
+                Spacer()
+                settingsButton("Add Folder", systemName: "folder.badge.plus") {
+                    chooseLocalRetrievalFileRoots()
+                }
+                settingsButton("Clear", systemName: "xmark.circle") {
+                    companionManager.clearLocalRetrievalFileRootPaths()
+                }
+                .disabled(companionManager.localRetrievalFileRootPaths.isEmpty)
+                .opacity(companionManager.localRetrievalFileRootPaths.isEmpty ? 0.45 : 1)
+            }
+
+            if companionManager.localRetrievalFileRootPaths.isEmpty {
+                Text("No folders selected. File retrieval will stay skipped unless roots are set in the app bundle.")
+                    .font(.system(size: 12))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(companionManager.localRetrievalFileRootPaths, id: \.self) { rootPath in
+                        localRetrievalFileRootRow(rootPath)
+                    }
+                }
+            }
+        }
+        .padding(.top, 8)
+    }
+
+    private func localRetrievalFileRootRow(_ rootPath: String) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: "folder")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(DS.Colors.accent)
+                .frame(width: 18)
+
+            Text(rootPath)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(DS.Colors.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+
+            Spacer()
+
+            Button {
+                companionManager.removeLocalRetrievalFileRootPath(rootPath)
+            } label: {
+                Image(systemName: "minus.circle")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .frame(width: 24, height: 22)
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .help("Remove folder")
+        }
+        .padding(.vertical, 7)
+        .overlay(alignment: .bottom) {
+            Divider()
+                .background(DS.Colors.borderSubtle)
+        }
+    }
+
     private func settingsToggleRow(
         title: String,
         subtitle: String,
@@ -397,6 +489,70 @@ struct PaceSettingsWindowView: View {
             Spacer()
             Toggle("", isOn: isOn)
                 .labelsHidden()
+        }
+        .padding(.vertical, 12)
+        .overlay(alignment: .bottom) {
+            Divider()
+                .background(DS.Colors.borderSubtle)
+        }
+    }
+
+    private func retrievalSourceToggleRow(_ source: PaceRetrievalSource) -> some View {
+        let sourceStatus = companionManager.localRetrievalSourceStatuses.first { $0.source == source }
+        let indexedDocumentCount = sourceStatus?.documentCount ?? 0
+        let subtitle: String
+        if let sourceStatus {
+            if let lastError = sourceStatus.lastError {
+                if sourceStatus.documentCount > 0 {
+                    subtitle = "\(lastError) \(sourceStatus.documentCount) indexed locally."
+                } else {
+                    subtitle = lastError
+                }
+            } else {
+                subtitle = "\(sourceStatus.documentCount) indexed"
+            }
+        } else {
+            subtitle = "No local documents indexed"
+        }
+
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(source.displayName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .lineLimit(2)
+            }
+            Spacer()
+            Button {
+                companionManager.clearLocalRetrievalSource(source)
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(indexedDocumentCount > 0 ? DS.Colors.warning : DS.Colors.textTertiary)
+                    .frame(width: 26, height: 24)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.white.opacity(indexedDocumentCount > 0 ? 0.07 : 0.035))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(DS.Colors.borderSubtle, lineWidth: 0.7)
+                    )
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .help("Clear indexed \(source.displayName.lowercased()) documents")
+            .disabled(indexedDocumentCount == 0)
+            .opacity(indexedDocumentCount == 0 ? 0.45 : 1)
+
+            Toggle("", isOn: Binding(
+                get: { companionManager.isLocalRetrievalSourceEnabled(source) },
+                set: { companionManager.setLocalRetrievalSourceEnabled($0, for: source) }
+            ))
+            .labelsHidden()
         }
         .padding(.vertical, 12)
         .overlay(alignment: .bottom) {
@@ -512,6 +668,19 @@ struct PaceSettingsWindowView: View {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    private func chooseLocalRetrievalFileRoots() {
+        let openPanel = NSOpenPanel()
+        openPanel.title = "Add File Retrieval Folders"
+        openPanel.prompt = "Add"
+        openPanel.canChooseDirectories = true
+        openPanel.canChooseFiles = false
+        openPanel.allowsMultipleSelection = true
+        openPanel.canCreateDirectories = false
+
+        guard openPanel.runModal() == .OK else { return }
+        companionManager.addLocalRetrievalFileRootURLs(openPanel.urls)
     }
 
     private static let defaultMCPConfigText = """

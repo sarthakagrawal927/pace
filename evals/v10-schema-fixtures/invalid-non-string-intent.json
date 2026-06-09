@@ -1,0 +1,14 @@
+{
+  "name": "invalid-non-string-intent",
+  "valid": false,
+  "response": {
+    "spokenText": "Opening Safari.",
+    "intent": 42,
+    "payload": {
+      "name": "App.launch",
+      "args": {
+        "name": "Safari"
+      }
+    }
+  }
+}

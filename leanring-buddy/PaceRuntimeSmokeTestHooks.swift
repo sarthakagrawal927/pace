@@ -16,6 +16,8 @@ extension Notification.Name {
     static let paceSmokeCursorAnnotationsOn = Notification.Name("com.pace.smoke.cursorAnnotationsOn")
     static let paceSmokeCursorAnnotationsOff = Notification.Name("com.pace.smoke.cursorAnnotationsOff")
     static let paceSmokeRequestApproval = Notification.Name("com.pace.smoke.requestApproval")
+    static let paceSmokeShowClarification = Notification.Name("com.pace.smoke.showClarification")
+    static let paceSmokeResolveClarification = Notification.Name("com.pace.smoke.resolveClarification")
 }
 
 @MainActor
@@ -30,6 +32,8 @@ final class PaceRuntimeSmokeTestHooks {
         static let lastSettingsCommand = "PaceSmoke.lastSettingsCommand"
         static let lastCursorAnnotationsEnabled = "PaceSmoke.lastCursorAnnotationsEnabled"
         static let lastApprovalAllowed = "PaceSmoke.lastApprovalAllowed"
+        static let lastClarificationState = "PaceSmoke.lastClarificationState"
+        static let lastClarifiedTranscript = "PaceSmoke.lastClarifiedTranscript"
     }
 
     private let menuBarPanelManager: MenuBarPanelManager
@@ -84,6 +88,24 @@ final class PaceRuntimeSmokeTestHooks {
             guard let self else { return }
             let didApprove = companionManager.smokeRequestApprovalForSyntheticActionPlan()
             UserDefaults.standard.set(didApprove, forKey: DefaultsKey.lastApprovalAllowed)
+        }
+
+        observe(.paceSmokeShowClarification) { [weak self] in
+            guard let self else { return }
+            let didShowClarification = companionManager.smokeShowSyntheticClarification()
+            UserDefaults.standard.set(
+                didShowClarification ? "shown" : "failed",
+                forKey: DefaultsKey.lastClarificationState
+            )
+        }
+
+        observe(.paceSmokeResolveClarification) { [weak self] in
+            guard let self else { return }
+            let clarifiedTranscript = companionManager.smokeResolveSyntheticClarification()
+            UserDefaults.standard.set(
+                clarifiedTranscript ?? "<failed>",
+                forKey: DefaultsKey.lastClarifiedTranscript
+            )
         }
     }
 

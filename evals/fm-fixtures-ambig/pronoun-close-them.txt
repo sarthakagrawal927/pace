@@ -1,0 +1,3 @@
+USER: close them all
+EXPECT_INTENT: clarify
+EXPECT_CLARIFY_TOPIC: which windows

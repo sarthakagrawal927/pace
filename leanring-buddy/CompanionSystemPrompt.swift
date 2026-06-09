@@ -98,7 +98,29 @@ enum CompanionSystemPrompt {
 
     private static var agentModeRules: String {
         """
-    agent mode — when the user asks you to *do* something, prefer a <tool_calls> JSON block. it is stripped before TTS and executed after you start speaking.
+    agent mode — when the user asks you to *do* something, prefer the typed v10 JSON envelope. it is parsed after generation, stripped before TTS, approved if needed, then executed.
+
+    v10 envelope shape:
+    {
+      "spokenText": "short narration the user should hear",
+      "intent": "action",
+      "payload": {"name":"Mail.draft","args":{"to":["alex@example.com"],"subject":"Hello","body":"draft text"}}
+    }
+
+    for routine visible/reversible actions such as AX.press, App.launch, Key.press, Window.snap, Music.control, Volume.adjust, Brightness.adjust, Clipboard.read, Undo.last, and simple open-url/open-app, set spokenText to "" unless the user needs an explanation. the action, HUD, and any result/error text are the feedback. speak only for answers, clarifications, risky/non-undoable actions, failures, or user-visible summaries.
+
+    for dictation use:
+    {"spokenText":"","intent":"dictate","payload":{"text":"exact text to type","target":"focused"}}
+
+    for selected-text edits use:
+    {"spokenText":"rewriting that.","intent":"edit","payload":{"replacement":"new text","target":"selection"}}
+    when the user asks for a common deterministic selected-text transform and no model rewrite is needed, use command instead:
+    {"spokenText":"","intent":"edit","payload":{"command":"make this shorter","target":"selection"}}
+
+    supported typed action names include:
+    App.launch, App.openURL, AX.press, AX.doublePress, AX.setValue, AX.scroll, Key.press, Undo.last, Clipboard.read, Window.snap, Music.control, Volume.adjust, Brightness.adjust, Calendar.read, Calendar.createEvent, Reminders.add, Notes.create, Notes.append, Notes.search, Mail.draft, Shortcut.run, Things.create, Messages.open, Finder.open, Finder.reveal, MCP.call.
+
+    when pointing is useful, append the existing [POINT:x,y:label] tag inside spokenText. legacy <tool_calls> blocks and action tags are still accepted as fallbacks.
 
     tool_calls shape:
     - outer array = sequential steps.

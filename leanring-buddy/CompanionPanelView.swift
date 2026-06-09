@@ -28,10 +28,19 @@ struct CompanionPanelView: View {
                 Spacer()
                     .frame(height: 12)
 
+                turnHUDSection
+                    .padding(.horizontal, 16)
+
+                Spacer()
+                    .frame(height: 8)
+
                 lmStudioStatusRow
                     .padding(.horizontal, 16)
 
                 activePlannerInfoRow
+                    .padding(.horizontal, 16)
+
+                transcriptionProviderInfoRow
                     .padding(.horizontal, 16)
 
                 ttsVoiceInfoRow
@@ -160,6 +169,68 @@ struct CompanionPanelView: View {
     }
 
     // MARK: - Permissions Copy
+
+    private var turnHUDSection: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: turnHUDSymbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(turnHUDColor)
+                .frame(width: 16)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(companionManager.currentTurnHUDState.title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                if let detail = companionManager.currentTurnHUDState.detail,
+                   !detail.isEmpty {
+                    Text(detail)
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if companionManager.currentTurnHUDState.status == .needsClarification,
+                   !companionManager.currentTurnHUDState.options.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(companionManager.currentTurnHUDState.options, id: \.self) { option in
+                            Button(action: {
+                                companionManager.resolveClarification(option: option)
+                            }) {
+                                Text(option)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(DS.Colors.textSecondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        Capsule()
+                                            .fill(Color.white.opacity(0.07))
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .pointerCursor()
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.white.opacity(0.045))
+        )
+    }
 
     @ViewBuilder
     private var permissionsCopySection: some View {
@@ -740,24 +811,76 @@ struct CompanionPanelView: View {
         }
     }
 
+    private var turnHUDSymbol: String {
+        switch companionManager.currentTurnHUDState.status {
+        case .idle:
+            return "checkmark.circle"
+        case .listening:
+            return "waveform"
+        case .understanding:
+            return "magnifyingglass"
+        case .acting:
+            return "cursorarrow"
+        case .needsClarification:
+            return "questionmark.circle"
+        case .done:
+            return "checkmark.circle.fill"
+        case .failed:
+            return "exclamationmark.triangle"
+        case .unsupported:
+            return "lock.shield"
+        }
+    }
+
+    private var turnHUDColor: Color {
+        switch companionManager.currentTurnHUDState.status {
+        case .idle:
+            return DS.Colors.textTertiary
+        case .listening, .understanding, .acting:
+            return DS.Colors.accent
+        case .needsClarification:
+            return DS.Colors.warning
+        case .done:
+            return DS.Colors.success
+        case .failed, .unsupported:
+            return DS.Colors.warning
+        }
+    }
+
     private var localMemorySection: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text("LOCAL MEMORY")
                 .font(.system(size: 10, weight: .semibold, design: .rounded))
                 .foregroundColor(DS.Colors.textTertiary)
 
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "brain")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.Colors.textTertiary)
-                    .frame(width: 16)
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "brain")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .frame(width: 16)
 
-                Text(companionManager.localMemorySummary)
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.Colors.textTertiary)
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Text(companionManager.localMemorySummary)
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .frame(width: 16)
+
+                    Text(companionManager.localRetrievalSummary)
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
@@ -833,11 +956,11 @@ struct CompanionPanelView: View {
                     .frame(width: 16)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Approve Actions")
+                    Text("Approve Risky Actions")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(DS.Colors.textSecondary)
 
-                    Text("Ask before Pace controls your Mac")
+                    Text("Ask before non-undoable or external changes")
                         .font(.system(size: 10))
                         .foregroundColor(DS.Colors.textTertiary)
                 }
@@ -894,19 +1017,70 @@ struct CompanionPanelView: View {
 
     // MARK: - Active Planner Info Row
 
-    /// Shows the active local-planner identifier. Read-only — swapping
-    /// planner today requires editing `LocalPlannerModelIdentifier` in
-    /// Info.plist and rebuilding. The row exists so the user can verify
-    /// at a glance which model is running.
+    /// Shows the active planner identifiers. Read-only — swapping the
+    /// main planner today requires editing Info.plist and rebuilding.
+    /// Short pure-answer turns can use a separate fast in-process model.
     private var activePlannerInfoRow: some View {
+        VStack(spacing: 6) {
+            plannerInfoLine(
+                label: "Planner",
+                value: companionManager.activePlannerDisplayName
+            )
+            plannerInfoLine(
+                label: "Answers",
+                value: companionManager.activeTextOnlyPlannerDisplayName
+            )
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func plannerInfoLine(label: String, value: String) -> some View {
         HStack {
-            Text("Planner")
+            Text(label)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(DS.Colors.textSecondary)
 
             Spacer()
 
-            Text(companionManager.activePlannerDisplayName)
+            Text(value)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(DS.Colors.textTertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(Color.white.opacity(0.06))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .stroke(DS.Colors.borderSubtle, lineWidth: 0.5)
+                )
+        }
+    }
+
+    private var transcriptionProviderInfoRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: companionManager.isTranscriptionModelReady ? "waveform" : "hourglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(companionManager.isTranscriptionModelReady ? DS.Colors.success : DS.Colors.warning)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("ASR")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(DS.Colors.textSecondary)
+
+                Text(companionManager.isTranscriptionModelReady ? "Ready" : "Loading model")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Text(companionManager.buddyDictationManager.transcriptionProviderDisplayName)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(DS.Colors.textTertiary)
                 .lineLimit(1)

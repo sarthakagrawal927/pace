@@ -1,0 +1,16 @@
+USER: send the message
+APP_FRONTMOST: Mail
+AX_TREE:
+  [0] text_field|240,80|to field|alice@company.com
+  [1] text_field|240,120|subject field|Lunch confirmation
+  [2] text_area|240,160|body|Sounds great, see you at 1.
+  [3] button|800,40|send button|Send
+  [4] button|860,40|cancel button|Cancel
+OCR_TEXT:
+To: alice@company.com
+Subject: Lunch confirmation
+Sounds great, see you at 1.
+Send  Cancel
+EXPECT_APP: Mail
+SPOKEN_MUST_CONTAIN: send
+SPOKEN_MUST_NOT_CONTAIN: ID,coord

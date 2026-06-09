@@ -1,0 +1,8 @@
+USER: click the one for sending money
+ELEMENT: [0] button|240,200|Buy|Purchase assets
+ELEMENT: [1] button|400,200|Sell|Liquidate holdings
+ELEMENT: [2] button|560,200|Transfer|Send to another account
+EXPECT_POINT_ID: 2
+EXPECT_CLICK_ID: 2
+SPOKEN_MUST_NOT_CONTAIN: ID,coord
+SPOKEN_MAX_WORDS: 14

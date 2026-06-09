@@ -1,0 +1,17 @@
+USER: what am i doing
+APP_FRONTMOST: Mail
+AX_TREE:
+  [0] toolbar|24,40|Mail toolbar|
+  [1] list|24,80|inbox list|247 messages
+  [2] static_text|400,100|email subject|Lunch on Tuesday?
+  [3] static_text|400,140|email body|Hey, want to grab lunch on Tuesday at 1pm?
+  [4] button|800,40|reply button|Reply
+OCR_TEXT:
+Lunch on Tuesday?
+From: alice@company.com
+Hey, want to grab lunch on Tuesday at 1pm? Let me know.
+EXPECT_ACTIVITY: reading email
+EXPECT_APP: Mail
+EXPECT_ELEMENTS_MIN: 3
+SPOKEN_MUST_CONTAIN: mail
+SPOKEN_MUST_NOT_CONTAIN: ID,coord

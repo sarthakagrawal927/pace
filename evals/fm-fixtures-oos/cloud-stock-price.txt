@@ -1,0 +1,3 @@
+USER: what's the price of apple stock right now
+EXPECT_INTENT: out_of_scope
+REASON: Pace has no live data fetch

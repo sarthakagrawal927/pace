@@ -207,6 +207,7 @@ final class PacePushToTalkManager: NSObject, ObservableObject {
     )
     @Published private(set) var microphoneButtonRecordingStartedAt: Date?
     @Published private(set) var transcriptionProviderDisplayName = ""
+    @Published private(set) var latestStablePartialTranscript = ""
     @Published var lastErrorMessage: String?
     @Published private(set) var currentPermissionProblem: BuddyDictationPermissionProblem?
 
@@ -239,6 +240,7 @@ final class PacePushToTalkManager: NSObject, ObservableObject {
     private var draftCallbacks: BuddyDictationDraftCallbacks?
     private var draftTextBeforeCurrentDictation = ""
     private var latestRecognizedText = ""
+    private var localAgreementStabilizer = PaceLocalAgreementStabilizer()
     private var shouldAutomaticallySubmitFinalDraft = false
     private var hasFinishedCurrentDictationSession = false
     private var finalizeFallbackWorkItem: DispatchWorkItem?
@@ -345,6 +347,8 @@ final class PacePushToTalkManager: NSObject, ObservableObject {
 
         draftTextBeforeCurrentDictation = currentDraftText
         latestRecognizedText = ""
+        latestStablePartialTranscript = ""
+        localAgreementStabilizer.reset()
         draftCallbacks = BuddyDictationDraftCallbacks(
             updateDraftText: updateDraftText,
             submitDraftText: submitDraftText
@@ -440,11 +444,16 @@ final class PacePushToTalkManager: NSObject, ObservableObject {
         activeTranscriptionSession = nil
 
         print("🎙️ PacePushToTalkManager: opening transcription provider \(transcriptionProvider.displayName)")
+        let contextualPhrases = PaceTranscriptionContextualPhraseBuilder.phrasesForCurrentTurn()
+        if !contextualPhrases.isEmpty {
+            print("🎙️ PacePushToTalkManager: biasing transcription with \(contextualPhrases.count) local phrases")
+        }
 
         let activeTranscriptionSession = try await transcriptionProvider.startStreamingSession(
+            contextualPhrases: contextualPhrases,
             onTranscriptUpdate: { [weak self] transcriptText in
                 Task { @MainActor in
-                    self?.latestRecognizedText = transcriptText
+                    self?.handlePartialTranscriptUpdate(transcriptText)
                 }
             },
             onFinalTranscriptReady: { [weak self] transcriptText in
@@ -487,6 +496,19 @@ final class PacePushToTalkManager: NSObject, ObservableObject {
 
         audioEngine.prepare()
         try audioEngine.start()
+    }
+
+    private func handlePartialTranscriptUpdate(_ transcriptText: String) {
+        latestRecognizedText = transcriptText
+
+        let stablePartialTranscript = localAgreementStabilizer.acceptHypothesis(transcriptText)
+        guard stablePartialTranscript != latestStablePartialTranscript else { return }
+
+        latestStablePartialTranscript = stablePartialTranscript
+        guard !stablePartialTranscript.isEmpty else { return }
+
+        let stableDraftText = composeDraftText(withTranscribedText: stablePartialTranscript)
+        draftCallbacks?.updateDraftText(stableDraftText)
     }
 
     /// Track how much real audio we delivered to the recogniser this
@@ -595,6 +617,8 @@ final class PacePushToTalkManager: NSObject, ObservableObject {
         activeStartSource = nil
         draftTextBeforeCurrentDictation = ""
         latestRecognizedText = ""
+        latestStablePartialTranscript = ""
+        localAgreementStabilizer.reset()
         shouldAutomaticallySubmitFinalDraft = false
         hasFinishedCurrentDictationSession = false
         isPreparingToRecord = false

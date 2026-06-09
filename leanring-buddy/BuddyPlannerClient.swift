@@ -6,8 +6,9 @@
 //  cold-path LLM that takes the user's transcript + (optional) screen
 //  context and produces pace's spoken response and action tags.
 //
-//  Only one conformer ships today: `LocalPlannerClient` (text-only,
-//  talks to a local OpenAI-compatible reasoner like LM Studio).
+//  Two conformers ship today: `LocalPlannerClient` (text-only,
+//  talks to a local OpenAI-compatible reasoner like LM Studio) and
+//  `AppleFoundationModelsPlannerClient` for short on-device answer turns.
 //
 //  The protocol is intentionally kept generic so an alternate local
 //  runtime (Ollama, raw llama.cpp, MLX-server) can drop in by writing
@@ -103,6 +104,16 @@ enum BuddyPlannerClientFactory {
         }
     }
 
+    /// Short answer turns are a different latency class from screen/action
+    /// planning. Prefer Apple's in-process on-device model when it is
+    /// available, even if the main planner remains LM Studio for harder
+    /// fixtures. Fall back to the configured local planner when Apple
+    /// Intelligence is unavailable or its model assets are not ready.
+    @MainActor
+    static func makeFastTextOnlyPlannerOrFallback() -> any BuddyPlannerClient {
+        return makeFoundationModelsPlannerOrFallback()
+    }
+
     /// Construct the Foundation Models planner only if `SystemLanguageModel
     /// .default.availability == .available`. Otherwise log an actionable
     /// message and fall back to LocalPlannerClient so the user isn't
@@ -129,6 +140,9 @@ enum BuddyPlannerClientFactory {
             case .modelNotReady:
                 humanReadableReason = "the on-device model is still downloading"
                 actionableHint = "Apple Intelligence is enabled but the model assets aren't ready yet. Wait a few minutes for the download to finish, then relaunch Pace. Falling back to LM Studio for now."
+            @unknown default:
+                humanReadableReason = "Apple Foundation Models is unavailable"
+                actionableHint = "Falling back to LM Studio for now."
             }
             print("⚠️  Planner: Foundation Models unavailable — \(humanReadableReason).")
             print("    → \(actionableHint)")

@@ -18,10 +18,15 @@ struct AppleSpeechTranscriptionProviderError: LocalizedError {
 }
 
 final class AppleSpeechTranscriptionProvider: BuddyTranscriptionProvider {
-    let displayName = "Apple Speech"
+    let displayName: String
     let requiresSpeechRecognitionPermission = true
 
+    init(displayName: String = "Apple Speech") {
+        self.displayName = displayName
+    }
+
     func startStreamingSession(
+        contextualPhrases: [String],
         onTranscriptUpdate: @escaping (String) -> Void,
         onFinalTranscriptReady: @escaping (String) -> Void,
         onError: @escaping (Error) -> Void
@@ -32,6 +37,7 @@ final class AppleSpeechTranscriptionProvider: BuddyTranscriptionProvider {
 
         return try AppleSpeechTranscriptionSession(
             speechRecognizer: speechRecognizer,
+            contextualPhrases: contextualPhrases,
             onTranscriptUpdate: onTranscriptUpdate,
             onFinalTranscriptReady: onFinalTranscriptReady,
             onError: onError
@@ -69,6 +75,7 @@ private final class AppleSpeechTranscriptionSession: NSObject, BuddyStreamingTra
 
     init(
         speechRecognizer: SFSpeechRecognizer,
+        contextualPhrases: [String],
         onTranscriptUpdate: @escaping (String) -> Void,
         onFinalTranscriptReady: @escaping (String) -> Void,
         onError: @escaping (Error) -> Void
@@ -83,6 +90,7 @@ private final class AppleSpeechTranscriptionSession: NSObject, BuddyStreamingTra
         recognitionRequest.shouldReportPartialResults = true
         recognitionRequest.taskHint = .dictation
         recognitionRequest.addsPunctuation = true
+        recognitionRequest.contextualStrings = contextualPhrases
 
         if speechRecognizer.supportsOnDeviceRecognition {
             recognitionRequest.requiresOnDeviceRecognition = true

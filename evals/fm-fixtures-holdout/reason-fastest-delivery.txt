@@ -1,0 +1,8 @@
+USER: pick the fastest delivery option
+ELEMENT: [0] option|240,200|Standard|5-7 business days
+ELEMENT: [1] option|400,200|Express|2 business days
+ELEMENT: [2] option|560,200|Same-day|by 9pm today
+EXPECT_POINT_ID: 2
+EXPECT_CLICK_ID: 2
+SPOKEN_MUST_NOT_CONTAIN: ID,coord
+SPOKEN_MAX_WORDS: 14

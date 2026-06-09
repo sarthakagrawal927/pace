@@ -1,0 +1,3 @@
+USER: order me an uber to the airport
+EXPECT_INTENT: out_of_scope
+REASON: No ride-booking integration

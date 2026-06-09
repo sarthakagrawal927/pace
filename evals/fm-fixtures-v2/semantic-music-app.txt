@@ -1,0 +1,9 @@
+USER: open my music app
+ELEMENT: [0] dock_icon|24,1000|Mail|Inbox
+ELEMENT: [1] dock_icon|72,1000|Xcode|Development
+ELEMENT: [2] dock_icon|120,1000|Safari|Web browser
+ELEMENT: [3] dock_icon|168,1000|Spotify|Music streaming
+EXPECT_POINT_ID: 3
+EXPECT_CLICK_ID: 3
+SPOKEN_MUST_NOT_CONTAIN: ID,coord
+SPOKEN_MAX_WORDS: 14

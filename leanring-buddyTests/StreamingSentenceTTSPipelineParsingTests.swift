@@ -153,6 +153,14 @@ struct StreamingSentenceTTSPipelineParsingTests {
         #expect(result == "look at the save button.")
     }
 
+    @Test func structuredPlannerJSONIsNotSpokenMidStream() async throws {
+        let result = StreamingSentenceTTSPipeline.testablyComputeSpeakableSafePrefix(
+            from: #"{"spokenText":"Drafting that now.","intent":"action","payload":{"name":"Mail.draft""#
+        )
+
+        #expect(result == "")
+    }
+
     // MARK: - Empty / edge inputs
 
     @Test func emptyInputReturnsEmpty() async throws {

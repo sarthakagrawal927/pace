@@ -1,0 +1,3 @@
+USER: send a car to pick up my friend
+EXPECT_INTENT: out_of_scope
+REASON: No ride or contact-route action

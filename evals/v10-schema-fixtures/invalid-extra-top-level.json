@@ -1,0 +1,15 @@
+{
+  "name": "invalid-extra-top-level",
+  "valid": false,
+  "response": {
+    "spokenText": "Opening Safari.",
+    "intent": "action",
+    "payload": {
+      "name": "App.launch",
+      "args": {
+        "name": "Safari"
+      }
+    },
+    "debug": true
+  }
+}

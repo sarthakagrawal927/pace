@@ -1,0 +1,8 @@
+USER: this email looks like spam
+ELEMENT: [0] button|240,200|Reply|Send response
+ELEMENT: [1] button|400,200|Report|Flag as junk
+ELEMENT: [2] button|560,200|Forward|Send to someone
+EXPECT_POINT_ID: 1
+EXPECT_CLICK_ID: 1
+SPOKEN_MUST_NOT_CONTAIN: ID,coord
+SPOKEN_MAX_WORDS: 14

@@ -1,0 +1,15 @@
+USER: what am i working on
+APP_FRONTMOST: Blender
+AX_TREE:
+  [0] viewport|24,40|3d viewport|
+  [1] outliner|800,80|scene outliner|Camera, Cube, Light
+  [2] panel|800,400|properties|Object Properties
+OCR_TEXT:
+Object Mode  Edit Mode
+Camera
+Cube
+Light
+File  Edit  Render  Window  Help
+EXPECT_APP: Blender
+SPOKEN_MUST_CONTAIN: blender
+SPOKEN_MUST_NOT_CONTAIN: ID

@@ -88,6 +88,7 @@ struct BlueCursorView: View {
     let screenFrame: CGRect
     let isFirstAppearance: Bool
     @ObservedObject var companionManager: CompanionManager
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var cursorPosition: CGPoint
     @State private var isCursorOnThisScreen: Bool
@@ -208,8 +209,8 @@ struct BlueCursorView: View {
                     )
                     .opacity(bubbleOpacity)
                     .position(x: cursorPosition.x + 10 + (bubbleSize.width / 2), y: cursorPosition.y + 18)
-                    .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
-                    .animation(.easeOut(duration: 0.5), value: bubbleOpacity)
+                    .animation(reduceMotion ? nil : .spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.5), value: bubbleOpacity)
                     .onPreferenceChange(SizePreferenceKey.self) { newSize in
                         bubbleSize = newSize
                     }
@@ -245,9 +246,9 @@ struct BlueCursorView: View {
                     .scaleEffect(navigationBubbleScale)
                     .opacity(navigationBubbleOpacity)
                     .position(x: cursorPosition.x + 10 + (navigationBubbleSize.width / 2), y: cursorPosition.y + 18)
-                    .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.6), value: navigationBubbleScale)
-                    .animation(.easeOut(duration: 0.5), value: navigationBubbleOpacity)
+                    .animation(reduceMotion ? nil : .spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
+                    .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.6), value: navigationBubbleScale)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.5), value: navigationBubbleOpacity)
                     .onPreferenceChange(NavigationBubbleSizePreferenceKey.self) { newSize in
                         navigationBubbleSize = newSize
                     }
@@ -294,13 +295,13 @@ struct BlueCursorView: View {
                 .opacity(arrowShouldBeVisible ? cursorOpacity : 0)
                 .position(cursorPosition)
                 .animation(
-                    buddyNavigationMode == .followingCursor
+                    !reduceMotion && buddyNavigationMode == .followingCursor
                         ? .spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0)
                         : nil,
                     value: cursorPosition
                 )
                 .animation(
-                    buddyNavigationMode == .navigatingToTarget ? nil : .easeInOut(duration: 0.3),
+                    reduceMotion || buddyNavigationMode == .navigatingToTarget ? nil : .easeInOut(duration: 0.3),
                     value: triangleRotationDegrees
                 )
 
@@ -324,8 +325,12 @@ struct BlueCursorView: View {
             // Only show welcome message on first appearance (app start)
             // and only if the cursor starts on this screen
             if isFirstAppearance && isCursorOnThisScreen {
-                withAnimation(.easeIn(duration: 2.0)) {
+                if reduceMotion {
                     self.cursorOpacity = 1.0
+                } else {
+                    withAnimation(.easeIn(duration: 2.0)) {
+                        self.cursorOpacity = 1.0
+                    }
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                     self.bubbleOpacity = 0.0
@@ -458,6 +463,16 @@ struct BlueCursorView: View {
         buddyNavigationMode = .navigatingToTarget
         isReturningToCursor = false
 
+        if reduceMotion {
+            navigationAnimationTimer?.invalidate()
+            navigationAnimationTimer = nil
+            cursorPosition = clampedTarget
+            buddyFlightScale = 1.0
+            triangleRotationDegrees = -35.0
+            startPointingAtElement()
+            return
+        }
+
         animateBezierFlightArc(to: clampedTarget) {
             guard self.buddyNavigationMode == .navigatingToTarget else { return }
             self.startPointingAtElement()
@@ -476,6 +491,14 @@ struct BlueCursorView: View {
 
         let startPosition = cursorPosition
         let endPosition = destination
+
+        if reduceMotion {
+            cursorPosition = endPosition
+            buddyFlightScale = 1.0
+            triangleRotationDegrees = -35.0
+            onComplete()
+            return
+        }
 
         let deltaX = endPosition.x - startPosition.x
         let deltaY = endPosition.y - startPosition.y
@@ -555,13 +578,23 @@ struct BlueCursorView: View {
         navigationBubbleText = ""
         navigationBubbleOpacity = 1.0
         navigationBubbleSize = .zero
-        navigationBubbleScale = 0.5
+        navigationBubbleScale = reduceMotion ? 1.0 : 0.5
 
         // Use custom bubble text from the companion manager (e.g. onboarding demo)
         // if available, otherwise fall back to a random pointer phrase
         let pointerPhrase = companionManager.detectedElementBubbleText
             ?? navigationPointerPhrases.randomElement()
             ?? "right here!"
+
+        if reduceMotion {
+            navigationBubbleText = pointerPhrase
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                guard self.buddyNavigationMode == .pointingAtTarget else { return }
+                self.navigationBubbleOpacity = 0.0
+                self.startFlyingBackToCursor()
+            }
+            return
+        }
 
         streamNavigationBubbleCharacter(phrase: pointerPhrase, characterIndex: 0) {
             // All characters streamed — hold for 3 seconds, then fly back
@@ -650,8 +683,18 @@ struct BlueCursorView: View {
     // MARK: - Welcome Animation
 
     private func startWelcomeAnimation() {
+        if reduceMotion {
+            bubbleOpacity = 1.0
+            welcomeText = fullWelcomeMessage
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                self.bubbleOpacity = 0.0
+                self.showWelcome = false
+            }
+            return
+        }
+
         withAnimation(.easeIn(duration: 0.4)) {
-            self.bubbleOpacity = 1.0
+            bubbleOpacity = 1.0
         }
 
         var currentIndex = 0
@@ -723,6 +766,14 @@ class OverlayWindowManager {
     func fadeOutAndHideOverlay(duration: TimeInterval = 0.4) {
         let windowsToFade = overlayWindows
         overlayWindows.removeAll()
+
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            for window in windowsToFade {
+                window.orderOut(nil)
+                window.contentView = nil
+            }
+            return
+        }
 
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = duration

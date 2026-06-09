@@ -1,0 +1,8 @@
+USER: book the cheapest hotel
+ELEMENT: [0] hotel_card|240,200|Grand Plaza|$220/night
+ELEMENT: [1] hotel_card|400,200|Budget Inn|$85/night
+ELEMENT: [2] hotel_card|560,200|Luxury Suites|$450/night
+EXPECT_POINT_ID: 1
+EXPECT_CLICK_ID: 1
+SPOKEN_MUST_NOT_CONTAIN: ID,coord
+SPOKEN_MAX_WORDS: 14

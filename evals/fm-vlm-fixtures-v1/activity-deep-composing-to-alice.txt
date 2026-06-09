@@ -1,0 +1,14 @@
+USER: what am i working on
+APP_FRONTMOST: Mail
+AX_TREE:
+  [0] text_field|240,80|to field|alice@company.com
+  [1] text_field|240,120|subject field|Meeting tomorrow
+  [2] text_area|240,160|body|Hey Alice, can we sync at 3pm tomorrow about the
+OCR_TEXT:
+To: alice@company.com
+Subject: Meeting tomorrow
+Hey Alice, can we sync at 3pm tomorrow about the
+EXPECT_ACTIVITY: composing email
+EXPECT_APP: Mail
+SPOKEN_MUST_CONTAIN: composing
+SPOKEN_MUST_NOT_CONTAIN: ID,coord

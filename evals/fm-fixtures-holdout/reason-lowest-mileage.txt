@@ -1,0 +1,8 @@
+USER: select the lowest mileage car
+ELEMENT: [0] car_card|240,200|Sedan|78000 miles
+ELEMENT: [1] car_card|400,200|Coupe|34000 miles
+ELEMENT: [2] car_card|560,200|SUV|112000 miles
+EXPECT_POINT_ID: 1
+EXPECT_CLICK_ID: 1
+SPOKEN_MUST_NOT_CONTAIN: ID,coord
+SPOKEN_MAX_WORDS: 14

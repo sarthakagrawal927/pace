@@ -1,0 +1,17 @@
+USER: what am i doing
+APP_FRONTMOST: Ableton Live
+AX_TREE:
+  [0] toolbar|24,40|live toolbar|
+  [1] track|24,100|track|Drum Kit
+  [2] track|24,140|track|Bass
+  [3] track|24,180|track|Synth Lead
+  [4] button|800,40|play button|Play
+OCR_TEXT:
+Drum Kit
+Bass
+Synth Lead
+120 BPM  4/4
+Play  Record
+EXPECT_APP: Ableton Live
+SPOKEN_MUST_CONTAIN: ableton
+SPOKEN_MUST_NOT_CONTAIN: ID

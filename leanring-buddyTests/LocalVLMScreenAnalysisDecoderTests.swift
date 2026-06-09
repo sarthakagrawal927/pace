@@ -7,8 +7,8 @@
 //  2B model occasionally drops the `description` field on dense screens
 //  like Xcode, returning just `{"elements":[…]}`. Before, that hard-
 //  failed the whole turn's screen analysis. We now decode the missing
-//  description as an empty string so the element list (which is usually
-//  fine on its own) still flows through to the planner.
+//  description from the element list so useful screen context still
+//  flows through to the planner.
 //
 //  These tests pin that behaviour down so a future "tighten the
 //  decoder" PR doesn't silently regress the Xcode-screen case.
@@ -37,7 +37,7 @@ struct LocalVLMScreenAnalysisDecoderTests {
         #expect(analysis.description == "a search bar at the top of the screen")
     }
 
-    @Test func missingDescriptionDecodesAsEmptyString() throws {
+    @Test func missingDescriptionSynthesizesFromElements() throws {
         // Exact shape ui-venus-1.5-2b returns on dense Xcode screens.
         // Reproduced from user's PTT log on 2026-05-29.
         let elementsOnlyJSON = """
@@ -51,10 +51,10 @@ struct LocalVLMScreenAnalysisDecoderTests {
         let analysis = try JSONDecoder().decode(LocalVLMScreenAnalysis.self, from: elementsOnlyJSON)
 
         #expect(analysis.elements.count == 1)
-        #expect(analysis.description == "", "missing description must decode as empty, not throw")
+        #expect(analysis.description == "Screen contains: Xcode application window.")
     }
 
-    @Test func nullDescriptionDecodesAsEmptyString() throws {
+    @Test func nullDescriptionWithNoElementsDecodesAsEmptyString() throws {
         let nullDescriptionJSON = """
         {
           "elements": [],
@@ -65,6 +65,23 @@ struct LocalVLMScreenAnalysisDecoderTests {
         let analysis = try JSONDecoder().decode(LocalVLMScreenAnalysis.self, from: nullDescriptionJSON)
 
         #expect(analysis.description == "")
+    }
+
+    @Test func emptyDescriptionSynthesizesFromElementTextAndLabels() throws {
+        let emptyDescriptionJSON = """
+        {
+          "elements": [
+            {"label": "send button", "role": "button", "bbox": [10, 20, 100, 30], "text": "Send"},
+            {"label": "subject field", "role": "text_field", "bbox": [10, 60, 200, 30], "text": null},
+            {"label": "send button duplicate", "role": "button", "bbox": [220, 20, 100, 30], "text": "Send"}
+          ],
+          "description": ""
+        }
+        """.data(using: .utf8)!
+
+        let analysis = try JSONDecoder().decode(LocalVLMScreenAnalysis.self, from: emptyDescriptionJSON)
+
+        #expect(analysis.description == "Screen contains: Send, subject field.")
     }
 
     @Test func missingElementsStillThrows() throws {
@@ -117,5 +134,6 @@ struct LocalVLMScreenAnalysisDecoderTests {
         let analysis = try JSONDecoder().decode(LocalVLMScreenAnalysis.self, from: elementWithPipeRoleJSON)
 
         #expect(analysis.elements.first?.role == "window", "pipe-roles must be collapsed at decode time")
+        #expect(analysis.description == "Screen contains: Xcode window.")
     }
 }

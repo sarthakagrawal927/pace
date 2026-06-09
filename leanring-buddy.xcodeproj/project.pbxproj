@@ -9,7 +9,6 @@
 /* Begin PBXBuildFile section */
 		2DD12CCA2FC82FE8009F8723 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB082F6500080039DA55 /* WhisperKit */; };
 		AA00BB032F6500030039DA55 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB022F6500020039DA55 /* Sparkle */; };
-		AA00BB062F6500060039DA55 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB052F6500050039DA55 /* PostHog */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -73,7 +72,6 @@
 			files = (
 				2DD12CCA2FC82FE8009F8723 /* WhisperKit in Frameworks */,
 				AA00BB032F6500030039DA55 /* Sparkle in Frameworks */,
-				AA00BB062F6500060039DA55 /* PostHog in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -135,7 +133,6 @@
 			name = "leanring-buddy";
 			packageProductDependencies = (
 				AA00BB022F6500020039DA55 /* Sparkle */,
-				AA00BB052F6500050039DA55 /* PostHog */,
 				AA00BB082F6500080039DA55 /* WhisperKit */,
 			);
 			productName = "leanring-buddy";
@@ -222,7 +219,6 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				AA00BB012F6500010039DA55 /* XCRemoteSwiftPackageReference "Sparkle" */,
-				AA00BB042F6500040039DA55 /* XCRemoteSwiftPackageReference "posthog-ios" */,
 				AA00BB072F6500070039DA55 /* XCRemoteSwiftPackageReference "WhisperKit" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -625,14 +621,6 @@
 				minimumVersion = 2.9.0;
 			};
 		};
-		AA00BB042F6500040039DA55 /* XCRemoteSwiftPackageReference "posthog-ios" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/PostHog/posthog-ios.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 3.0.0;
-			};
-		};
 		AA00BB072F6500070039DA55 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/argmaxinc/WhisperKit";
@@ -648,11 +636,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AA00BB012F6500010039DA55 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
-		};
-		AA00BB052F6500050039DA55 /* PostHog */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = AA00BB042F6500040039DA55 /* XCRemoteSwiftPackageReference "posthog-ios" */;
-			productName = PostHog;
 		};
 		AA00BB082F6500080039DA55 /* WhisperKit */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -41,8 +41,41 @@ wait_for_default() {
     return 1
 }
 
-send_escape() {
-    swift -e 'import CoreGraphics; import Foundation; let keyCode: CGKeyCode = 0x35; CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true)?.post(tap: .cghidEventTap); Thread.sleep(forTimeInterval: 0.05); CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false)?.post(tap: .cghidEventTap)'
+cancel_approval_if_visible() {
+    osascript >/dev/null 2>&1 <<'APPLESCRIPT' || true
+tell application "System Events"
+    if exists process "Pace" then
+        tell process "Pace"
+            set frontmost to true
+            key code 53
+            if exists window 1 then
+                if exists button "Cancel" of window 1 then
+                    click button "Cancel" of window 1
+                end if
+                if exists sheet 1 of window 1 then
+                    if exists button "Cancel" of sheet 1 of window 1 then
+                        click button "Cancel" of sheet 1 of window 1
+                    end if
+                end if
+            end if
+        end tell
+    end if
+end tell
+APPLESCRIPT
+}
+
+wait_for_approval_cancel() {
+    for _attempt in {1..30}; do
+        cancel_approval_if_visible
+        local actual_value
+        actual_value="$(read_default PaceSmoke.lastApprovalAllowed)"
+        if [[ "$actual_value" == "0" ]]; then
+            return 0
+        fi
+        sleep 0.2
+    done
+    echo "expected PaceSmoke.lastApprovalAllowed=0, got $(read_default PaceSmoke.lastApprovalAllowed)" >&2
+    return 1
 }
 
 cleanup() {
@@ -54,6 +87,8 @@ trap cleanup EXIT
 defaults delete com.pace.app PaceSmoke.lastPanelCommand 2>/dev/null || true
 defaults delete com.pace.app PaceSmoke.lastCursorAnnotationsEnabled 2>/dev/null || true
 defaults delete com.pace.app PaceSmoke.lastApprovalAllowed 2>/dev/null || true
+defaults delete com.pace.app PaceSmoke.lastClarificationState 2>/dev/null || true
+defaults delete com.pace.app PaceSmoke.lastClarifiedTranscript 2>/dev/null || true
 defaults delete com.pace.app PaceSmoke.ready 2>/dev/null || true
 
 pkill -x Pace 2>/dev/null || true
@@ -72,10 +107,14 @@ wait_for_default PaceSmoke.lastCursorAnnotationsEnabled 0
 post_notification "com.pace.smoke.cursorAnnotationsOn"
 wait_for_default PaceSmoke.lastCursorAnnotationsEnabled 1
 
+post_notification "com.pace.smoke.showClarification"
+wait_for_default PaceSmoke.lastClarificationState shown
+
+post_notification "com.pace.smoke.resolveClarification"
+wait_for_default PaceSmoke.lastClarifiedTranscript "rewrite the selected text"
+
 post_notification "com.pace.smoke.requestApproval"
-sleep 0.7
-send_escape
-wait_for_default PaceSmoke.lastApprovalAllowed 0
+wait_for_approval_cancel
 
 post_notification "com.pace.smoke.hidePanel"
 wait_for_default PaceSmoke.lastPanelCommand hide

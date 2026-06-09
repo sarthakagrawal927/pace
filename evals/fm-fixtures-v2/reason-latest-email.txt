@@ -1,0 +1,8 @@
+USER: open the latest email
+ELEMENT: [0] email_row|240,100|Alice|2 hours ago
+ELEMENT: [1] email_row|240,140|Bob|yesterday
+ELEMENT: [2] email_row|240,180|Carol|3 days ago
+EXPECT_POINT_ID: 0
+EXPECT_CLICK_ID: 0
+SPOKEN_MUST_NOT_CONTAIN: ID,coord
+SPOKEN_MAX_WORDS: 14

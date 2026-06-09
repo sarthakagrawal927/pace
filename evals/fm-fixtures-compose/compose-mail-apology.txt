@@ -1,0 +1,5 @@
+USER: write an apology email to the client about the delay
+ELEMENT: [0] dock_icon|24,1000|Mail|Inbox
+BODY_MUST_NOT_BE_EMPTY: 1
+BODY_MIN_WORDS: 15
+SPOKEN_MUST_CONTAIN: client

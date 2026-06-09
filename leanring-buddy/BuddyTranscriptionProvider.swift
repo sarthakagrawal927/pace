@@ -20,6 +20,7 @@ protocol BuddyTranscriptionProvider {
     var requiresSpeechRecognitionPermission: Bool { get }
 
     func startStreamingSession(
+        contextualPhrases: [String],
         onTranscriptUpdate: @escaping (String) -> Void,
         onFinalTranscriptReady: @escaping (String) -> Void,
         onError: @escaping (Error) -> Void
@@ -42,12 +43,40 @@ extension BuddyTranscriptionProvider {
 }
 
 enum BuddyTranscriptionProviderFactory {
-    /// Apple Speech (`SFSpeechRecognizer`, on-device) is the only
-    /// shipped provider. The protocol stays generic so a future
-    /// alternate backend (e.g. WhisperKit, MLX-Whisper) can drop in
-    /// as a sibling conformer.
     static func makeDefaultProvider() -> any BuddyTranscriptionProvider {
-        let provider = AppleSpeechTranscriptionProvider()
+        makeProvider(
+            configuredProviderName: AppBundleConfiguration.stringValue(forKey: "TranscriptionProvider"),
+            isWhisperKitRuntimeAvailable: WhisperKitTranscriptionProvider.isRuntimeAvailable
+        )
+    }
+
+    static func makeProvider(
+        configuredProviderName: String?,
+        isWhisperKitRuntimeAvailable: Bool
+    ) -> any BuddyTranscriptionProvider {
+        let normalizedProviderName = configuredProviderName?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: " ", with: "")
+
+        let provider: any BuddyTranscriptionProvider
+        switch normalizedProviderName {
+        case "whisperkit", "whisper":
+            if isWhisperKitRuntimeAvailable {
+                provider = WhisperKitTranscriptionProvider()
+            } else {
+                print("⚠️ Transcription: WhisperKit requested but runtime is unavailable; falling back to Apple Speech")
+                provider = AppleSpeechTranscriptionProvider(displayName: "Apple Speech (WhisperKit fallback)")
+            }
+        case "applespeech", "apple", .none:
+            provider = AppleSpeechTranscriptionProvider()
+        default:
+            print("⚠️ Transcription: unknown provider '\(configuredProviderName ?? "nil")'; falling back to Apple Speech")
+            provider = AppleSpeechTranscriptionProvider()
+        }
+
         print("🎙️ Transcription: using \(provider.displayName)")
         return provider
     }

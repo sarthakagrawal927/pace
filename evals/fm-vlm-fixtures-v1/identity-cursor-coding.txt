@@ -1,0 +1,20 @@
+USER: what am i doing
+APP_FRONTMOST: Cursor
+AX_TREE:
+  [0] toolbar|24,40|Cursor toolbar|
+  [1] text_field|240,200|cursor chat input|empty
+  [2] text_view|240,80|editor|def fetch_data(url): return requests.get(url).json()
+  [3] sidebar|24,80|file_tree|main.py, requirements.txt, README.md
+  [4] button|24,800|run button|Run
+OCR_TEXT:
+def fetch_data(url):
+    return requests.get(url).json()
+
+main.py
+requirements.txt
+README.md
+EXPECT_ACTIVITY: writing code
+EXPECT_APP: Cursor
+EXPECT_ELEMENTS_MIN: 3
+SPOKEN_MUST_CONTAIN: cursor
+SPOKEN_MUST_NOT_CONTAIN: ID

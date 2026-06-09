@@ -26,7 +26,10 @@ final class LocalPlannerClient: BuddyPlannerClient {
     private let urlSession: URLSession
 
     init(baseURL: URL, modelIdentifier: String) {
-        self.baseURL = baseURL
+        self.baseURL = PaceLocalEndpointGuard.resolvedLocalOpenAICompatibleBaseURL(
+            configuredURL: baseURL,
+            settingName: "LocalPlannerBaseURL"
+        )
         self.modelIdentifier = modelIdentifier
         self.displayName = "Local Planner (\(modelIdentifier))"
 
@@ -57,8 +60,10 @@ final class LocalPlannerClient: BuddyPlannerClient {
             .stringValue(forKey: "LocalPlannerModelIdentifier")
             ?? "qwen3-4b-instruct"
 
-        let resolvedBaseURL = URL(string: configuredBaseURL)
-            ?? URL(string: "http://localhost:1234/v1")!
+        let resolvedBaseURL = PaceLocalEndpointGuard.resolvedLocalOpenAICompatibleBaseURL(
+            configuredURLString: configuredBaseURL,
+            settingName: "LocalPlannerBaseURL"
+        )
 
         let effectiveModelIdentifier = PacePlannerModelResolver.resolvedIdentifier
             ?? configuredModelIdentifier
@@ -84,15 +89,7 @@ final class LocalPlannerClient: BuddyPlannerClient {
             print("ℹ️ LocalPlannerClient: received \(images.count) image(s) but model is text-only — ignoring")
         }
 
-        let startTime = Date()
         let chatCompletionsURL = baseURL.appendingPathComponent("chat/completions")
-
-        var request = URLRequest(url: chatCompletionsURL)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        // LM Studio doesn't require a real token; harmless dummy keeps
-        // OpenAI-compatible proxies (LiteLLM, vLLM with auth) happy.
-        request.setValue("Bearer lm-studio", forHTTPHeaderField: "Authorization")
 
         var messages: [[String: Any]] = []
         messages.append(["role": "system", "content": systemPrompt])
@@ -126,79 +123,162 @@ final class LocalPlannerClient: BuddyPlannerClient {
             "cache_prompt": true
         ]
 
-        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        let maximumPlannerAttempts = 3
 
-        let (byteStream, response) = try await urlSession.bytes(for: request)
+        for plannerAttemptNumber in 1...maximumPlannerAttempts {
+            let startTime = Date()
+            var requestBodyForAttempt = requestBody
+            if plannerAttemptNumber > 1 {
+                requestBodyForAttempt["cache_prompt"] = false
+            }
+            let requestBodyData = try JSONSerialization.data(withJSONObject: requestBodyForAttempt)
+            var request = URLRequest(url: chatCompletionsURL)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            // LM Studio doesn't require a real token; harmless dummy keeps
+            // OpenAI-compatible proxies (LiteLLM, vLLM with auth) happy.
+            request.setValue("Bearer lm-studio", forHTTPHeaderField: "Authorization")
+            request.httpBody = requestBodyData
 
+            let (byteStream, response) = try await urlSession.bytes(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw NSError(
+                    domain: "LocalPlannerClient",
+                    code: -1,
+                    userInfo: [NSLocalizedDescriptionKey: "Local planner returned a non-HTTP response."]
+                )
+            }
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                var errorBodyChunks: [String] = []
+                for try await line in byteStream.lines {
+                    errorBodyChunks.append(line)
+                }
+                let errorBody = errorBodyChunks.joined(separator: "\n")
+                throw NSError(
+                    domain: "LocalPlannerClient",
+                    code: httpResponse.statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: "Local planner HTTP \(httpResponse.statusCode): \(errorBody)"]
+                )
+            }
+
+            var accumulatedResponseText = ""
+            var hasLoggedTimeToFirstToken = false
+
+            for try await line in byteStream.lines {
+                // OpenAI-compatible SSE: every event is prefixed with `data: `.
+                guard line.hasPrefix("data: ") else { continue }
+                let jsonString = String(line.dropFirst(6))
+
+                // End-of-stream sentinel.
+                guard jsonString != "[DONE]" else { break }
+
+                guard let jsonData = jsonString.data(using: .utf8),
+                      let eventPayload = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                      let choices = eventPayload["choices"] as? [[String: Any]],
+                      let firstChoice = choices.first,
+                      let delta = firstChoice["delta"] as? [String: Any] else {
+                    continue
+                }
+
+                // Some local servers also stream `reasoning_content` for
+                // thinking models. We only surface the user-facing `content`.
+                if let textChunk = delta["content"] as? String, !textChunk.isEmpty {
+                    if !hasLoggedTimeToFirstToken {
+                        let timeToFirstTokenMs = Int(Date().timeIntervalSince(startTime) * 1000)
+                        print("⚡ Planner TTFT: \(timeToFirstTokenMs)ms (model=\(modelIdentifier), \(messages.count) msgs)")
+                        PaceTelemetryLog.recordPlannerTimeToFirstToken(
+                            milliseconds: timeToFirstTokenMs,
+                            modelIdentifier: modelIdentifier,
+                            messageCount: messages.count
+                        )
+                        hasLoggedTimeToFirstToken = true
+                    }
+                    accumulatedResponseText += textChunk
+                    // Thinking models (Qwen3-Thinking, DeepSeek-R1-Distill, etc.)
+                    // sometimes emit `<think>…</think>` blocks inline inside
+                    // `content` rather than via a separate `reasoning_content`
+                    // field. We strip them defensively so the spoken response
+                    // and downstream action-tag parser never see thinking
+                    // output. Stripping happens on every chunk so the UI
+                    // preview (and the final `text` return) are both clean.
+                    let strippedSoFar = LocalPlannerClient.stripThinkingBlocks(from: accumulatedResponseText)
+                    let snapshotOfStrippedText = strippedSoFar
+                    await onTextChunk(snapshotOfStrippedText)
+                }
+            }
+
+            let duration = Date().timeIntervalSince(startTime)
+            let strippedFinalText = LocalPlannerClient.stripThinkingBlocks(from: accumulatedResponseText)
+            if !strippedFinalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return (text: strippedFinalText, duration: duration)
+            }
+
+            print("⚠️ LocalPlannerClient: empty planner stream from \(modelIdentifier); retrying")
+        }
+
+        print("⚠️ LocalPlannerClient: streaming stayed empty; falling back to non-streaming completion")
+        return try await generateNonStreamingFallbackResponse(
+            chatCompletionsURL: chatCompletionsURL,
+            requestBody: requestBody,
+            messageCount: messages.count,
+            onTextChunk: onTextChunk
+        )
+    }
+
+    private func generateNonStreamingFallbackResponse(
+        chatCompletionsURL: URL,
+        requestBody: [String: Any],
+        messageCount: Int,
+        onTextChunk: @MainActor @Sendable (String) -> Void
+    ) async throws -> (text: String, duration: TimeInterval) {
+        let startTime = Date()
+        var fallbackRequestBody = requestBody
+        fallbackRequestBody["stream"] = false
+        fallbackRequestBody["cache_prompt"] = false
+
+        var request = URLRequest(url: chatCompletionsURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer lm-studio", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: fallbackRequestBody)
+
+        let (data, response) = try await urlSession.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NSError(
                 domain: "LocalPlannerClient",
                 code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "Local planner returned a non-HTTP response."]
+                userInfo: [NSLocalizedDescriptionKey: "Local planner fallback returned a non-HTTP response."]
             )
         }
-
         guard (200...299).contains(httpResponse.statusCode) else {
-            var errorBodyChunks: [String] = []
-            for try await line in byteStream.lines {
-                errorBodyChunks.append(line)
-            }
-            let errorBody = errorBodyChunks.joined(separator: "\n")
+            let errorBody = String(data: data, encoding: .utf8) ?? ""
             throw NSError(
                 domain: "LocalPlannerClient",
                 code: httpResponse.statusCode,
-                userInfo: [NSLocalizedDescriptionKey: "Local planner HTTP \(httpResponse.statusCode): \(errorBody)"]
+                userInfo: [NSLocalizedDescriptionKey: "Local planner fallback HTTP \(httpResponse.statusCode): \(errorBody)"]
             )
         }
 
-        var accumulatedResponseText = ""
-        var hasLoggedTimeToFirstToken = false
-
-        for try await line in byteStream.lines {
-            // OpenAI-compatible SSE: every event is prefixed with `data: `.
-            guard line.hasPrefix("data: ") else { continue }
-            let jsonString = String(line.dropFirst(6))
-
-            // End-of-stream sentinel.
-            guard jsonString != "[DONE]" else { break }
-
-            guard let jsonData = jsonString.data(using: .utf8),
-                  let eventPayload = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                  let choices = eventPayload["choices"] as? [[String: Any]],
-                  let firstChoice = choices.first,
-                  let delta = firstChoice["delta"] as? [String: Any] else {
-                continue
-            }
-
-            // Some local servers also stream `reasoning_content` for
-            // thinking models. We only surface the user-facing `content`.
-            if let textChunk = delta["content"] as? String, !textChunk.isEmpty {
-                if !hasLoggedTimeToFirstToken {
-                    let timeToFirstTokenMs = Int(Date().timeIntervalSince(startTime) * 1000)
-                    print("⚡ Planner TTFT: \(timeToFirstTokenMs)ms (model=\(modelIdentifier), \(messages.count) msgs)")
-                    PaceTelemetryLog.recordPlannerTimeToFirstToken(
-                        milliseconds: timeToFirstTokenMs,
-                        modelIdentifier: modelIdentifier,
-                        messageCount: messages.count
-                    )
-                    hasLoggedTimeToFirstToken = true
-                }
-                accumulatedResponseText += textChunk
-                // Thinking models (Qwen3-Thinking, DeepSeek-R1-Distill, etc.)
-                // sometimes emit `<think>…</think>` blocks inline inside
-                // `content` rather than via a separate `reasoning_content`
-                // field. We strip them defensively so the spoken response
-                // and downstream action-tag parser never see thinking
-                // output. Stripping happens on every chunk so the UI
-                // preview (and the final `text` return) are both clean.
-                let strippedSoFar = LocalPlannerClient.stripThinkingBlocks(from: accumulatedResponseText)
-                let snapshotOfStrippedText = strippedSoFar
-                await onTextChunk(snapshotOfStrippedText)
-            }
+        guard let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = payload["choices"] as? [[String: Any]],
+              let firstChoice = choices.first,
+              let message = firstChoice["message"] as? [String: Any],
+              let rawContent = message["content"] as? String else {
+            throw NSError(
+                domain: "LocalPlannerClient",
+                code: -2,
+                userInfo: [NSLocalizedDescriptionKey: "Local planner fallback returned an unexpected payload."]
+            )
         }
 
+        let strippedContent = LocalPlannerClient.stripThinkingBlocks(from: rawContent)
         let duration = Date().timeIntervalSince(startTime)
-        return (text: LocalPlannerClient.stripThinkingBlocks(from: accumulatedResponseText), duration: duration)
+        let fallbackLatencyMs = Int(duration * 1000)
+        print("⚡ Planner fallback response: \(fallbackLatencyMs)ms (model=\(modelIdentifier), \(messageCount) msgs)")
+        await onTextChunk(strippedContent)
+        return (text: strippedContent, duration: duration)
     }
 
     /// Removes any `<think>…</think>` blocks (case-insensitive) from `rawAssistantText`.

@@ -1,0 +1,11 @@
+{
+  "name": "valid-answer",
+  "valid": true,
+  "response": {
+    "spokenText": "HTML stands for hypertext markup language.",
+    "intent": "answer",
+    "payload": {
+      "answer": "HTML stands for hypertext markup language."
+    }
+  }
+}

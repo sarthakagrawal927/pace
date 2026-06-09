@@ -1,0 +1,12 @@
+USER: click the export button
+APP_FRONTMOST: Figma
+AX_BLIND: true
+AX_TREE:
+OCR_TEXT:
+Layers  Assets  Pages
+Frame 1
+Untitled
+Share  Export
+EXPECT_APP: Figma
+SPOKEN_MUST_CONTAIN: export
+SPOKEN_MUST_NOT_CONTAIN: ID,coord

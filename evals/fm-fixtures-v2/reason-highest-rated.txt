@@ -1,0 +1,8 @@
+USER: pick the highest rated movie
+ELEMENT: [0] movie_card|240,200|Inception|7.8 stars
+ELEMENT: [1] movie_card|400,200|Interstellar|8.6 stars
+ELEMENT: [2] movie_card|560,200|Tenet|7.4 stars
+EXPECT_POINT_ID: 1
+EXPECT_CLICK_ID: 1
+SPOKEN_MUST_NOT_CONTAIN: ID,coord
+SPOKEN_MAX_WORDS: 14

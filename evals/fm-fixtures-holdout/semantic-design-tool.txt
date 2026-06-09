@@ -1,0 +1,9 @@
+USER: i want to design a logo
+ELEMENT: [0] dock_icon|24,1000|Figma|Design tool
+ELEMENT: [1] dock_icon|72,1000|Slack|Team chat
+ELEMENT: [2] dock_icon|120,1000|Zoom|Video calls
+ELEMENT: [3] dock_icon|168,1000|Notion|Workspace
+EXPECT_POINT_ID: 0
+EXPECT_CLICK_ID: 0
+SPOKEN_MUST_NOT_CONTAIN: ID,coord
+SPOKEN_MAX_WORDS: 14

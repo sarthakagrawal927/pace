@@ -49,6 +49,17 @@ nonisolated struct PaceActionApprovalRequest: Equatable {
 }
 
 nonisolated enum PaceActionApprovalPolicy {
+    static func requiresExplicitApproval(
+        for actionExecutionPlan: PaceActionExecutionPlan,
+        preflightIssues: [PaceToolPreflightIssue] = []
+    ) -> Bool {
+        if preflightIssues.contains(where: { $0.severity == .blocking }) {
+            return true
+        }
+
+        return actionExecutionPlan.flattenedActions.contains(where: requiresExplicitApproval)
+    }
+
     static func shouldExecuteActions(
         request: PaceActionApprovalRequest?,
         decision: PaceActionApprovalDecision
@@ -57,5 +68,65 @@ nonisolated enum PaceActionApprovalPolicy {
             return true
         }
         return decision == .allowOnce
+    }
+
+    static func suppressesInitialSpokenFeedback(
+        for actionExecutionPlan: PaceActionExecutionPlan,
+        preflightIssues: [PaceToolPreflightIssue] = []
+    ) -> Bool {
+        let flattenedActions = actionExecutionPlan.flattenedActions
+        guard !flattenedActions.isEmpty else { return false }
+        guard !requiresExplicitApproval(
+            for: actionExecutionPlan,
+            preflightIssues: preflightIssues
+        ) else {
+            return false
+        }
+
+        return flattenedActions.allSatisfy(canRelyOnVisualOrObservationFeedback)
+    }
+
+    static func suppressesInitialSpokenFeedback(
+        forPlannerResponseText plannerResponseText: String,
+        preflightIssues: [PaceToolPreflightIssue] = []
+    ) -> Bool {
+        let parsedActions = PaceActionTagParser.parseActions(from: plannerResponseText)
+        guard !parsedActions.executionPlan.flattenedActions.isEmpty else {
+            return false
+        }
+        return suppressesInitialSpokenFeedback(
+            for: parsedActions.executionPlan,
+            preflightIssues: preflightIssues
+        )
+    }
+
+    private static func requiresExplicitApproval(_ action: PaceParsedAction) -> Bool {
+        switch action {
+        case .createCalendarEvent, .createReminder, .createNote, .appendNote,
+             .composeMail, .createThingsToDo, .runShortcut, .mcp:
+            return true
+        case .openMessages(let messageRequest):
+            return messageRequest.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        case .click, .doubleClick, .clickCandidates, .type, .setTextValue, .editSelectedText,
+             .undoLastMutation, .pressKey, .readClipboard, .snapWindow, .scroll, .openApplication,
+             .openURL, .controlMusic, .adjustVolume, .adjustBrightness,
+             .listCalendarEvents, .finder, .searchNotes:
+            return false
+        }
+    }
+
+    private static func canRelyOnVisualOrObservationFeedback(_ action: PaceParsedAction) -> Bool {
+        switch action {
+        case .click, .doubleClick, .clickCandidates, .type, .setTextValue, .editSelectedText,
+             .undoLastMutation, .pressKey, .readClipboard, .snapWindow, .scroll, .openApplication,
+             .openURL, .controlMusic, .adjustVolume, .adjustBrightness,
+             .listCalendarEvents, .finder, .searchNotes:
+            return true
+        case .openMessages(let messageRequest):
+            return messageRequest.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+        case .createCalendarEvent, .createReminder, .createNote, .appendNote,
+             .composeMail, .createThingsToDo, .runShortcut, .mcp:
+            return false
+        }
     }
 }

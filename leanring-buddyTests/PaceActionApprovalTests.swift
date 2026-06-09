@@ -75,4 +75,114 @@ struct PaceActionApprovalTests {
             decision: .cancel
         ))
     }
+
+    @Test func routineLocalActionsDoNotRequireExplicitApproval() async throws {
+        let actionPlan = PaceActionExecutionPlan.serial(actions: [
+            .openApplication("Raycast"),
+            .openURL("https://example.com"),
+            .snapWindow(PaceWindowSnapRequest(position: .left)),
+            .readClipboard,
+            .undoLastMutation
+        ])
+
+        #expect(PaceActionApprovalPolicy.requiresExplicitApproval(for: actionPlan) == false)
+    }
+
+    @Test func routineLocalActionsSuppressInitialSpokenFeedback() async throws {
+        let actionPlan = PaceActionExecutionPlan.serial(actions: [
+            .openApplication("Raycast"),
+            .pressKey(name: "s", modifiers: [.command]),
+            .snapWindow(PaceWindowSnapRequest(position: .left)),
+            .readClipboard
+        ])
+
+        #expect(PaceActionApprovalPolicy.suppressesInitialSpokenFeedback(for: actionPlan))
+    }
+
+    @Test func emptyOrRiskyPlansDoNotSuppressInitialSpokenFeedback() async throws {
+        #expect(PaceActionApprovalPolicy.suppressesInitialSpokenFeedback(
+            for: PaceActionExecutionPlan(steps: [])
+        ) == false)
+
+        let mailDraftPlan = PaceActionExecutionPlan.serial(actions: [
+            .composeMail(PaceMailDraft(
+                recipients: ["alex@example.com"],
+                subject: "Status",
+                body: "Draft body"
+            ))
+        ])
+
+        #expect(PaceActionApprovalPolicy.suppressesInitialSpokenFeedback(for: mailDraftPlan) == false)
+    }
+
+    @Test func routinePlannerResponseTextSuppressesInitialSpokenFeedback() async throws {
+        #expect(PaceActionApprovalPolicy.suppressesInitialSpokenFeedback(
+            forPlannerResponseText: "clicking it. [CLICK:400,300]"
+        ))
+
+        #expect(PaceActionApprovalPolicy.suppressesInitialSpokenFeedback(
+            forPlannerResponseText: """
+            {"spokenText":"Opening Safari.","intent":"action","payload":{"name":"App.launch","args":{"name":"Safari"}}}
+            """
+        ))
+    }
+
+    @Test func answerAndRiskyPlannerResponseTextDoNotSuppressInitialSpokenFeedback() async throws {
+        #expect(PaceActionApprovalPolicy.suppressesInitialSpokenFeedback(
+            forPlannerResponseText: "html stands for hypertext markup language."
+        ) == false)
+
+        #expect(PaceActionApprovalPolicy.suppressesInitialSpokenFeedback(
+            forPlannerResponseText: """
+            {"spokenText":"Adding that.","intent":"action","payload":{"name":"Reminders.add","args":{"title":"send invoice"}}}
+            """
+        ) == false)
+    }
+
+    @Test func nonUndoableAndExternalActionsRequireExplicitApproval() async throws {
+        let actionPlan = PaceActionExecutionPlan.serial(actions: [
+            .composeMail(PaceMailDraft(
+                recipients: ["alex@example.com"],
+                subject: "Status",
+                body: "Draft body"
+            )),
+            .createNote(PaceNoteRequest(title: "Idea", body: "Ship it")),
+            .runShortcut("Publish"),
+            .mcp(PaceMCPToolCall(serverName: "altic", toolName: "notes_create", arguments: [:]))
+        ])
+
+        #expect(PaceActionApprovalPolicy.requiresExplicitApproval(for: actionPlan))
+    }
+
+    @Test func messagesWithDraftTextRequireExplicitApproval() async throws {
+        let openOnlyPlan = PaceActionExecutionPlan.serial(actions: [
+            .openMessages(PaceMessageRequest(recipient: "Alex", text: nil))
+        ])
+        let draftTextPlan = PaceActionExecutionPlan.serial(actions: [
+            .openMessages(PaceMessageRequest(recipient: "Alex", text: "running late"))
+        ])
+
+        #expect(PaceActionApprovalPolicy.requiresExplicitApproval(for: openOnlyPlan) == false)
+        #expect(PaceActionApprovalPolicy.requiresExplicitApproval(for: draftTextPlan))
+        #expect(PaceActionApprovalPolicy.suppressesInitialSpokenFeedback(for: openOnlyPlan))
+        #expect(PaceActionApprovalPolicy.suppressesInitialSpokenFeedback(for: draftTextPlan) == false)
+    }
+
+    @Test func blockingPreflightIssueRequiresExplicitApproval() async throws {
+        let actionPlan = PaceActionExecutionPlan.serial(actions: [
+            .openApplication("Raycast")
+        ])
+        let preflightIssues = [
+            PaceToolPreflightIssue(
+                severity: .blocking,
+                title: "Accessibility permission missing",
+                repairHint: "Grant Accessibility."
+            )
+        ]
+
+        #expect(PaceActionApprovalPolicy.requiresExplicitApproval(
+            for: actionPlan,
+            preflightIssues: preflightIssues
+        ))
+    }
 }

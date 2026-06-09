@@ -22,9 +22,13 @@ Both eval kinds live here. They run against your real `localhost:1234` LM Studio
 
 # Skip the speed evals (faster, only checks correctness).
 ./scripts/eval-pace.sh --no-latency
+
+# Validate deterministic v10 planner-response schema fixtures without LM Studio.
+python3 scripts/eval-v10-schema-fixtures.py
 ```
 
 The script reads the planner endpoint + model identifier from `leanring-buddy/Info.plist`, so it always evaluates whatever Pace itself would call.
+The streaming helper retries only when LM Studio returns HTTP 200 with zero raw content; retry attempts disable `cache_prompt` to avoid local prefix-cache blank streams, then use a non-streaming fallback if SSE stays empty. Incorrect answers, thinking-only answers, regex misses, HTTP errors, and latency misses still fail normally.
 
 ## Fixtures
 
@@ -60,6 +64,14 @@ Field reference:
 | `expectations.max_ttft_ms` | TTFT budget. Failing means too slow. |
 | `expectations.must_contain_patterns` | List of regexes that MUST appear (case-insensitive) in the response. |
 | `expectations.must_not_contain_patterns` | List of regexes that MUST NOT appear. |
+
+## V10 Schema Fixtures
+
+`v10-schema-fixtures/` contains deterministic planner-response JSON examples.
+They do not call a model. `scripts/eval-v10-schema-fixtures.py` reads the
+bundled `pace-fm-response-v10.schema.json` artifact and verifies that each
+fixture's `valid` flag matches the schema result. Use this to catch envelope
+drift before switching the planner runtime default or changing the v10 prompt.
 
 ## Budgets
 

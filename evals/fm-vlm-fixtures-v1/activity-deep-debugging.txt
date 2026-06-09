@@ -1,0 +1,17 @@
+USER: what specifically am i doing in this code
+APP_FRONTMOST: Cursor
+AX_TREE:
+  [0] text_view|240,80|editor|def calculate_tax(income): if income < 0: raise ValueError
+  [1] panel|800,80|debug panel|Breakpoint hit at line 5
+  [2] panel|24,400|terminal|>>> calculate_tax(-100)
+  [3] static_text|24,440|stack_trace|ValueError: invalid income
+OCR_TEXT:
+def calculate_tax(income):
+    if income < 0:
+        raise ValueError("invalid income")
+>>> calculate_tax(-100)
+ValueError: invalid income
+Breakpoint hit at line 5
+EXPECT_APP: Cursor
+SPOKEN_MUST_CONTAIN: debug
+SPOKEN_MUST_NOT_CONTAIN: ID

@@ -100,6 +100,17 @@ enum PacePlannerModelResolver {
     // MARK: - HTTP
 
     private static func fetchLoadedModelIdentifiers(plannerBaseURL: URL) async -> [String] {
+        do {
+            try PaceLocalEndpointGuard.validateLocalHTTPURL(
+                plannerBaseURL,
+                settingName: "LocalPlannerBaseURL"
+            )
+        } catch {
+            let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            print("⚠️ Planner resolver: \(message)")
+            return []
+        }
+
         var request = URLRequest(url: plannerBaseURL.appendingPathComponent("models"))
         request.httpMethod = "GET"
         request.timeoutInterval = 2

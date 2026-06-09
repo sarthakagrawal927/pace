@@ -1,0 +1,8 @@
+USER: play the longest one
+ELEMENT: [0] video_card|240,200|Episode 1|12 minutes
+ELEMENT: [1] video_card|400,200|Episode 2|45 minutes
+ELEMENT: [2] video_card|560,200|Episode 3|22 minutes
+EXPECT_POINT_ID: 1
+EXPECT_CLICK_ID: 1
+SPOKEN_MUST_NOT_CONTAIN: ID,coord
+SPOKEN_MAX_WORDS: 14

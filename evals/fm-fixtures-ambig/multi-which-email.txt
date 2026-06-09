@@ -1,0 +1,6 @@
+USER: open the email
+ELEMENT: [0] row|100,100|Email 1|From Alice — design review
+ELEMENT: [1] row|100,150|Email 2|From Bob — quick question
+ELEMENT: [2] row|100,200|Email 3|From Carol — friday lunch
+EXPECT_INTENT: clarify
+EXPECT_CLARIFY_TOPIC: which email

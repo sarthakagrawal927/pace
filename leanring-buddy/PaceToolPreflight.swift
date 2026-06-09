@@ -132,20 +132,23 @@ enum PaceToolPreflight {
 
     private static func requiresAccessibilityPermission(_ action: PaceParsedAction) -> Bool {
         switch action {
-        case .click, .doubleClick, .type, .pressKey, .scroll:
+        case .click, .doubleClick, .clickCandidates, .type, .setTextValue, .editSelectedText,
+             .undoLastMutation, .pressKey, .snapWindow, .scroll:
             return true
-        case .openApplication, .openURL, .controlMusic, .adjustVolume, .adjustBrightness,
-             .listCalendarEvents, .createReminder, .finder, .createNote, .appendNote,
+        case .readClipboard, .openApplication, .openURL, .controlMusic, .adjustVolume, .adjustBrightness,
+             .listCalendarEvents, .createCalendarEvent, .createReminder, .finder, .createNote, .appendNote,
              .searchNotes, .composeMail, .createThingsToDo, .runShortcut, .openMessages, .mcp:
             return false
         }
     }
 
     private static func isCalendarAction(_ action: PaceParsedAction) -> Bool {
-        if case .listCalendarEvents = action {
+        switch action {
+        case .listCalendarEvents, .createCalendarEvent:
             return true
+        default:
+            return false
         }
-        return false
     }
 
     private static func isReminderAction(_ action: PaceParsedAction) -> Bool {
@@ -160,8 +163,11 @@ enum PaceToolPreflight {
         case .controlMusic, .createNote, .appendNote, .searchNotes, .composeMail,
              .createThingsToDo, .runShortcut, .openMessages, .mcp:
             return true
-        case .click, .doubleClick, .type, .pressKey, .scroll, .openApplication, .openURL,
-             .adjustVolume, .adjustBrightness, .listCalendarEvents, .createReminder, .finder:
+        case .click, .doubleClick, .clickCandidates, .type, .setTextValue, .editSelectedText,
+             .undoLastMutation, .pressKey, .snapWindow, .scroll,
+             .readClipboard, .openApplication, .openURL,
+             .adjustVolume, .adjustBrightness, .listCalendarEvents, .createCalendarEvent,
+             .createReminder, .finder:
             return false
         }
     }

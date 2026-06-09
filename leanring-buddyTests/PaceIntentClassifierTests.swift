@@ -143,4 +143,83 @@ struct PaceIntentClassifierTests {
         let prediction = classifier.classify("click the save button")
         #expect(prediction.intent == .unknown)
     }
+
+    @Test func ambiguousEditCommandsAskForClarification() async throws {
+        let clarification = PaceIntentClarifier.clarification(for: "rewrite that")
+
+        #expect(clarification?.question == "Edit selected text or the focused field?")
+        #expect(clarification?.options == ["Selected text", "Focused field"])
+    }
+
+    @Test func ambiguousDestructiveCommandsAskForClarification() async throws {
+        let clarification = PaceIntentClarifier.clarification(for: "delete that")
+
+        #expect(clarification?.question == "What should I delete?")
+        #expect(clarification?.options == ["Selected text", "Current item"])
+    }
+
+    @Test func explicitEditTargetsDoNotAskForClarification() async throws {
+        #expect(PaceIntentClarifier.clarification(for: "rewrite the selected text") == nil)
+        #expect(PaceIntentClarifier.clarification(for: "fix the focused field") == nil)
+    }
+
+    @Test func clarificationResolverRewritesAmbiguousEditTargets() async throws {
+        let clarification = try #require(PaceIntentClarifier.clarification(for: "rewrite that"))
+        let pendingClarification = PacePendingIntentClarification(
+            originalTranscript: "rewrite that",
+            clarification: clarification
+        )
+
+        #expect(PaceIntentClarificationResolver.clarifiedTranscript(
+            for: pendingClarification,
+            selectedOption: "Selected text"
+        ) == "rewrite the selected text")
+
+        #expect(PaceIntentClarificationResolver.clarifiedTranscript(
+            for: pendingClarification,
+            selectedOption: "Focused field"
+        ) == "rewrite the focused field")
+    }
+
+    @Test func clarificationResolverRewritesDestructiveTargetsWithoutReasking() async throws {
+        let clarification = try #require(PaceIntentClarifier.clarification(for: "delete this"))
+        let pendingClarification = PacePendingIntentClarification(
+            originalTranscript: "delete this",
+            clarification: clarification
+        )
+
+        let clarifiedTranscript = PaceIntentClarificationResolver.clarifiedTranscript(
+            for: pendingClarification,
+            selectedOption: "Current item"
+        )
+
+        #expect(clarifiedTranscript == "delete the current item")
+        #expect(PaceIntentClarifier.clarification(for: clarifiedTranscript ?? "") == nil)
+    }
+
+    @Test func clarificationResolverRejectsUnknownOptions() async throws {
+        let clarification = try #require(PaceIntentClarifier.clarification(for: "rewrite it"))
+        let pendingClarification = PacePendingIntentClarification(
+            originalTranscript: "rewrite it",
+            clarification: clarification
+        )
+
+        #expect(PaceIntentClarificationResolver.clarifiedTranscript(
+            for: pendingClarification,
+            selectedOption: "Whole document"
+        ) == nil)
+    }
+
+    @Test func largeModelRequestsBecomeUnsupportedLocalOnlyResponses() async throws {
+        let classifier = PaceIntentClassifier()
+        let prediction = classifier.classify("ask the big model")
+        let unsupportedResponse = PaceIntentUnsupportedDetector.unsupportedResponse(
+            for: "ask the big model",
+            prediction: prediction
+        )
+
+        #expect(prediction.route == .phoneLargeModel)
+        #expect(unsupportedResponse?.spokenText == "I only use local models on this Mac.")
+        #expect(unsupportedResponse?.reason == "Cloud or large-model escalation is not available.")
+    }
 }

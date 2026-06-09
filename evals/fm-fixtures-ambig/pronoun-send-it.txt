@@ -1,0 +1,6 @@
+USER: send it
+ELEMENT: [0] button|240,200|Send|Send this email
+ELEMENT: [1] button|400,200|Forward|Forward to recipient
+ELEMENT: [2] textfield|560,200|Compose|Untitled message
+EXPECT_INTENT: clarify
+EXPECT_CLARIFY_TOPIC: what to send

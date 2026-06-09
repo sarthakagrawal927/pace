@@ -1,0 +1,13 @@
+{
+  "name": "invalid-missing-spoken-text",
+  "valid": false,
+  "response": {
+    "intent": "action",
+    "payload": {
+      "name": "App.launch",
+      "args": {
+        "name": "Safari"
+      }
+    }
+  }
+}

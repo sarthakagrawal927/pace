@@ -1,0 +1,16 @@
+USER: why can't i submit
+APP_FRONTMOST: Safari
+AX_TREE:
+  [0] text_field|240,200|email field|alice@@invalid
+  [1] text_field|240,240|password field|********
+  [2] button|240,300|submit button|Submit
+  [3] static_text|240,340|error label|Please enter a valid email address
+OCR_TEXT:
+Sign in
+Email: alice@@invalid
+Password: ********
+Please enter a valid email address
+Submit
+EXPECT_APP: Safari
+SPOKEN_MUST_CONTAIN: email
+SPOKEN_MUST_NOT_CONTAIN: ID,coord

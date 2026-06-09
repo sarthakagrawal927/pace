@@ -1,0 +1,4 @@
+USER: create a note titled ideas with some bullet points
+ELEMENT: [0] window_title|400,30|Notes|app
+BODY_MUST_NOT_BE_EMPTY: 1
+BODY_MIN_WORDS: 3

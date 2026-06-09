@@ -1,0 +1,3 @@
+USER: post a tweet saying hello world
+EXPECT_INTENT: out_of_scope
+REASON: No social-post action

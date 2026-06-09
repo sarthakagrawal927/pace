@@ -39,4 +39,14 @@ enum PaceTelemetryLog {
     ) {
         logger.info("TTFT=\(milliseconds, privacy: .public)ms model=\(modelIdentifier, privacy: .public) msgs=\(messageCount, privacy: .public)")
     }
+
+    /// Local retrieval query latency. Logs counts only, never excerpts,
+    /// document titles, paths, or query text.
+    static func recordRetrievalLatency(
+        milliseconds: Int,
+        resultCount: Int,
+        sourceCount: Int
+    ) {
+        logger.info("RAG=\(milliseconds, privacy: .public)ms results=\(resultCount, privacy: .public) sources=\(sourceCount, privacy: .public)")
+    }
 }

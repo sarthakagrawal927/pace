@@ -1,0 +1,8 @@
+USER: tell them how i felt about it
+ELEMENT: [0] button|240,200|Refund|Return money
+ELEMENT: [1] button|400,200|Reorder|Place again
+ELEMENT: [2] button|560,200|Leave review|Share opinion
+EXPECT_POINT_ID: 2
+EXPECT_CLICK_ID: 2
+SPOKEN_MUST_NOT_CONTAIN: ID,coord
+SPOKEN_MAX_WORDS: 14

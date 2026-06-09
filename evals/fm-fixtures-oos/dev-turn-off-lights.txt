@@ -1,0 +1,3 @@
+USER: turn off the living room lights
+EXPECT_INTENT: out_of_scope
+REASON: No smart-home action

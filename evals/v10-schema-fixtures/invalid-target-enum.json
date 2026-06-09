@@ -1,0 +1,12 @@
+{
+  "name": "invalid-target-enum",
+  "valid": false,
+  "response": {
+    "spokenText": "Editing that.",
+    "intent": "edit",
+    "payload": {
+      "replacement": "shorter version",
+      "target": "document"
+    }
+  }
+}

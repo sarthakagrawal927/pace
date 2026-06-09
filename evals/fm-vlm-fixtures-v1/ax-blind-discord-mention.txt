@@ -1,0 +1,13 @@
+USER: click where i can mention someone
+APP_FRONTMOST: Discord
+AX_BLIND: true
+AX_TREE:
+OCR_TEXT:
+# general
+sarthak: hey are we still on for tomorrow?
+alice: yeah 2pm works
+bob: I'll be late, traffic
+Message #general
+EXPECT_APP: Discord
+SPOKEN_MUST_CONTAIN: message
+SPOKEN_MUST_NOT_CONTAIN: ID,coord

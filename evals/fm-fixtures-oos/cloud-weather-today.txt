@@ -1,0 +1,3 @@
+USER: what's the weather today
+EXPECT_INTENT: out_of_scope
+REASON: Weather requires cloud query; no Pace action returns world data

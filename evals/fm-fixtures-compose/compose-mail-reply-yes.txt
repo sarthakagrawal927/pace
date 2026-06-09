@@ -1,0 +1,4 @@
+USER: draft a reply saying yes i can join the meeting tomorrow
+ELEMENT: [0] dock_icon|24,1000|Mail|Inbox
+BODY_MUST_NOT_BE_EMPTY: 1
+BODY_MIN_WORDS: 3

@@ -1,0 +1,3 @@
+USER: track my spending this month
+EXPECT_INTENT: out_of_scope
+REASON: No persistent monitoring action

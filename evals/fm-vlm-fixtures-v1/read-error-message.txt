@@ -1,0 +1,12 @@
+USER: what does that error say
+APP_FRONTMOST: Cursor
+AX_TREE:
+  [0] dialog|400,400|error dialog|TypeError raised
+  [1] static_text|400,440|error message|TypeError: 'NoneType' object is not subscriptable at line 42
+  [2] button|480,500|dismiss button|Dismiss
+OCR_TEXT:
+TypeError: 'NoneType' object is not subscriptable at line 42
+Dismiss
+EXPECT_APP: Cursor
+SPOKEN_MUST_CONTAIN: TypeError
+SPOKEN_MUST_NOT_CONTAIN: ID,coord

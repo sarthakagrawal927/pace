@@ -1,0 +1,18 @@
+USER: what am i doing
+APP_FRONTMOST: Zoom
+AX_TREE:
+  [0] view|0,0|video grid|3 participants
+  [1] button|400,800|mute button|Mute
+  [2] button|480,800|video button|Stop Video
+  [3] button|560,800|share button|Share Screen
+  [4] button|640,800|leave button|Leave
+OCR_TEXT:
+Sarthak (You)
+Alice
+Bob
+Speaker view  Gallery view
+EXPECT_ACTIVITY: in a video call
+EXPECT_APP: Zoom
+EXPECT_ELEMENTS_MIN: 3
+SPOKEN_MUST_CONTAIN: zoom
+SPOKEN_MUST_NOT_CONTAIN: ID

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pace.local/schemas/pace-fm-response-v10.schema.json",
+  "title": "Pace planner response v10",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "spokenText": {
+      "type": "string"
+    },
+    "intent": {
+      "type": "string",
+      "enum": [
+        "answer",
+        "action",
+        "dictate",
+        "edit",
+        "clarify",
+        "refuse"
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "calls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "args": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "answer": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "replacement": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string",
+          "enum": [
+            "focused",
+            "selection"
+          ]
+        }
+      }
+    }
+  },
+  "required": [
+    "spokenText",
+    "intent"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "intent": {
+            "const": "action"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "payload"
+        ]
+      }
+    }
+  ]
+}

@@ -145,16 +145,20 @@ final class PaceMenuBarOverlayManager {
 
 private struct PaceMenuBarOverlayView: View {
     @ObservedObject var companionManager: CompanionManager
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 0) {
             PaceMenuBarIconCluster {
                 PaceMenuBarIconSlot {
-                    PaceMenuBarAvatarGlyph(voiceState: companionManager.voiceState)
+                    PaceMenuBarAvatarGlyph(
+                        voiceState: companionManager.voiceState,
+                        reduceMotion: reduceMotion
+                    )
                         .frame(width: 18, height: 18)
                 }
             }
-            .animation(.spring(response: 0.26, dampingFraction: 0.74), value: isConversationActive)
+            .animation(reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.74), value: isConversationActive)
 
             Spacer(minLength: 0)
 
@@ -163,11 +167,12 @@ private struct PaceMenuBarOverlayView: View {
                     PaceMenuBarSoundGlyph(
                         isConversationActive: isConversationActive,
                         voiceState: companionManager.voiceState,
-                        audioPowerLevel: companionManager.currentAudioPowerLevel
+                        audioPowerLevel: companionManager.currentAudioPowerLevel,
+                        reduceMotion: reduceMotion
                     )
                 }
             }
-            .animation(.spring(response: 0.26, dampingFraction: 0.72), value: isConversationActive)
+            .animation(reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.72), value: isConversationActive)
         }
         .padding(.horizontal, 8)
         .frame(width: PaceMenuBarOverlayMetrics.width, height: PaceMenuBarOverlayMetrics.height)
@@ -256,20 +261,22 @@ private struct PaceMenuBarSoundGlyph: View {
     let isConversationActive: Bool
     let voiceState: CompanionVoiceState
     let audioPowerLevel: CGFloat
+    let reduceMotion: Bool
 
     var body: some View {
         ZStack {
             if isConversationActive {
                 PaceMenuBarSoundBars(
                     voiceState: voiceState,
-                    audioPowerLevel: audioPowerLevel
+                    audioPowerLevel: audioPowerLevel,
+                    reduceMotion: reduceMotion
                 )
-                .transition(.scale(scale: 0.76, anchor: .trailing).combined(with: .opacity))
+                .transition(reduceMotion ? .identity : .scale(scale: 0.76, anchor: .trailing).combined(with: .opacity))
             } else {
                 Image(systemName: "speaker.wave.2.fill")
                     .font(.system(size: 12.2, weight: .bold))
                     .foregroundStyle(Color(hex: "#67E8F9").opacity(0.95))
-                    .transition(.scale(scale: 0.82, anchor: .trailing).combined(with: .opacity))
+                    .transition(reduceMotion ? .identity : .scale(scale: 0.82, anchor: .trailing).combined(with: .opacity))
             }
         }
     }
@@ -278,34 +285,60 @@ private struct PaceMenuBarSoundGlyph: View {
 private struct PaceMenuBarSoundBars: View {
     let voiceState: CompanionVoiceState
     let audioPowerLevel: CGFloat
+    let reduceMotion: Bool
 
     private let barHeightProfile: [CGFloat] = [0.46, 0.76, 1.0, 0.76, 0.46]
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timelineContext in
+        if reduceMotion {
             HStack(spacing: 2.2) {
                 ForEach(0..<barHeightProfile.count, id: \.self) { barIndex in
-                    RoundedRectangle(cornerRadius: 1.1, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [activeAccentColor, Color(hex: "#67E8F9")],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .frame(width: 2.3, height: barHeight(for: barIndex, at: timelineContext.date))
-                        .shadow(color: activeAccentColor.opacity(0.42), radius: 3, x: 0, y: 0)
+                    soundBar(at: barIndex, height: staticBarHeight(for: barIndex))
+                }
+            }
+        } else {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timelineContext in
+                HStack(spacing: 2.2) {
+                    ForEach(0..<barHeightProfile.count, id: \.self) { barIndex in
+                        soundBar(at: barIndex, height: animatedBarHeight(for: barIndex, at: timelineContext.date))
+                    }
                 }
             }
         }
     }
 
-    private func barHeight(for barIndex: Int, at date: Date) -> CGFloat {
+    private func soundBar(at barIndex: Int, height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 1.1, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [activeAccentColor, Color(hex: "#67E8F9")],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .frame(width: 2.3, height: height)
+            .shadow(color: activeAccentColor.opacity(reduceMotion ? 0.22 : 0.42), radius: reduceMotion ? 1.5 : 3, x: 0, y: 0)
+    }
+
+    private func animatedBarHeight(for barIndex: Int, at date: Date) -> CGFloat {
         let phase = CGFloat(date.timeIntervalSinceReferenceDate * waveSpeed) + CGFloat(barIndex) * 0.68
         let normalizedAudioPower = max(audioPowerLevel - 0.008, 0)
         let reactiveHeight = pow(min(normalizedAudioPower * 3.2, 1), 0.7) * 8 * barHeightProfile[barIndex]
         let idlePulse = (sin(phase) + 1) * 3.2 * barHeightProfile[barIndex]
         return 5 + reactiveHeight + idlePulse
+    }
+
+    private func staticBarHeight(for barIndex: Int) -> CGFloat {
+        switch voiceState {
+        case .idle:
+            return 5 + 3 * barHeightProfile[barIndex]
+        case .listening:
+            return 6 + 7 * barHeightProfile[barIndex]
+        case .processing:
+            return 8 + 5 * barHeightProfile[barIndex]
+        case .responding:
+            return 6 + 6 * barHeightProfile[barIndex]
+        }
     }
 
     private var waveSpeed: Double {
@@ -328,55 +361,6 @@ private struct PaceMenuBarSoundBars: View {
         case .responding:
             return Color(hex: "#A78BFA")
         }
-    }
-}
-
-private struct PaceMenuBarThinkingSpinner: View {
-    @State private var isSpinning = false
-
-    var body: some View {
-        Circle()
-            .trim(from: 0.18, to: 0.82)
-            .stroke(
-                AngularGradient(
-                    colors: [Color(hex: "#38BDF8").opacity(0.05), Color(hex: "#67E8F9")],
-                    center: .center
-                ),
-                style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
-            )
-            .frame(width: 14, height: 14)
-            .rotationEffect(.degrees(isSpinning ? 360 : 0))
-            .onAppear {
-                withAnimation(.linear(duration: 0.78).repeatForever(autoreverses: false)) {
-                    isSpinning = true
-                }
-            }
-    }
-}
-
-private struct PaceMenuBarSpeakingDots: View {
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { timelineContext in
-            HStack(spacing: 4) {
-                ForEach(0..<3, id: \.self) { dotIndex in
-                    Circle()
-                        .fill(Color(hex: "#67E8F9"))
-                        .frame(width: 4.5, height: 4.5)
-                        .scaleEffect(dotScale(for: dotIndex, at: timelineContext.date))
-                        .opacity(dotOpacity(for: dotIndex, at: timelineContext.date))
-                }
-            }
-        }
-    }
-
-    private func dotScale(for dotIndex: Int, at date: Date) -> CGFloat {
-        let phase = CGFloat(date.timeIntervalSinceReferenceDate * 4.2) + CGFloat(dotIndex) * 0.72
-        return 0.72 + ((sin(phase) + 1) / 2) * 0.42
-    }
-
-    private func dotOpacity(for dotIndex: Int, at date: Date) -> Double {
-        let phase = CGFloat(date.timeIntervalSinceReferenceDate * 4.2) + CGFloat(dotIndex) * 0.72
-        return Double(0.48 + ((sin(phase) + 1) / 2) * 0.42)
     }
 }
 
@@ -408,6 +392,7 @@ private struct PaceMenuBarBottomRoundedShape: Shape {
 
 private struct PaceMenuBarAvatarGlyph: View {
     let voiceState: CompanionVoiceState
+    let reduceMotion: Bool
     @State private var isPulsing = false
 
     var body: some View {
@@ -415,8 +400,8 @@ private struct PaceMenuBarAvatarGlyph: View {
             if isActive {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .stroke(avatarGlowColor.opacity(0.32), lineWidth: 1.5)
-                    .scaleEffect(isPulsing ? 1.15 : 0.96)
-                    .opacity(isPulsing ? 0.08 : 0.42)
+                    .scaleEffect(reduceMotion ? 1.02 : (isPulsing ? 1.15 : 0.96))
+                    .opacity(reduceMotion ? 0.22 : (isPulsing ? 0.08 : 0.42))
             }
 
             RoundedRectangle(cornerRadius: 5.5, style: .continuous)
@@ -448,18 +433,26 @@ private struct PaceMenuBarAvatarGlyph: View {
                     .fill(Color.white.opacity(isActive ? 0.58 : 0.36))
                     .frame(width: isActive ? 8.2 : 6.8, height: 1.5)
             }
-            .animation(.easeInOut(duration: 0.34), value: voiceState)
-            .animation(.easeInOut(duration: 0.62), value: isPulsing)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.34), value: voiceState)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.62), value: isPulsing)
         }
         .frame(width: 18, height: 18)
         .onAppear {
-            withAnimation(.easeInOut(duration: 0.86).repeatForever(autoreverses: true)) {
-                isPulsing = true
+            if reduceMotion {
+                isPulsing = false
+            } else {
+                withAnimation(.easeInOut(duration: 0.86).repeatForever(autoreverses: true)) {
+                    isPulsing = true
+                }
             }
         }
     }
 
     private var eyeHeight: CGFloat {
+        if reduceMotion {
+            return voiceState == .idle ? 3.5 : 4.8
+        }
+
         switch voiceState {
         case .idle:
             return 3.5
@@ -473,6 +466,10 @@ private struct PaceMenuBarAvatarGlyph: View {
     }
 
     private var trailingEyeHeight: CGFloat {
+        if reduceMotion {
+            return voiceState == .idle ? 3.5 : 4.8
+        }
+
         switch voiceState {
         case .idle:
             return 3.5

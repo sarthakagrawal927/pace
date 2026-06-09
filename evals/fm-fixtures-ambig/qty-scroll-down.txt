@@ -1,0 +1,3 @@
+USER: scroll down a bit
+EXPECT_INTENT: clarify
+EXPECT_CLARIFY_TOPIC: how far

@@ -143,6 +143,9 @@ final class StreamingSentenceTTSPipeline {
         //    by dropping everything from the opening tag to end-of-text.
         let thinkStripped = LocalPlannerClient.stripThinkingBlocks(from: rawAccumulatedText)
         guard !thinkStripped.isEmpty else { return "" }
+        if looksLikeStructuredPlannerJSON(thinkStripped) {
+            return ""
+        }
 
         // 2. Strip ALL complete tool-call blocks, action tags + the POINT tag. Partial
         //    in-progress tags (a `[CLICK` with no closing `]` yet) are
@@ -189,6 +192,14 @@ final class StreamingSentenceTTSPipeline {
         //    words. Sentence terminators: `.` `!` `?` `\n`. Require
         //    the terminator to be followed by whitespace OR end of text.
         return computeLastSentenceBoundedPrefix(of: safeFromOpenBracket)
+    }
+
+    nonisolated private static func looksLikeStructuredPlannerJSON(_ text: String) -> Bool {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedText.hasPrefix("{") else { return false }
+        return trimmedText.contains(#""spokenText""#)
+            || trimmedText.contains(#""intent""#)
+            || trimmedText.contains(#""payload""#)
     }
 
     nonisolated private static func stripCompletedToolCallBlocksForSpeech(from text: String) -> String {

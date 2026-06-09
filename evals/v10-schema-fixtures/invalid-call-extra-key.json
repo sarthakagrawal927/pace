@@ -1,0 +1,19 @@
+{
+  "name": "invalid-call-extra-key",
+  "valid": false,
+  "response": {
+    "spokenText": "Opening Safari.",
+    "intent": "action",
+    "payload": {
+      "calls": [
+        {
+          "name": "App.launch",
+          "args": {
+            "name": "Safari"
+          },
+          "extra": true
+        }
+      ]
+    }
+  }
+}

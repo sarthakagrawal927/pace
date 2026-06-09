@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "actions": [
+    {"kind": "click", "tool": "click", "aliases": [], "risk": "inputInjection", "schemaExample": {"tool": "click", "x": 400, "y": 300, "screen": 1}},
+    {"kind": "doubleClick", "tool": "double_click", "aliases": ["doubleclick"], "risk": "inputInjection", "schemaExample": {"tool": "double_click", "x": 400, "y": 300, "screen": 1}},
+    {"kind": "type", "tool": "type", "aliases": [], "risk": "inputInjection", "schemaExample": {"tool": "type", "text": "exact text"}},
+    {"kind": "setValue", "tool": "set_value", "aliases": ["ax_set_value"], "risk": "inputInjection", "schemaExample": {"tool": "set_value", "text": "replacement text", "action": "selection"}},
+    {"kind": "undo", "tool": "undo_last", "aliases": ["undo"], "risk": "appOrSystemMutation", "schemaExample": {"tool": "undo_last"}},
+    {"kind": "key", "tool": "key", "aliases": ["press_key"], "risk": "inputInjection", "schemaExample": {"tool": "key", "key": "cmd+shift+t"}},
+    {"kind": "clipboard", "tool": "clipboard_read", "aliases": ["clipboard"], "risk": "readOnly", "schemaExample": {"tool": "clipboard_read"}},
+    {"kind": "window", "tool": "window_snap", "aliases": ["window", "snap_window"], "risk": "appOrSystemMutation", "schemaExample": {"tool": "window_snap", "position": "left"}},
+    {"kind": "scroll", "tool": "scroll", "aliases": [], "risk": "inputInjection", "schemaExample": {"tool": "scroll", "direction": "down", "amount": 5}},
+    {"kind": "openApp", "tool": "open_app", "aliases": ["open_application"], "risk": "appOrSystemMutation", "schemaExample": {"tool": "open_app", "app": "Safari"}},
+    {"kind": "openURL", "tool": "open_url", "aliases": ["open_website", "website"], "risk": "appOrSystemMutation", "schemaExample": {"tool": "open_url", "url": "https://example.com"}},
+    {"kind": "music", "tool": "music", "aliases": [], "risk": "appOrSystemMutation", "schemaExample": {"tool": "music", "command": "play"}},
+    {"kind": "volume", "tool": "volume", "aliases": [], "risk": "appOrSystemMutation", "schemaExample": {"tool": "volume", "direction": "down", "steps": 2}},
+    {"kind": "brightness", "tool": "brightness", "aliases": [], "risk": "appOrSystemMutation", "schemaExample": {"tool": "brightness", "direction": "up", "steps": 2}},
+    {"kind": "calendar", "tool": "calendar", "aliases": [], "risk": "readOnly", "schemaExample": {"tool": "calendar", "range": "today"}},
+    {"kind": "calendarCreate", "tool": "calendar_create", "aliases": ["calendar_event", "cal_event"], "risk": "appOrSystemMutation", "schemaExample": {"tool": "calendar_create", "title": "Design review", "start": "2026-06-10T15:00:00-07:00", "end": "2026-06-10T16:00:00-07:00"}},
+    {"kind": "reminder", "tool": "reminder", "aliases": [], "risk": "appOrSystemMutation", "schemaExample": {"tool": "reminder", "title": "follow up with Alex"}},
+    {"kind": "finder", "tool": "finder", "aliases": ["open_finder", "reveal_file"], "risk": "appOrSystemMutation", "schemaExample": {"tool": "finder", "path": "~/Downloads", "action": "open"}},
+    {"kind": "notes", "tool": "notes", "aliases": ["note"], "risk": "appOrSystemMutation", "schemaExample": {"tool": "notes", "action": "create", "title": "Idea", "body": "note text"}},
+    {"kind": "mail", "tool": "mail", "aliases": ["compose_email", "email"], "risk": "appOrSystemMutation", "schemaExample": {"tool": "mail", "to": "name@example.com", "subject": "Hello", "body": "draft text"}},
+    {"kind": "things", "tool": "things", "aliases": ["things_todo"], "risk": "appOrSystemMutation", "schemaExample": {"tool": "things", "title": "Buy milk", "notes": "optional"}},
+    {"kind": "shortcuts", "tool": "shortcuts", "aliases": ["run_shortcut", "shortcut"], "risk": "appOrSystemMutation", "schemaExample": {"tool": "shortcuts", "name": "My Shortcut"}},
+    {"kind": "messages", "tool": "messages", "aliases": ["message"], "risk": "appOrSystemMutation", "schemaExample": {"tool": "messages", "recipient": "Alex", "text": "draft text"}}
+  ]
+}

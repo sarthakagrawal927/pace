@@ -3,18 +3,14 @@
 //  leanring-buddy
 //
 //  Talks to a local vision-language model served by LM Studio (or any
-//  other OpenAI-compatible runtime) over HTTP. Sends a screenshot plus
+//  other OpenAI-compatible runtime) over loopback HTTP. Sends a screenshot plus
 //  a structured prompt and returns a parsed element map describing the
 //  interactive UI elements and key text on screen.
 //
 //  The output is designed to be passed as a *text* block alongside the
-//  user's transcript to the cloud reasoning model (Claude). That way:
-//    - The cloud model never sees raw screen pixels (privacy + cost).
-//    - The local VLM specialises in perception (hot path, every turn).
-//    - The cloud model specialises in planning (cold path, once per turn).
-//
-//  This file is intentionally self-contained and not yet wired into
-//  CompanionManager — that wiring is the next phase of the build.
+//  user's transcript to the local planner. That way the VLM specializes
+//  in perception and the planner specializes in action/answer selection,
+//  while raw screen pixels never leave the Mac.
 //
 
 import Foundation
@@ -87,20 +83,60 @@ struct LocalVLMScreenAnalysis: Codable {
 
     init(elements: [LocalVLMScreenElement], description: String) {
         self.elements = elements
-        self.description = description
+        self.description = Self.normalizedDescription(description, elements: elements)
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.elements = try container.decode([LocalVLMScreenElement].self, forKey: .elements)
-        // If description is missing/null, default to empty rather than
-        // throwing — see field doc-comment above.
-        self.description = (try? container.decodeIfPresent(String.self, forKey: .description)) ?? ""
+        // If description is missing/null, synthesize one from the element
+        // list rather than throwing — see field doc-comment above.
+        let decodedDescription = (try? container.decodeIfPresent(String.self, forKey: .description)) ?? ""
+        self.description = Self.normalizedDescription(decodedDescription, elements: elements)
     }
 
     private enum CodingKeys: String, CodingKey {
         case elements
         case description
+    }
+
+    static func synthesizedDescription(from elements: [LocalVLMScreenElement]) -> String {
+        let candidateTexts = elements
+            .prefix(6)
+            .compactMap { element -> String? in
+                let text = element.text?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let label = element.label.trimmingCharacters(in: .whitespacesAndNewlines)
+                let bestText = text?.isEmpty == false ? text! : label
+                let compactText = bestText
+                    .replacingOccurrences(of: "\n", with: " ")
+                    .split(separator: " ")
+                    .prefix(4)
+                    .joined(separator: " ")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !compactText.isEmpty else { return nil }
+                return compactText
+            }
+
+        guard !candidateTexts.isEmpty else { return "" }
+
+        let uniqueCandidateTexts = candidateTexts.reduce(into: [String]()) { partialResult, candidateText in
+            guard !partialResult.contains(where: { $0.caseInsensitiveCompare(candidateText) == .orderedSame }) else {
+                return
+            }
+            partialResult.append(candidateText)
+        }
+
+        return "Screen contains: \(uniqueCandidateTexts.prefix(4).joined(separator: ", "))."
+    }
+
+    private static func normalizedDescription(
+        _ rawDescription: String,
+        elements: [LocalVLMScreenElement]
+    ) -> String {
+        let trimmedDescription = rawDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedDescription.isEmpty else { return trimmedDescription }
+        return synthesizedDescription(from: elements)
     }
 }
 
@@ -110,12 +146,109 @@ struct LocalVLMClientError: LocalizedError {
     var errorDescription: String? { message }
 }
 
+protocol PaceScreenAnalysisClient: AnyObject, Sendable {
+    var displayName: String { get }
+
+    func analyzeScreenshot(
+        screenshotImageData: Data,
+        userIntent: String
+    ) async throws -> LocalVLMScreenAnalysis
+}
+
+enum PaceScreenAnalysisClientFactory {
+    static func makeDefaultClient() -> any PaceScreenAnalysisClient {
+        makeClient(
+            configuredProviderName: AppBundleConfiguration.stringValue(forKey: "ScreenAnalysisProvider"),
+            configuredBaseURL: AppBundleConfiguration.stringValue(forKey: "LocalVLMBaseURL"),
+            configuredModelIdentifier: AppBundleConfiguration.stringValue(forKey: "LocalVLMModelIdentifier"),
+            isInProcessRuntimeAvailable: InProcessVLMClient.isRuntimeAvailable
+        )
+    }
+
+    static func makeClient(
+        configuredProviderName: String?,
+        configuredBaseURL: String?,
+        configuredModelIdentifier: String?,
+        isInProcessRuntimeAvailable: Bool
+    ) -> any PaceScreenAnalysisClient {
+        let normalizedProviderName = configuredProviderName?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: " ", with: "")
+
+        let modelIdentifier = configuredModelIdentifier?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty == false
+            ? configuredModelIdentifier!.trimmingCharacters(in: .whitespacesAndNewlines)
+            : "qwen3-vl-8b-instruct"
+
+        switch normalizedProviderName {
+        case "inprocess", "coreml", "mlx", "ane":
+            if isInProcessRuntimeAvailable {
+                let client = InProcessVLMClient(modelIdentifier: modelIdentifier)
+                print("👁️ Screen analysis: using \(client.displayName)")
+                return client
+            }
+            print("⚠️ Screen analysis: in-process VLM requested but runtime is unavailable; falling back to LM Studio HTTP")
+            fallthrough
+        case "lmstudio", "http", "openai", .none:
+            let baseURLString = configuredBaseURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedBaseURL = PaceLocalEndpointGuard.resolvedLocalOpenAICompatibleBaseURL(
+                configuredURLString: baseURLString,
+                settingName: "LocalVLMBaseURL"
+            )
+            let client = LocalVLMClient(baseURL: resolvedBaseURL, modelIdentifier: modelIdentifier)
+            print("👁️ Screen analysis: using \(client.displayName)")
+            return client
+        default:
+            print("⚠️ Screen analysis: unknown provider '\(configuredProviderName ?? "nil")'; falling back to LM Studio HTTP")
+            let baseURLString = configuredBaseURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedBaseURL = PaceLocalEndpointGuard.resolvedLocalOpenAICompatibleBaseURL(
+                configuredURLString: baseURLString,
+                settingName: "LocalVLMBaseURL"
+            )
+            let client = LocalVLMClient(baseURL: resolvedBaseURL, modelIdentifier: modelIdentifier)
+            print("👁️ Screen analysis: using \(client.displayName)")
+            return client
+        }
+    }
+}
+
+final class InProcessVLMClient: PaceScreenAnalysisClient, @unchecked Sendable {
+    static let isRuntimeAvailable = false
+
+    let modelIdentifier: String
+
+    var displayName: String {
+        "In-process VLM (\(modelIdentifier))"
+    }
+
+    init(modelIdentifier: String) {
+        self.modelIdentifier = modelIdentifier
+    }
+
+    func analyzeScreenshot(
+        screenshotImageData: Data,
+        userIntent: String
+    ) async throws -> LocalVLMScreenAnalysis {
+        throw LocalVLMClientError(
+            message: "In-process VLM is configured but the CoreML/MLX runtime bridge is not installed in Pace yet."
+        )
+    }
+}
+
 /// Talks to a local OpenAI-compatible chat-completions endpoint (LM Studio
 /// by default) to extract a structured element map from a screenshot.
-final class LocalVLMClient {
+final class LocalVLMClient: PaceScreenAnalysisClient, @unchecked Sendable {
     private let baseURL: URL
     private let modelIdentifier: String
     private let urlSession: URLSession
+
+    var displayName: String {
+        "LM Studio VLM (\(modelIdentifier))"
+    }
 
     /// `baseURL` should point at the OpenAI-compatible root (e.g.
     /// `http://localhost:1234/v1`). `modelIdentifier` is the model name
@@ -124,7 +257,10 @@ final class LocalVLMClient {
         baseURL: URL = URL(string: "http://localhost:1234/v1")!,
         modelIdentifier: String = "qwen3-vl-8b-instruct"
     ) {
-        self.baseURL = baseURL
+        self.baseURL = PaceLocalEndpointGuard.resolvedLocalOpenAICompatibleBaseURL(
+            configuredURL: baseURL,
+            settingName: "LocalVLMBaseURL"
+        )
         self.modelIdentifier = modelIdentifier
 
         let urlSessionConfiguration = URLSessionConfiguration.default

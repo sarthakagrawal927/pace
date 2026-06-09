@@ -1,0 +1,6 @@
+USER: open messages
+ELEMENT: [0] dock_icon|24,1000|Messages|chat app
+ELEMENT: [1] dock_icon|72,1000|Mail|Inbox
+EXPECT_POINT_ID: 0
+EXPECT_CLICK_ID: 0
+BODY_MUST_BE_EMPTY: 1

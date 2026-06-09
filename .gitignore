@@ -16,3 +16,4 @@ default.profraw
 # Local sandboxes the eval + profile scripts use
 /tmp/pace-test-derived-data/
 /tmp/pace-profile-*/
+__pycache__/

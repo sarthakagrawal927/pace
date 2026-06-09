@@ -1,0 +1,6 @@
+USER: send this to the trash
+ELEMENT: [0] button|400,200|Move to Trash|delete item
+ELEMENT: [1] button|500,200|Cancel|cancel
+EXPECT_POINT_ID: 0
+EXPECT_CLICK_ID: 0
+BODY_MUST_BE_EMPTY: 1

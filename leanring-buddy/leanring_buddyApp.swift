@@ -45,6 +45,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         // confirmed by `ps -ax | grep Pace` showing duplicate PIDs.
         terminateOtherRunningPaceInstances()
 
+        PaceToolRegistry.validateForAppStartup()
         UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 0])
 
         PaceAnalytics.configure()
@@ -55,6 +56,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         // Fire-and-forget — app launch is not blocked. Companion
         // unload happens in `applicationWillTerminate`.
         PaceLMStudioModelLoader.warmUpConfiguredModelsAsync()
+        prewarmMailForFastDraftsIfNeeded()
 
         let menuBarPanelManager = MenuBarPanelManager(companionManager: companionManager)
         self.menuBarPanelManager = menuBarPanelManager
@@ -140,6 +142,51 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
                 print("🎯 Pace: Registered as login item")
             } catch {
                 print("⚠️ Pace: Failed to register as login item: \(error)")
+            }
+        }
+    }
+
+    /// Eats Mail's cold-launch cost before the first compose command. This is
+    /// launch-only and non-activating so the user does not lose focus.
+    private func prewarmMailForFastDraftsIfNeeded() {
+        let rawFlag = AppBundleConfiguration
+            .stringValue(forKey: "PrewarmMailForDrafts")?
+            .lowercased()
+        guard rawFlag != "false", rawFlag != "0", rawFlag != "no" else {
+            print("📬 Pace: Mail draft prewarm disabled")
+            return
+        }
+
+        let mailBundleIdentifier = "com.apple.mail"
+        if NSWorkspace.shared.runningApplications.contains(where: {
+            $0.bundleIdentifier == mailBundleIdentifier
+        }) {
+            print("📬 Pace: Mail already running for fast drafts")
+            return
+        }
+
+        guard let mailApplicationURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: mailBundleIdentifier
+        ) else {
+            print("⚠️ Pace: Mail app not found for draft prewarm")
+            return
+        }
+
+        let openConfiguration = NSWorkspace.OpenConfiguration()
+        openConfiguration.activates = false
+        openConfiguration.addsToRecentItems = false
+        openConfiguration.createsNewApplicationInstance = false
+
+        NSWorkspace.shared.openApplication(
+            at: mailApplicationURL,
+            configuration: openConfiguration
+        ) { runningApplication, error in
+            if let error {
+                print("⚠️ Pace: Mail draft prewarm failed: \(error.localizedDescription)")
+            } else if let runningApplication {
+                print("📬 Pace: Mail prewarmed for drafts pid=\(runningApplication.processIdentifier)")
+            } else {
+                print("📬 Pace: Mail draft prewarm requested")
             }
         }
     }

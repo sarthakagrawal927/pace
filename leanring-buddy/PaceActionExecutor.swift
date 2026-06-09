@@ -14,6 +14,7 @@
 //
 
 import AppKit
+import Contacts
 import CoreGraphics
 import EventKit
 import Foundation
@@ -27,6 +28,577 @@ struct ScreenshotPixelLocation {
     let yInScreenshotPixels: Int
     /// 1-based screen index from the screenshot label. nil = cursor screen.
     let screenNumber: Int?
+}
+
+struct PaceClickCandidate {
+    let location: ScreenshotPixelLocation?
+    let label: String?
+    let confidence: Double
+    let expectStateChange: Bool
+    let recency: PaceClickCandidateRecency?
+
+    init(
+        location: ScreenshotPixelLocation?,
+        label: String?,
+        confidence: Double,
+        expectStateChange: Bool,
+        recency: PaceClickCandidateRecency? = nil
+    ) {
+        self.location = location
+        self.label = label
+        self.confidence = confidence
+        self.expectStateChange = expectStateChange
+        self.recency = recency
+    }
+
+    var sortDescription: String {
+        if let location {
+            return location.approvalDescription
+        }
+        return label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    var observationDescription: String {
+        let trimmedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch (trimmedLabel, location) {
+        case (.some(let trimmedLabel), .some(let location)) where !trimmedLabel.isEmpty:
+            return "\"\(trimmedLabel)\" at \(location.approvalDescription)"
+        case (.some(let trimmedLabel), nil) where !trimmedLabel.isEmpty:
+            return "\"\(trimmedLabel)\""
+        case (nil, .some(let location)), (.some, .some(let location)):
+            return location.approvalDescription
+        case (nil, nil), (.some, nil):
+            return "unlabelled candidate"
+        }
+    }
+}
+
+struct PaceClickCandidateRecency {
+    let rank: Int?
+    let lastSeenMillisecondsAgo: Double?
+
+    var scoreBoost: Double {
+        let rankBoost: Double? = rank.map { rank in
+            max(0, 0.12 - (Double(max(0, rank)) * 0.02))
+        }
+        let lastSeenBoost: Double? = lastSeenMillisecondsAgo.map { millisecondsAgo in
+            let clampedMillisecondsAgo = max(0, min(millisecondsAgo, 5_000))
+            return 0.12 * (1 - (clampedMillisecondsAgo / 5_000))
+        }
+        return max(rankBoost ?? 0, lastSeenBoost ?? 0)
+    }
+}
+
+struct PaceClickCandidateSet {
+    let candidates: [PaceClickCandidate]
+    let clickCount: Int
+
+    var selectedFallbackLocation: ScreenshotPixelLocation? {
+        candidates.compactMap(\.location).first
+    }
+
+    func bestCandidate(
+        currentGlobalCursorPoint: CGPoint?,
+        focusedWindowGlobalFrame: CGRect? = nil,
+        screenCaptures: [CompanionScreenCapture],
+        coordinateConverter: (ScreenshotPixelLocation, [CompanionScreenCapture]) -> CGPoint?
+    ) -> PaceClickCandidate? {
+        orderedCandidates(
+            currentGlobalCursorPoint: currentGlobalCursorPoint,
+            focusedWindowGlobalFrame: focusedWindowGlobalFrame,
+            screenCaptures: screenCaptures,
+            coordinateConverter: coordinateConverter
+        ).first
+    }
+
+    func orderedCandidates(
+        currentGlobalCursorPoint: CGPoint?,
+        focusedWindowGlobalFrame: CGRect? = nil,
+        screenCaptures: [CompanionScreenCapture],
+        coordinateConverter: (ScreenshotPixelLocation, [CompanionScreenCapture]) -> CGPoint?
+    ) -> [PaceClickCandidate] {
+        guard !candidates.isEmpty else { return [] }
+
+        let sortedCandidates = candidates.sorted {
+            if $0.confidence == $1.confidence {
+                return $0.sortDescription < $1.sortDescription
+            }
+            return $0.confidence > $1.confidence
+        }
+
+        if let firstCandidate = sortedCandidates.first, firstCandidate.confidence > 0.80 {
+            return sortedCandidates
+        }
+
+        return sortedCandidates.sorted { firstCandidate, secondCandidate in
+            let firstScore = score(
+                    firstCandidate,
+                    currentGlobalCursorPoint: currentGlobalCursorPoint,
+                    focusedWindowGlobalFrame: focusedWindowGlobalFrame,
+                    screenCaptures: screenCaptures,
+                    coordinateConverter: coordinateConverter
+                )
+            let secondScore = score(
+                    secondCandidate,
+                    currentGlobalCursorPoint: currentGlobalCursorPoint,
+                    focusedWindowGlobalFrame: focusedWindowGlobalFrame,
+                    screenCaptures: screenCaptures,
+                    coordinateConverter: coordinateConverter
+                )
+            if firstScore == secondScore {
+                return firstCandidate.sortDescription < secondCandidate.sortDescription
+            }
+            return firstScore > secondScore
+        }
+    }
+
+    private func score(
+        _ candidate: PaceClickCandidate,
+        currentGlobalCursorPoint: CGPoint?,
+        focusedWindowGlobalFrame: CGRect?,
+        screenCaptures: [CompanionScreenCapture],
+        coordinateConverter: (ScreenshotPixelLocation, [CompanionScreenCapture]) -> CGPoint?
+    ) -> Double {
+        var score = candidate.confidence
+        score += candidate.recency?.scoreBoost ?? 0
+
+        if let currentGlobalCursorPoint,
+           let location = candidate.location,
+           let candidateGlobalPoint = coordinateConverter(location, screenCaptures) {
+            let distanceFromCursor = hypot(
+                candidateGlobalPoint.x - currentGlobalCursorPoint.x,
+                candidateGlobalPoint.y - currentGlobalCursorPoint.y
+            )
+            if distanceFromCursor <= 200 {
+                score += 3.0
+            }
+        }
+
+        if let focusedWindowGlobalFrame,
+           let location = candidate.location,
+           let candidateGlobalPoint = coordinateConverter(location, screenCaptures),
+           focusedWindowGlobalFrame.insetBy(dx: -24, dy: -24).contains(candidateGlobalPoint) {
+            score += 0.18
+        }
+
+        if let label = candidate.label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
+            score += 0.01
+        }
+
+        return score
+    }
+}
+
+struct PaceClickStateSnapshot: Equatable {
+    let frontmostBundleIdentifier: String?
+    let visibleWindowCount: Int
+    let focusedWindowTitle: String?
+    let focusedElementFingerprint: String?
+    let focusedAXTreeFingerprint: String?
+
+    static func captureCurrent() -> PaceClickStateSnapshot {
+        let frontmostApplication = NSWorkspace.shared.frontmostApplication
+        let focusedWindowTitle: String?
+        let focusedElementFingerprint: String?
+        let focusedAXTreeFingerprint: String?
+
+        if let frontmostApplication {
+            let applicationElement = AXUIElementCreateApplication(frontmostApplication.processIdentifier)
+            let focusedWindowElement = focusedWindowElement(in: applicationElement)
+            focusedWindowTitle = stringAttribute(
+                kAXTitleAttribute as CFString,
+                of: focusedWindowElement
+            )
+            focusedElementFingerprint = fingerprint(
+                of: focusedElement(in: applicationElement)
+            )
+            focusedAXTreeFingerprint = treeFingerprint(
+                of: focusedWindowElement ?? applicationElement
+            )
+        } else {
+            focusedWindowTitle = nil
+            focusedElementFingerprint = nil
+            focusedAXTreeFingerprint = nil
+        }
+
+        return PaceClickStateSnapshot(
+            frontmostBundleIdentifier: frontmostApplication?.bundleIdentifier,
+            visibleWindowCount: visibleWindowCount(),
+            focusedWindowTitle: focusedWindowTitle,
+            focusedElementFingerprint: focusedElementFingerprint,
+            focusedAXTreeFingerprint: focusedAXTreeFingerprint
+        )
+    }
+
+    static func focusedWindowGlobalFrame() -> CGRect? {
+        guard let frontmostApplication = NSWorkspace.shared.frontmostApplication else {
+            return nil
+        }
+        let applicationElement = AXUIElementCreateApplication(frontmostApplication.processIdentifier)
+        guard let focusedWindowElement = focusedWindowElement(in: applicationElement),
+              let focusedWindowOrigin = pointAttribute(kAXPositionAttribute as CFString, of: focusedWindowElement),
+              let focusedWindowSize = sizeAttribute(kAXSizeAttribute as CFString, of: focusedWindowElement) else {
+            return nil
+        }
+        return CGRect(origin: focusedWindowOrigin, size: focusedWindowSize)
+    }
+
+    private static func focusedWindowElement(in applicationElement: AXUIElement) -> AXUIElement? {
+        var focusedWindowValue: CFTypeRef?
+        let focusedWindowResult = AXUIElementCopyAttributeValue(
+            applicationElement,
+            kAXFocusedWindowAttribute as CFString,
+            &focusedWindowValue
+        )
+        guard focusedWindowResult == .success,
+              let focusedWindowValue,
+              CFGetTypeID(focusedWindowValue) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        return (focusedWindowValue as! AXUIElement)
+    }
+
+    private static func focusedElement(in applicationElement: AXUIElement) -> AXUIElement? {
+        var focusedElementValue: CFTypeRef?
+        let focusedElementResult = AXUIElementCopyAttributeValue(
+            applicationElement,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedElementValue
+        )
+        guard focusedElementResult == .success,
+              let focusedElementValue,
+              CFGetTypeID(focusedElementValue) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        return (focusedElementValue as! AXUIElement)
+    }
+
+    private static func fingerprint(of element: AXUIElement?) -> String? {
+        guard let element else { return nil }
+        let fingerprintParts = [
+            stringAttribute(kAXRoleAttribute as CFString, of: element),
+            stringAttribute(kAXSubroleAttribute as CFString, of: element),
+            stringAttribute(kAXTitleAttribute as CFString, of: element),
+            stringAttribute(kAXDescriptionAttribute as CFString, of: element),
+            stringAttribute(kAXValueAttribute as CFString, of: element)
+        ]
+        .compactMap { $0 }
+        .filter { !$0.isEmpty }
+
+        guard !fingerprintParts.isEmpty else { return nil }
+        return fingerprintParts.joined(separator: "|")
+    }
+
+    private static func pointAttribute(_ attributeName: CFString, of element: AXUIElement?) -> CGPoint? {
+        guard let element else { return nil }
+        var attributeValue: CFTypeRef?
+        let attributeResult = AXUIElementCopyAttributeValue(element, attributeName, &attributeValue)
+        guard attributeResult == .success,
+              let attributeValue,
+              CFGetTypeID(attributeValue) == AXValueGetTypeID() else {
+            return nil
+        }
+
+        var pointValue = CGPoint.zero
+        guard AXValueGetValue((attributeValue as! AXValue), .cgPoint, &pointValue) else {
+            return nil
+        }
+        return pointValue
+    }
+
+    private static func sizeAttribute(_ attributeName: CFString, of element: AXUIElement?) -> CGSize? {
+        guard let element else { return nil }
+        var attributeValue: CFTypeRef?
+        let attributeResult = AXUIElementCopyAttributeValue(element, attributeName, &attributeValue)
+        guard attributeResult == .success,
+              let attributeValue,
+              CFGetTypeID(attributeValue) == AXValueGetTypeID() else {
+            return nil
+        }
+
+        var sizeValue = CGSize.zero
+        guard AXValueGetValue((attributeValue as! AXValue), .cgSize, &sizeValue) else {
+            return nil
+        }
+        return sizeValue
+    }
+
+    private static func treeFingerprint(of rootElement: AXUIElement?) -> String? {
+        guard let rootElement else { return nil }
+
+        var queue: [AXUIElement] = [rootElement]
+        var nodeFingerprints: [String] = []
+        var visitedNodeCount = 0
+        let maximumNodeCount = 600
+
+        while !queue.isEmpty, visitedNodeCount < maximumNodeCount {
+            let element = queue.removeFirst()
+            visitedNodeCount += 1
+
+            if let elementFingerprint = fingerprint(of: element) {
+                nodeFingerprints.append(elementFingerprint)
+            }
+
+            queue.append(contentsOf: children(of: element))
+        }
+
+        guard !nodeFingerprints.isEmpty else { return nil }
+        return "\(visitedNodeCount):" + nodeFingerprints.joined(separator: "\n")
+    }
+
+    private static func stringAttribute(_ attributeName: CFString, of element: AXUIElement?) -> String? {
+        guard let element else { return nil }
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attributeName, &value)
+        guard result == .success, let value else { return nil }
+        return value as? String
+    }
+
+    private static func children(of element: AXUIElement) -> [AXUIElement] {
+        var childrenValue: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(
+            element,
+            kAXChildrenAttribute as CFString,
+            &childrenValue
+        )
+        guard result == .success,
+              let childrenValue,
+              let children = childrenValue as? [AXUIElement] else {
+            return []
+        }
+        return children
+    }
+
+    private static func visibleWindowCount() -> Int {
+        let windowInfo = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]]
+
+        return windowInfo?
+            .filter { window in
+                (window[kCGWindowLayer as String] as? Int) == 0
+            }
+            .count ?? 0
+    }
+}
+
+struct PaceMailComposeBodyCandidateMetadata: Equatable {
+    let role: String?
+    let title: String?
+    let description: String?
+    let help: String?
+    let value: String?
+    let placeholder: String?
+    let frame: CGRect?
+
+    var score: Double {
+        guard let normalizedRole = role?.lowercased() else { return -100 }
+
+        var score = 0.0
+        switch normalizedRole {
+        case "axtextarea":
+            score += 80
+        case "axwebarea":
+            score += 65
+        case "axtexteditor":
+            score += 60
+        case "axtextfield":
+            score += 18
+        default:
+            return -100
+        }
+
+        let combinedLabels = [
+            title,
+            description,
+            help,
+            placeholder,
+            value
+        ]
+            .compactMap { $0?.lowercased() }
+            .joined(separator: " ")
+
+        if Self.headerFieldKeywords.contains(where: { combinedLabels.contains($0) }) {
+            score -= 90
+        }
+
+        if let frame {
+            let area = max(0, frame.width) * max(0, frame.height)
+            score += min(40, area / 4_000)
+            if frame.height < 80 {
+                score -= 25
+            }
+        }
+
+        return score
+    }
+
+    private static let headerFieldKeywords = [
+        "to:",
+        "cc:",
+        "bcc:",
+        "from:",
+        "reply-to",
+        "subject",
+        "search"
+    ]
+}
+
+struct PaceAXLabelPressResolver {
+    private static let pressableRoles: Set<String> = [
+        "AXButton",
+        "AXLink",
+        "AXMenuItem",
+        "AXCheckBox",
+        "AXRadioButton",
+        "AXPopUpButton",
+        "AXTab",
+        "AXDisclosureTriangle",
+        "AXStepper"
+    ]
+
+    static func pressBestMatch(for candidate: PaceClickCandidate) -> Bool {
+        guard let requestedLabel = candidate.label?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !requestedLabel.isEmpty,
+              let frontmostApplication = NSWorkspace.shared.frontmostApplication else {
+            return false
+        }
+
+        let applicationElement = AXUIElementCreateApplication(frontmostApplication.processIdentifier)
+        let searchRoot = focusedWindowElement(in: applicationElement) ?? applicationElement
+        let matches = collectPressableMatches(
+            requestedLabel: requestedLabel,
+            rootElement: searchRoot
+        )
+
+        guard let bestMatch = matches.sorted(by: { firstMatch, secondMatch in
+            if firstMatch.score == secondMatch.score {
+                return firstMatch.label < secondMatch.label
+            }
+            return firstMatch.score > secondMatch.score
+        }).first else {
+            print("⚠️ AX label targeting: no pressable match for \"\(requestedLabel)\"")
+            return false
+        }
+
+        let pressResult = AXUIElementPerformAction(bestMatch.element, kAXPressAction as CFString)
+        if pressResult == .success {
+            print("🪟 AX label targeting: pressed \"\(bestMatch.label)\" for \"\(requestedLabel)\"")
+            return true
+        }
+
+        print("⚠️ AX label targeting: press failed (\(pressResult.rawValue)) for \"\(requestedLabel)\"")
+        return false
+    }
+
+    private struct Match {
+        let element: AXUIElement
+        let label: String
+        let score: Int
+    }
+
+    private static func collectPressableMatches(
+        requestedLabel: String,
+        rootElement: AXUIElement
+    ) -> [Match] {
+        let normalizedRequestedLabel = normalizeLabel(requestedLabel)
+        guard !normalizedRequestedLabel.isEmpty else { return [] }
+
+        var matches: [Match] = []
+        var queue: [AXUIElement] = [rootElement]
+        var visitedNodeCount = 0
+        let maximumNodeCount = 800
+
+        while !queue.isEmpty, visitedNodeCount < maximumNodeCount {
+            let element = queue.removeFirst()
+            visitedNodeCount += 1
+
+            if let role = stringAttribute(kAXRoleAttribute as CFString, of: element),
+               pressableRoles.contains(role),
+               let elementLabel = label(for: element) {
+                let normalizedElementLabel = normalizeLabel(elementLabel)
+                let score: Int?
+                if normalizedElementLabel == normalizedRequestedLabel {
+                    score = 10
+                } else if normalizedElementLabel.contains(normalizedRequestedLabel) {
+                    score = 6
+                } else if normalizedRequestedLabel.contains(normalizedElementLabel) {
+                    score = 4
+                } else {
+                    score = nil
+                }
+
+                if let score {
+                    matches.append(Match(element: element, label: elementLabel, score: score))
+                }
+            }
+
+            queue.append(contentsOf: children(of: element))
+        }
+
+        return matches
+    }
+
+    private static func focusedWindowElement(in applicationElement: AXUIElement) -> AXUIElement? {
+        var focusedWindowValue: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(
+            applicationElement,
+            kAXFocusedWindowAttribute as CFString,
+            &focusedWindowValue
+        )
+        guard result == .success,
+              let focusedWindowValue,
+              CFGetTypeID(focusedWindowValue) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        return (focusedWindowValue as! AXUIElement)
+    }
+
+    private static func children(of element: AXUIElement) -> [AXUIElement] {
+        var childrenValue: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(
+            element,
+            kAXChildrenAttribute as CFString,
+            &childrenValue
+        )
+        guard result == .success,
+              let childrenValue,
+              let children = childrenValue as? [AXUIElement] else {
+            return []
+        }
+        return children
+    }
+
+    private static func label(for element: AXUIElement) -> String? {
+        let candidateLabels = [
+            stringAttribute(kAXTitleAttribute as CFString, of: element),
+            stringAttribute(kAXDescriptionAttribute as CFString, of: element),
+            stringAttribute(kAXValueAttribute as CFString, of: element),
+            stringAttribute(kAXHelpAttribute as CFString, of: element)
+        ]
+
+        return candidateLabels
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+    }
+
+    private static func stringAttribute(_ attributeName: CFString, of element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attributeName, &value)
+        guard result == .success, let value else { return nil }
+        return value as? String
+    }
+
+    static func normalizeLabel(_ label: String) -> String {
+        label
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+    }
 }
 
 @MainActor
@@ -47,7 +619,10 @@ final class PaceActionExecutor {
     /// a built-in "double-press" action.
     private let axTargeter = PaceAXTargeter()
     private let eventStore = EKEventStore()
+    private let contactStore = CNContactStore()
     private let mcpClient: PaceMCPStdioClient
+    private var mutationLog: [PaceActionMutation] = []
+    private var activeStreamingMailDraftState: PaceStreamingMailDraftState?
 
     init(
         actionsAreEnabledOverride: Bool? = nil,
@@ -118,6 +693,58 @@ final class PaceActionExecutor {
         return observations
     }
 
+    var hasActiveStreamingMailDraft: Bool {
+        activeStreamingMailDraftState != nil
+    }
+
+    @discardableResult
+    func beginOrUpdateStreamingMailDraft(
+        _ snapshot: PaceStreamingMailDraftSnapshot
+    ) async -> PaceActionExecutionObservation? {
+        guard actionsAreEnabled else {
+            return PaceActionExecutionObservation(
+                toolName: "mail",
+                summary: "Would stream mail draft body: \(snapshot.normalizedMailDraft.subject)"
+            )
+        }
+
+        let now = Date()
+        if let activeStreamingMailDraftState,
+           now.timeIntervalSince(activeStreamingMailDraftState.lastWriteDate) < 0.033 {
+            self.activeStreamingMailDraftState = activeStreamingMailDraftState
+                .withPendingSnapshot(snapshot)
+            return nil
+        }
+
+        return await writeStreamingMailDraft(snapshot, isFinalWrite: false)
+    }
+
+    @discardableResult
+    func finishActiveStreamingMailDraft(
+        finalMailDraft: PaceMailDraft
+    ) async -> PaceActionExecutionObservation? {
+        guard activeStreamingMailDraftState != nil else {
+            return nil
+        }
+
+        let finalSnapshot = PaceStreamingMailDraftSnapshot(
+            recipients: finalMailDraft.recipients,
+            subject: finalMailDraft.subject,
+            body: finalMailDraft.body
+        )
+        let observation = await writeStreamingMailDraft(finalSnapshot, isFinalWrite: true)
+        activeStreamingMailDraftState = nil
+
+        return observation ?? PaceActionExecutionObservation(
+            toolName: "mail",
+            summary: "Created streaming mail draft: \(finalMailDraft.subject)"
+        )
+    }
+
+    func cancelActiveStreamingMailDraftTracking() {
+        activeStreamingMailDraftState = nil
+    }
+
     private func executeSingleAction(
         _ action: PaceParsedAction,
         screenCaptures: [CompanionScreenCapture]
@@ -127,10 +754,22 @@ final class PaceActionExecutor {
             await clickAtScreenshotLocation(location, screenCaptures: screenCaptures, clickCount: 1)
         case .doubleClick(let location):
             await clickAtScreenshotLocation(location, screenCaptures: screenCaptures, clickCount: 2)
+        case .clickCandidates(let clickCandidateSet):
+            return await clickBestCandidate(clickCandidateSet, screenCaptures: screenCaptures)
         case .type(let textToType):
             await typeText(textToType)
+        case .setTextValue(let setTextValueRequest):
+            return setTextValue(setTextValueRequest)
+        case .editSelectedText(let voiceEditRequest):
+            return editSelectedText(voiceEditRequest)
+        case .undoLastMutation:
+            return undoLastMutation()
         case .pressKey(let keyName, let modifiers):
             await pressKey(named: keyName, withModifiers: modifiers)
+        case .readClipboard:
+            return readClipboardText()
+        case .snapWindow(let snapWindowRequest):
+            return snapFocusedWindow(snapWindowRequest)
         case .scroll(let direction, let amount):
             await scroll(direction: direction, amountInLines: amount)
         case .openApplication(let applicationName):
@@ -145,6 +784,8 @@ final class PaceActionExecutor {
             await adjustBrightness(adjustment)
         case .listCalendarEvents(let calendarQuery):
             return await listCalendarEvents(calendarQuery)
+        case .createCalendarEvent(let calendarEventRequest):
+            return await createCalendarEvent(calendarEventRequest)
         case .createReminder(let reminderRequest):
             return await createReminder(reminderRequest)
         case .finder(let finderRequest):
@@ -172,22 +813,124 @@ final class PaceActionExecutor {
 
     // MARK: - Mouse
 
+    private func clickBestCandidate(
+        _ clickCandidateSet: PaceClickCandidateSet,
+        screenCaptures: [CompanionScreenCapture]
+    ) async -> PaceActionExecutionObservation? {
+        let currentGlobalCursorPoint = CGEvent(source: nil)?.location
+        let focusedWindowGlobalFrame = PaceClickStateSnapshot.focusedWindowGlobalFrame()
+        let orderedCandidates = clickCandidateSet.orderedCandidates(
+            currentGlobalCursorPoint: currentGlobalCursorPoint,
+            focusedWindowGlobalFrame: focusedWindowGlobalFrame,
+            screenCaptures: screenCaptures,
+            coordinateConverter: { [weak self] location, captures in
+                self?.convertScreenshotPixelToDisplayGlobalPoint(
+                    screenshotPixelLocation: location,
+                    screenCaptures: captures
+                )
+            }
+        )
+
+        guard !orderedCandidates.isEmpty else {
+            print("⚠️ PaceActionExecutor: no click candidates available — skipping")
+            return PaceActionExecutionObservation(
+                toolName: "click_candidates",
+                summary: "Click failed: no click candidates were available."
+            )
+        }
+
+        let maximumAttempts = min(3, orderedCandidates.count)
+        let attemptedCandidates = Array(orderedCandidates.prefix(maximumAttempts))
+        for (candidateIndex, candidate) in attemptedCandidates.enumerated() {
+            let beforeClickState = actionsAreEnabled && candidate.expectStateChange
+                ? PaceClickStateSnapshot.captureCurrent()
+                : nil
+
+            let didAttemptClick = await clickCandidate(
+                candidate,
+                screenCaptures: screenCaptures,
+                clickCount: clickCandidateSet.clickCount
+            )
+            guard didAttemptClick else { continue }
+
+            guard actionsAreEnabled, candidate.expectStateChange else {
+                return nil
+            }
+
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            let afterClickState = PaceClickStateSnapshot.captureCurrent()
+            if beforeClickState != afterClickState {
+                return nil
+            }
+
+            let hasAnotherCandidate = candidateIndex < maximumAttempts - 1
+            if hasAnotherCandidate {
+                print("⚠️ PaceActionExecutor: click candidate produced no observable state change — retrying next candidate")
+            } else {
+                print("⚠️ PaceActionExecutor: click candidates produced no observable state change")
+            }
+        }
+
+        let attemptedCandidateSummary = attemptedCandidates
+            .map(\.observationDescription)
+            .joined(separator: "; ")
+        let skippedCandidateCount = max(0, orderedCandidates.count - attemptedCandidates.count)
+        let skippedCandidateText = skippedCandidateCount > 0
+            ? " \(skippedCandidateCount) lower-ranked candidate\(skippedCandidateCount == 1 ? " was" : "s were") not tried."
+            : ""
+        return PaceActionExecutionObservation(
+            toolName: "click_candidates",
+            summary: "Click failed after trying \(attemptedCandidates.count) of \(orderedCandidates.count) candidate\(orderedCandidates.count == 1 ? "" : "s"): \(attemptedCandidateSummary).\(skippedCandidateText)"
+        )
+    }
+
+    private func clickCandidate(
+        _ candidate: PaceClickCandidate,
+        screenCaptures: [CompanionScreenCapture],
+        clickCount: Int
+    ) async -> Bool {
+        if let location = candidate.location {
+            return await clickAtScreenshotLocation(
+                location,
+                screenCaptures: screenCaptures,
+                clickCount: clickCount
+            )
+        }
+
+        guard let label = candidate.label?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !label.isEmpty else {
+            print("⚠️ PaceActionExecutor: click candidate has no coordinate or label — skipping")
+            return false
+        }
+
+        print("🪟 AX label click \"\(label)\" (enabled: \(actionsAreEnabled))")
+
+        guard actionsAreEnabled else { return true }
+        guard clickCount == 1 else {
+            print("⚠️ PaceActionExecutor: label-only double-click candidates are not supported — skipping")
+            return false
+        }
+
+        return PaceAXLabelPressResolver.pressBestMatch(for: candidate)
+    }
+
+    @discardableResult
     private func clickAtScreenshotLocation(
         _ screenshotPixelLocation: ScreenshotPixelLocation,
         screenCaptures: [CompanionScreenCapture],
         clickCount: Int
-    ) async {
+    ) async -> Bool {
         guard let displayGlobalPoint = convertScreenshotPixelToDisplayGlobalPoint(
             screenshotPixelLocation: screenshotPixelLocation,
             screenCaptures: screenCaptures
         ) else {
             print("⚠️ PaceActionExecutor: could not resolve display coordinates for click — skipping")
-            return
+            return false
         }
 
         print("🖱️  Click x\(clickCount) at \(Int(displayGlobalPoint.x)),\(Int(displayGlobalPoint.y)) (enabled: \(actionsAreEnabled))")
 
-        guard actionsAreEnabled else { return }
+        guard actionsAreEnabled else { return true }
 
         // Try the AX path first for single clicks. If AX finds a
         // pressable element and the press succeeds, we skip the CGEvent
@@ -196,7 +939,7 @@ final class PaceActionExecutor {
         // Double-clicks still go through CGEvent because AX has no
         // "double-press" primitive.
         if clickCount == 1, axTargeter.tryClickViaAccessibility(atGlobalCGPoint: displayGlobalPoint) {
-            return
+            return true
         }
 
         // Move the system cursor first so the visual position matches the
@@ -237,6 +980,195 @@ final class PaceActionExecutor {
                 try? await Task.sleep(nanoseconds: 40_000_000) // 40ms between clicks of a double-click
             }
         }
+
+        return true
+    }
+
+    private func readClipboardText() -> PaceActionExecutionObservation {
+        print("🧰 Clipboard read (enabled: \(actionsAreEnabled))")
+        guard actionsAreEnabled else {
+            return PaceActionExecutionObservation(
+                toolName: "clipboard_read",
+                summary: "Would read clipboard text."
+            )
+        }
+
+        guard let clipboardText = NSPasteboard.general.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !clipboardText.isEmpty else {
+            return PaceActionExecutionObservation(
+                toolName: "clipboard_read",
+                summary: "Clipboard has no text."
+            )
+        }
+
+        let maximumClipboardPreviewCharacters = 1_200
+        let clippedText: String = {
+            guard clipboardText.count > maximumClipboardPreviewCharacters else {
+                return clipboardText
+            }
+            return "\(clipboardText.prefix(maximumClipboardPreviewCharacters))..."
+        }()
+
+        return PaceActionExecutionObservation(
+            toolName: "clipboard_read",
+            summary: "Clipboard text: \(clippedText)"
+        )
+    }
+
+    private func snapFocusedWindow(_ request: PaceWindowSnapRequest) -> PaceActionExecutionObservation {
+        print("🪟 Window snap \(request.position.rawValue) (enabled: \(actionsAreEnabled))")
+        guard actionsAreEnabled else {
+            return PaceActionExecutionObservation(
+                toolName: "window_snap",
+                summary: "Would snap focused window: \(request.position.displayName)"
+            )
+        }
+
+        guard let focusedWindow = focusedWindowElement() else {
+            return PaceActionExecutionObservation(
+                toolName: "window_snap",
+                summary: "No focused window was found."
+            )
+        }
+
+        guard let currentWindowFrame = axFrame(of: focusedWindow),
+              let screenVisibleFrame = axVisibleFrameForScreen(containing: currentWindowFrame) else {
+            return PaceActionExecutionObservation(
+                toolName: "window_snap",
+                summary: "Could not resolve focused window frame."
+            )
+        }
+
+        let targetFrame = request.position.targetFrame(in: screenVisibleFrame)
+        guard setAXWindowFrame(focusedWindow, targetFrame: targetFrame) else {
+            return PaceActionExecutionObservation(
+                toolName: "window_snap",
+                summary: "Focused window could not be moved or resized via Accessibility."
+            )
+        }
+
+        return PaceActionExecutionObservation(
+            toolName: "window_snap",
+            summary: "Snapped focused window: \(request.position.displayName)"
+        )
+    }
+
+    private func focusedWindowElement() -> AXUIElement? {
+        guard let frontmostApplication = NSWorkspace.shared.frontmostApplication else {
+            return nil
+        }
+
+        let applicationElement = AXUIElementCreateApplication(frontmostApplication.processIdentifier)
+        var focusedWindowValue: CFTypeRef?
+        let focusedWindowResult = AXUIElementCopyAttributeValue(
+            applicationElement,
+            kAXFocusedWindowAttribute as CFString,
+            &focusedWindowValue
+        )
+
+        guard focusedWindowResult == .success,
+              let focusedWindowValue,
+              CFGetTypeID(focusedWindowValue) == AXUIElementGetTypeID() else {
+            return nil
+        }
+
+        return (focusedWindowValue as! AXUIElement)
+    }
+
+    private func axFrame(of windowElement: AXUIElement) -> CGRect? {
+        var positionValue: CFTypeRef?
+        let positionResult = AXUIElementCopyAttributeValue(
+            windowElement,
+            kAXPositionAttribute as CFString,
+            &positionValue
+        )
+        guard positionResult == .success,
+              let positionValue,
+              CFGetTypeID(positionValue) == AXValueGetTypeID() else {
+            return nil
+        }
+
+        var position = CGPoint.zero
+        guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &position) else {
+            return nil
+        }
+
+        var sizeValue: CFTypeRef?
+        let sizeResult = AXUIElementCopyAttributeValue(
+            windowElement,
+            kAXSizeAttribute as CFString,
+            &sizeValue
+        )
+        guard sizeResult == .success,
+              let sizeValue,
+              CFGetTypeID(sizeValue) == AXValueGetTypeID() else {
+            return nil
+        }
+
+        var size = CGSize.zero
+        guard AXValueGetValue(sizeValue as! AXValue, .cgSize, &size) else {
+            return nil
+        }
+
+        return CGRect(origin: position, size: size)
+    }
+
+    private func axVisibleFrameForScreen(containing axWindowFrame: CGRect) -> CGRect? {
+        let primaryScreen = NSScreen.screens.first { $0.frame.origin == .zero }
+        let primaryHeight = primaryScreen?.frame.height ?? 0
+        let windowCenter = CGPoint(x: axWindowFrame.midX, y: axWindowFrame.midY)
+
+        for screen in NSScreen.screens {
+            let axScreenFrame = Self.convertCocoaScreenFrameToAXFrame(
+                screen.visibleFrame,
+                primaryScreenHeight: primaryHeight
+            )
+            if axScreenFrame.contains(windowCenter) {
+                return axScreenFrame
+            }
+        }
+
+        return NSScreen.main.map {
+            Self.convertCocoaScreenFrameToAXFrame(
+                $0.visibleFrame,
+                primaryScreenHeight: primaryHeight
+            )
+        }
+    }
+
+    private static func convertCocoaScreenFrameToAXFrame(
+        _ cocoaFrame: CGRect,
+        primaryScreenHeight: CGFloat
+    ) -> CGRect {
+        CGRect(
+            x: cocoaFrame.origin.x,
+            y: primaryScreenHeight - cocoaFrame.origin.y - cocoaFrame.height,
+            width: cocoaFrame.width,
+            height: cocoaFrame.height
+        )
+    }
+
+    private func setAXWindowFrame(_ windowElement: AXUIElement, targetFrame: CGRect) -> Bool {
+        var targetOrigin = targetFrame.origin
+        var targetSize = targetFrame.size
+        guard let positionValue = AXValueCreate(.cgPoint, &targetOrigin),
+              let sizeValue = AXValueCreate(.cgSize, &targetSize) else {
+            return false
+        }
+
+        let positionResult = AXUIElementSetAttributeValue(
+            windowElement,
+            kAXPositionAttribute as CFString,
+            positionValue
+        )
+        let sizeResult = AXUIElementSetAttributeValue(
+            windowElement,
+            kAXSizeAttribute as CFString,
+            sizeValue
+        )
+
+        return positionResult == .success && sizeResult == .success
     }
 
     private func scroll(direction: PaceScrollDirection, amountInLines: Int) async {
@@ -505,6 +1437,74 @@ final class PaceActionExecutor {
         )
     }
 
+    private func createCalendarEvent(
+        _ calendarEventRequest: PaceCalendarEventRequest
+    ) async -> PaceActionExecutionObservation {
+        print("🧰 Calendar create \"\(calendarEventRequest.title)\" (enabled: \(actionsAreEnabled))")
+        guard actionsAreEnabled else {
+            return PaceActionExecutionObservation(
+                toolName: "calendar_create",
+                summary: "Would create calendar event: \(calendarEventRequest.displaySummary)"
+            )
+        }
+
+        guard await requestCalendarAccessIfNeeded() else {
+            return PaceActionExecutionObservation(
+                toolName: "calendar_create",
+                summary: "Calendar access was not granted."
+            )
+        }
+
+        guard let targetCalendar = calendarForNewEvent(matching: calendarEventRequest.calendarTitle) else {
+            return PaceActionExecutionObservation(
+                toolName: "calendar_create",
+                summary: "Could not find a writable calendar."
+            )
+        }
+
+        let event = EKEvent(eventStore: eventStore)
+        event.calendar = targetCalendar
+        event.title = calendarEventRequest.title
+        event.startDate = calendarEventRequest.startDate
+        event.endDate = calendarEventRequest.endDate
+        event.isAllDay = calendarEventRequest.isAllDay
+        event.notes = calendarEventRequest.notes
+        event.location = calendarEventRequest.location
+
+        do {
+            try eventStore.save(event, span: .thisEvent, commit: true)
+            return PaceActionExecutionObservation(
+                toolName: "calendar_create",
+                summary: "Created calendar event: \(calendarEventRequest.displaySummary)"
+            )
+        } catch {
+            return PaceActionExecutionObservation(
+                toolName: "calendar_create",
+                summary: "Failed to create calendar event: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func calendarForNewEvent(matching requestedCalendarTitle: String?) -> EKCalendar? {
+        guard let requestedCalendarTitle = requestedCalendarTitle?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !requestedCalendarTitle.isEmpty else {
+            return eventStore.defaultCalendarForNewEvents
+        }
+
+        let matchingCalendar = eventStore
+            .calendars(for: .event)
+            .first { calendar in
+                calendar.allowsContentModifications
+                    && calendar.title.compare(
+                        requestedCalendarTitle,
+                        options: [.caseInsensitive, .diacriticInsensitive]
+                    ) == .orderedSame
+            }
+
+        return matchingCalendar ?? eventStore.defaultCalendarForNewEvents
+    }
+
     private func createReminder(_ reminderRequest: PaceReminderRequest) async -> PaceActionExecutionObservation {
         print("🧰 Create reminder \"\(reminderRequest.title)\" (enabled: \(actionsAreEnabled))")
         guard actionsAreEnabled else {
@@ -710,21 +1710,12 @@ final class PaceActionExecutor {
             )
         }
 
+        let recipientResolution = await resolveMailRecipients(mailDraft.recipients)
         await openApplication(named: "Mail")
-        let recipientLines = mailDraft.recipients.map { recipient in
-            "make new to recipient at end of to recipients with properties {address:\"\(Self.appleScriptEscaped(recipient))\"}"
-        }
-        .joined(separator: "\n            ")
-
-        let scriptResult = runAppleScript(source: """
-        tell application "Mail"
-            activate
-            set newMessage to make new outgoing message with properties {subject:"\(Self.appleScriptEscaped(mailDraft.subject))", content:"\(Self.appleScriptEscaped(mailDraft.body))", visible:true}
-            tell newMessage
-                \(recipientLines)
-            end tell
-        end tell
-        """)
+        let scriptResult = await createMailDraftViaMailtoAndAccessibility(
+            mailDraft,
+            resolvedRecipients: recipientResolution.recipients
+        )
 
         if let errorDescription = scriptResult.errorDescription {
             return PaceActionExecutionObservation(
@@ -733,10 +1724,503 @@ final class PaceActionExecutor {
             )
         }
 
+        let unresolvedRecipientSuffix: String = {
+            guard !recipientResolution.unresolvedNames.isEmpty else { return "" }
+            return " Unresolved contacts used as-is: \(recipientResolution.unresolvedNames.joined(separator: ", "))."
+        }()
         return PaceActionExecutionObservation(
             toolName: "mail",
-            summary: "Created mail draft: \(mailDraft.subject)"
+            summary: "Created mail draft: \(mailDraft.subject).\(unresolvedRecipientSuffix)"
         )
+    }
+
+    private func writeStreamingMailDraft(
+        _ snapshot: PaceStreamingMailDraftSnapshot,
+        isFinalWrite: Bool
+    ) async -> PaceActionExecutionObservation? {
+        let mailDraft = snapshot.normalizedMailDraft
+        let shouldCreateDraft = activeStreamingMailDraftState == nil
+        let recipientResolution = shouldCreateDraft
+            ? await resolveMailRecipients(mailDraft.recipients)
+            : MailRecipientResolution(recipients: mailDraft.recipients, unresolvedNames: [])
+
+        if shouldCreateDraft {
+            await openApplication(named: "Mail")
+        }
+
+        let scriptResult: (output: String?, errorDescription: String?)
+        if shouldCreateDraft {
+            scriptResult = await createMailDraftViaMailtoAndAccessibility(
+                mailDraft,
+                resolvedRecipients: recipientResolution.recipients
+            )
+        } else {
+            scriptResult = await updateStreamingMailDraft(mailDraft)
+        }
+
+        if let errorDescription = scriptResult.errorDescription {
+            activeStreamingMailDraftState = nil
+            return PaceActionExecutionObservation(
+                toolName: "mail",
+                summary: "Failed to stream mail draft: \(errorDescription)"
+            )
+        }
+
+        let now = Date()
+        activeStreamingMailDraftState = PaceStreamingMailDraftState(
+            lastWrittenSnapshot: snapshot,
+            pendingSnapshot: nil,
+            lastWriteDate: now
+        )
+
+        guard isFinalWrite else {
+            return nil
+        }
+
+        let unresolvedRecipientSuffix: String = {
+            guard !recipientResolution.unresolvedNames.isEmpty else { return "" }
+            return " Unresolved contacts used as-is: \(recipientResolution.unresolvedNames.joined(separator: ", "))."
+        }()
+        return PaceActionExecutionObservation(
+            toolName: "mail",
+            summary: "Created streaming mail draft: \(mailDraft.subject).\(unresolvedRecipientSuffix)"
+        )
+    }
+
+    private func createMailDraftViaMailtoAndAccessibility(
+        _ mailDraft: PaceMailDraft,
+        resolvedRecipients: [String]
+    ) async -> (output: String?, errorDescription: String?) {
+        guard let mailtoURL = Self.mailtoDraftURL(
+            subject: mailDraft.subject,
+            resolvedRecipients: resolvedRecipients
+        ) else {
+            return createStreamingMailDraftViaAppleScript(
+                mailDraft,
+                resolvedRecipients: resolvedRecipients
+            )
+        }
+
+        guard NSWorkspace.shared.open(mailtoURL) else {
+            return createStreamingMailDraftViaAppleScript(
+                mailDraft,
+                resolvedRecipients: resolvedRecipients
+            )
+        }
+
+        let composeWindow = await waitForVisibleOutgoingMailDraft(
+            matchingSubject: mailDraft.subject
+        )
+        let updateResult = await updateStreamingMailDraft(
+            mailDraft,
+            composeWindow: composeWindow
+        )
+        if updateResult.errorDescription == nil {
+            return updateResult
+        }
+
+        return createStreamingMailDraftViaAppleScript(
+            mailDraft,
+            resolvedRecipients: resolvedRecipients
+        )
+    }
+
+    static func mailtoDraftURL(
+        subject: String,
+        resolvedRecipients: [String]
+    ) -> URL? {
+        var mailtoComponents = URLComponents()
+        mailtoComponents.scheme = "mailto"
+        mailtoComponents.path = resolvedRecipients.joined(separator: ",")
+        if !subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            mailtoComponents.queryItems = [
+                URLQueryItem(name: "subject", value: subject)
+            ]
+        }
+        return mailtoComponents.url
+    }
+
+    private func waitForVisibleOutgoingMailDraft(
+        matchingSubject subject: String,
+        timeoutInSeconds: TimeInterval = 1.0
+    ) async -> AXUIElement? {
+        let deadline = Date(timeIntervalSinceNow: timeoutInSeconds)
+        while Date() < deadline {
+            if let composeWindow = currentMailComposeWindow(matchingSubject: subject) {
+                return composeWindow
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return nil
+    }
+
+    private func createStreamingMailDraftViaAppleScript(
+        _ mailDraft: PaceMailDraft,
+        resolvedRecipients: [String]
+    ) -> (output: String?, errorDescription: String?) {
+        let recipientLines = resolvedRecipients.map { recipient in
+            "make new to recipient at end of to recipients with properties {address:\"\(Self.appleScriptEscaped(recipient))\"}"
+        }
+        .joined(separator: "\n            ")
+
+        return runAppleScript(source: """
+        tell application "Mail"
+            activate
+            set targetMessage to make new outgoing message with properties {subject:"\(Self.appleScriptEscaped(mailDraft.subject))", content:"\(Self.appleScriptEscaped(mailDraft.body))", visible:true}
+            tell targetMessage
+                \(recipientLines)
+            end tell
+        end tell
+        """)
+    }
+
+    private func updateStreamingMailDraft(
+        _ mailDraft: PaceMailDraft,
+        composeWindow: AXUIElement? = nil
+    ) async -> (output: String?, errorDescription: String?) {
+        if mailDraft.body.isEmpty {
+            return (nil, nil)
+        }
+
+        if await writeMailDraftBodyViaAccessibility(
+            mailDraft.body,
+            composeWindow: composeWindow ?? currentMailComposeWindow(matchingSubject: mailDraft.subject)
+        ) {
+            return (nil, nil)
+        }
+
+        return runAppleScript(source: """
+        tell application "Mail"
+            activate
+            set visibleOutgoingMessages to outgoing messages whose visible is true
+            if (count of visibleOutgoingMessages) is 0 then
+                set targetMessage to make new outgoing message with properties {subject:"\(Self.appleScriptEscaped(mailDraft.subject))", content:"\(Self.appleScriptEscaped(mailDraft.body))", visible:true}
+            else
+                set targetMessage to item 1 of visibleOutgoingMessages
+                set subject of targetMessage to "\(Self.appleScriptEscaped(mailDraft.subject))"
+                set content of targetMessage to "\(Self.appleScriptEscaped(mailDraft.body))"
+            end if
+        end tell
+        """)
+    }
+
+    private func writeMailDraftBodyViaAccessibility(
+        _ bodyText: String,
+        composeWindow: AXUIElement?
+    ) async -> Bool {
+        guard let composeWindow,
+              let bodyElement = Self.bestMailComposeBodyElement(in: composeWindow) else {
+            return false
+        }
+
+        let setValueResult = AXUIElementSetAttributeValue(
+            bodyElement,
+            kAXValueAttribute as CFString,
+            bodyText as CFString
+        )
+        if setValueResult == .success {
+            return true
+        }
+
+        return await replaceMailBodyViaFocusedTyping(
+            bodyText,
+            bodyElement: bodyElement
+        )
+    }
+
+    private func replaceMailBodyViaFocusedTyping(
+        _ bodyText: String,
+        bodyElement: AXUIElement
+    ) async -> Bool {
+        let focusResult = AXUIElementPerformAction(bodyElement, kAXPressAction as CFString)
+        guard focusResult == .success else {
+            return false
+        }
+
+        await pressKey(named: "a", withModifiers: [.command])
+        try? await Task.sleep(nanoseconds: 25_000_000)
+        await typeText(bodyText)
+        return true
+    }
+
+    private func currentMailComposeWindow(matchingSubject subject: String) -> AXUIElement? {
+        guard let mailApplicationElement = mailApplicationElement() else {
+            return nil
+        }
+
+        let normalizedSubject = subject.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let focusedWindow = focusedWindowElement(in: mailApplicationElement)
+        let windows = ([focusedWindow] + windows(of: mailApplicationElement))
+            .compactMap { $0 }
+
+        let windowsWithBodyCandidates = windows.filter {
+            Self.bestMailComposeBodyElement(in: $0) != nil
+        }
+        guard !windowsWithBodyCandidates.isEmpty else {
+            return nil
+        }
+
+        if !normalizedSubject.isEmpty,
+           let subjectWindow = windowsWithBodyCandidates.first(where: { windowElement in
+               Self.concatenatedTextAttributes(in: windowElement)
+                   .lowercased()
+                   .contains(normalizedSubject)
+           }) {
+            return subjectWindow
+        }
+
+        return windowsWithBodyCandidates.first
+    }
+
+    private func mailApplicationElement() -> AXUIElement? {
+        guard let mailApplication = NSRunningApplication
+            .runningApplications(withBundleIdentifier: "com.apple.mail")
+            .first else {
+            return nil
+        }
+        return AXUIElementCreateApplication(mailApplication.processIdentifier)
+    }
+
+    private func focusedWindowElement(in applicationElement: AXUIElement) -> AXUIElement? {
+        var focusedWindowValue: CFTypeRef?
+        let focusedWindowResult = AXUIElementCopyAttributeValue(
+            applicationElement,
+            kAXFocusedWindowAttribute as CFString,
+            &focusedWindowValue
+        )
+        guard focusedWindowResult == .success,
+              let focusedWindowValue,
+              CFGetTypeID(focusedWindowValue) == AXUIElementGetTypeID() else {
+            return nil
+        }
+
+        return (focusedWindowValue as! AXUIElement)
+    }
+
+    private func windows(of applicationElement: AXUIElement) -> [AXUIElement] {
+        var windowsValue: CFTypeRef?
+        let windowsResult = AXUIElementCopyAttributeValue(
+            applicationElement,
+            kAXWindowsAttribute as CFString,
+            &windowsValue
+        )
+        guard windowsResult == .success,
+              let windows = windowsValue as? [AXUIElement] else {
+            return []
+        }
+        return windows
+    }
+
+    private static func bestMailComposeBodyElement(in rootElement: AXUIElement) -> AXUIElement? {
+        var bestCandidate: (element: AXUIElement, score: Double)?
+        var queue: [AXUIElement] = [rootElement]
+        var visitedCount = 0
+
+        while let element = queue.first, visitedCount < 500 {
+            queue.removeFirst()
+            visitedCount += 1
+
+            let metadata = PaceMailComposeBodyCandidateMetadata(
+                role: stringAttribute(kAXRoleAttribute as CFString, of: element),
+                title: stringAttribute(kAXTitleAttribute as CFString, of: element),
+                description: stringAttribute(kAXDescriptionAttribute as CFString, of: element),
+                help: stringAttribute(kAXHelpAttribute as CFString, of: element),
+                value: stringAttribute(kAXValueAttribute as CFString, of: element),
+                placeholder: stringAttribute("AXPlaceholderValue" as CFString, of: element),
+                frame: axFrameMetadata(of: element)
+            )
+
+            if metadata.score > 0,
+               bestCandidate == nil || metadata.score > (bestCandidate?.score ?? 0) {
+                bestCandidate = (element, metadata.score)
+            }
+
+            queue.append(contentsOf: children(of: element))
+        }
+
+        return bestCandidate?.element
+    }
+
+    private static func concatenatedTextAttributes(in rootElement: AXUIElement) -> String {
+        var values: [String] = []
+        var queue: [AXUIElement] = [rootElement]
+        var visitedCount = 0
+
+        while let element = queue.first, visitedCount < 300 {
+            queue.removeFirst()
+            visitedCount += 1
+            values.append(contentsOf: [
+                stringAttribute(kAXTitleAttribute as CFString, of: element),
+                stringAttribute(kAXDescriptionAttribute as CFString, of: element),
+                stringAttribute(kAXValueAttribute as CFString, of: element)
+            ].compactMap { $0 })
+            queue.append(contentsOf: children(of: element))
+        }
+
+        return values.joined(separator: " ")
+    }
+
+    private static func axFrameMetadata(of element: AXUIElement) -> CGRect? {
+        var positionValue: CFTypeRef?
+        let positionResult = AXUIElementCopyAttributeValue(
+            element,
+            kAXPositionAttribute as CFString,
+            &positionValue
+        )
+        var sizeValue: CFTypeRef?
+        let sizeResult = AXUIElementCopyAttributeValue(
+            element,
+            kAXSizeAttribute as CFString,
+            &sizeValue
+        )
+        guard positionResult == .success,
+              sizeResult == .success,
+              let positionValue,
+              let sizeValue,
+              CFGetTypeID(positionValue) == AXValueGetTypeID(),
+              CFGetTypeID(sizeValue) == AXValueGetTypeID() else {
+            return nil
+        }
+
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &position),
+              AXValueGetValue(sizeValue as! AXValue, .cgSize, &size) else {
+            return nil
+        }
+
+        return CGRect(origin: position, size: size)
+    }
+
+    private static func stringAttribute(_ attributeName: CFString, of element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attributeName, &value)
+        guard result == .success, let value else { return nil }
+        return value as? String
+    }
+
+    private static func children(of element: AXUIElement) -> [AXUIElement] {
+        var childrenValue: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(
+            element,
+            kAXChildrenAttribute as CFString,
+            &childrenValue
+        )
+        guard result == .success,
+              let childrenValue,
+              let children = childrenValue as? [AXUIElement] else {
+            return []
+        }
+        return children
+    }
+
+    private struct MailRecipientResolution {
+        let recipients: [String]
+        let unresolvedNames: [String]
+    }
+
+    private func resolveMailRecipients(_ rawRecipients: [String]) async -> MailRecipientResolution {
+        let trimmedRecipients = rawRecipients
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let contactNamesToResolve = trimmedRecipients
+            .filter { !Self.looksLikeEmailAddress($0) }
+            .map(Self.contactNameToResolve)
+
+        guard !contactNamesToResolve.isEmpty else {
+            return MailRecipientResolution(
+                recipients: trimmedRecipients,
+                unresolvedNames: []
+            )
+        }
+
+        guard await requestContactsAccessIfNeeded() else {
+            return MailRecipientResolution(
+                recipients: trimmedRecipients,
+                unresolvedNames: contactNamesToResolve
+            )
+        }
+
+        var resolvedRecipients: [String] = []
+        var unresolvedNames: [String] = []
+
+        for rawRecipient in trimmedRecipients {
+            guard !Self.looksLikeEmailAddress(rawRecipient) else {
+                resolvedRecipients.append(rawRecipient)
+                continue
+            }
+
+            let contactName = Self.contactNameToResolve(rawRecipient)
+            if let emailAddress = emailAddressForContact(named: contactName) {
+                resolvedRecipients.append(emailAddress)
+            } else {
+                resolvedRecipients.append(rawRecipient)
+                unresolvedNames.append(contactName)
+            }
+        }
+
+        return MailRecipientResolution(
+            recipients: resolvedRecipients,
+            unresolvedNames: unresolvedNames
+        )
+    }
+
+    private func requestContactsAccessIfNeeded() async -> Bool {
+        let authorizationStatus = CNContactStore.authorizationStatus(for: .contacts)
+        switch authorizationStatus {
+        case .authorized, .limited:
+            return true
+        case .denied, .restricted:
+            return false
+        case .notDetermined:
+            return await withCheckedContinuation { continuation in
+                contactStore.requestAccess(for: .contacts) { granted, error in
+                    if let error {
+                        print("⚠️ PaceActionExecutor: contacts access error: \(error.localizedDescription)")
+                    }
+                    continuation.resume(returning: granted)
+                }
+            }
+        @unknown default:
+            return false
+        }
+    }
+
+    private func emailAddressForContact(named contactName: String) -> String? {
+        let keysToFetch: [CNKeyDescriptor] = [
+            CNContactGivenNameKey as CNKeyDescriptor,
+            CNContactFamilyNameKey as CNKeyDescriptor,
+            CNContactNicknameKey as CNKeyDescriptor,
+            CNContactOrganizationNameKey as CNKeyDescriptor,
+            CNContactEmailAddressesKey as CNKeyDescriptor
+        ]
+        let predicate = CNContact.predicateForContacts(matchingName: contactName)
+
+        do {
+            let matchingContacts = try contactStore.unifiedContacts(
+                matching: predicate,
+                keysToFetch: keysToFetch
+            )
+            return matchingContacts
+                .flatMap(\.emailAddresses)
+                .map { String($0.value) }
+                .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        } catch {
+            print("⚠️ PaceActionExecutor: contact lookup failed for \(contactName): \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private static func looksLikeEmailAddress(_ recipient: String) -> Bool {
+        let trimmedRecipient = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedRecipient.contains("@") && trimmedRecipient.contains(".")
+    }
+
+    private static func contactNameToResolve(_ rawRecipient: String) -> String {
+        rawRecipient
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "__resolve:", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func createThingsToDo(_ request: PaceThingsToDoRequest) async -> PaceActionExecutionObservation {
@@ -790,16 +2274,32 @@ final class PaceActionExecutor {
             )
         }
 
-        let scriptResult = runAppleScript(source: """
-        tell application "Shortcuts Events"
-            run shortcut "\(Self.appleScriptEscaped(trimmedShortcutName))"
-        end tell
-        """)
-
-        if let errorDescription = scriptResult.errorDescription {
+        let shortcutListResult = runShortcutsCommand(arguments: ["list"])
+        guard shortcutListResult.terminationStatus == 0 else {
             return PaceActionExecutionObservation(
                 toolName: "shortcuts",
-                summary: "Failed to run shortcut: \(errorDescription)"
+                summary: "Failed to list shortcuts: \(shortcutListResult.failureSummary)"
+            )
+        }
+
+        let installedShortcutNames = Self.installedShortcutNames(
+            fromListOutput: shortcutListResult.output
+        )
+        guard Self.shortcutList(
+            installedShortcutNames,
+            containsShortcutNamed: trimmedShortcutName
+        ) else {
+            return PaceActionExecutionObservation(
+                toolName: "shortcuts",
+                summary: "I don't see a shortcut called \(trimmedShortcutName)."
+            )
+        }
+
+        let shortcutRunResult = runShortcutsCommand(arguments: ["run", trimmedShortcutName])
+        guard shortcutRunResult.terminationStatus == 0 else {
+            return PaceActionExecutionObservation(
+                toolName: "shortcuts",
+                summary: "Failed to run shortcut: \(shortcutRunResult.failureSummary)"
             )
         }
 
@@ -807,6 +2307,31 @@ final class PaceActionExecutor {
             toolName: "shortcuts",
             summary: "Ran shortcut: \(trimmedShortcutName)"
         )
+    }
+
+    static func installedShortcutNames(fromListOutput listOutput: String) -> [String] {
+        listOutput
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    static func shortcutList(
+        _ installedShortcutNames: [String],
+        containsShortcutNamed requestedShortcutName: String
+    ) -> Bool {
+        let normalizedRequestedShortcutName = normalizeShortcutName(requestedShortcutName)
+        return installedShortcutNames.contains { installedShortcutName in
+            normalizeShortcutName(installedShortcutName) == normalizedRequestedShortcutName
+        }
+    }
+
+    private static func normalizeShortcutName(_ shortcutName: String) -> String {
+        shortcutName
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
     }
 
     private func openMessages(_ request: PaceMessageRequest) async -> PaceActionExecutionObservation {
@@ -902,6 +2427,57 @@ final class PaceActionExecutor {
         }
 
         return (resultDescriptor.stringValue, nil)
+    }
+
+    private struct PaceLocalCommandResult {
+        let output: String
+        let errorOutput: String
+        let terminationStatus: Int32
+
+        var failureSummary: String {
+            let trimmedErrorOutput = errorOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedErrorOutput.isEmpty {
+                return trimmedErrorOutput
+            }
+
+            let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedOutput.isEmpty {
+                return trimmedOutput
+            }
+
+            return "command exited with status \(terminationStatus)"
+        }
+    }
+
+    private func runShortcutsCommand(arguments: [String]) -> PaceLocalCommandResult {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
+        process.arguments = arguments
+
+        let standardOutputPipe = Pipe()
+        let standardErrorPipe = Pipe()
+        process.standardOutput = standardOutputPipe
+        process.standardError = standardErrorPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return PaceLocalCommandResult(
+                output: "",
+                errorOutput: error.localizedDescription,
+                terminationStatus: 1
+            )
+        }
+
+        let standardOutputData = standardOutputPipe.fileHandleForReading.readDataToEndOfFile()
+        let standardErrorData = standardErrorPipe.fileHandleForReading.readDataToEndOfFile()
+
+        return PaceLocalCommandResult(
+            output: String(data: standardOutputData, encoding: .utf8) ?? "",
+            errorOutput: String(data: standardErrorData, encoding: .utf8) ?? "",
+            terminationStatus: process.terminationStatus
+        )
     }
 
     private static func findApplicationURL(named applicationName: String) -> URL? {
@@ -1007,6 +2583,292 @@ final class PaceActionExecutor {
         }
     }
 
+    private func setTextValue(_ request: PaceSetTextValueRequest) -> PaceActionExecutionObservation {
+        print("⌨️  Set text value target=\(request.target.rawValue) chars=\(request.value.count) (enabled: \(actionsAreEnabled))")
+        guard actionsAreEnabled else {
+            return PaceActionExecutionObservation(
+                toolName: "set_value",
+                summary: "Would \(request.target.dryRunVerb) \(request.value.count) characters."
+            )
+        }
+
+        let systemWideElement = AXUIElementCreateSystemWide()
+        var focusedElementValue: CFTypeRef?
+        let focusedElementResult = AXUIElementCopyAttributeValue(
+            systemWideElement,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedElementValue
+        )
+        guard focusedElementResult == .success,
+              let focusedElementValue,
+              CFGetTypeID(focusedElementValue) == AXUIElementGetTypeID() else {
+            return PaceActionExecutionObservation(
+                toolName: "set_value",
+                summary: "No focused editable element was found."
+            )
+        }
+
+        let focusedElement = focusedElementValue as! AXUIElement
+        guard let originalText = stringValue(of: focusedElement) else {
+            return PaceActionExecutionObservation(
+                toolName: "set_value",
+                summary: "Focused text value could not be read for undo."
+            )
+        }
+
+        let replacementText: String
+        switch request.target {
+        case .focused:
+            replacementText = request.value
+        case .selection:
+            guard let selectedTextReplacement = selectedTextReplacement(
+                in: focusedElement,
+                currentText: originalText,
+                replacementText: request.value
+            ) else {
+                return PaceActionExecutionObservation(
+                    toolName: "set_value",
+                    summary: "No selected text was found to replace."
+                )
+            }
+            replacementText = selectedTextReplacement
+        }
+
+        let setValueResult = AXUIElementSetAttributeValue(
+            focusedElement,
+            kAXValueAttribute as CFString,
+            replacementText as CFString
+        )
+
+        guard setValueResult == .success else {
+            return PaceActionExecutionObservation(
+                toolName: "set_value",
+                summary: "Focused text value could not be changed via Accessibility."
+            )
+        }
+
+        mutationLog.append(.axValue(
+            element: focusedElement,
+            oldValue: originalText,
+            summary: request.target == .selection ? "selected text replacement" : "focused text update"
+        ))
+
+        return PaceActionExecutionObservation(
+            toolName: "set_value",
+            summary: request.target == .selection
+                ? "Replaced selected text."
+                : "Updated focused text value."
+        )
+    }
+
+    private func editSelectedText(_ request: PaceVoiceEditRequest) -> PaceActionExecutionObservation {
+        print("✏️  Edit selected text operation=\(request.operation.displayName) (enabled: \(actionsAreEnabled))")
+        guard actionsAreEnabled else {
+            return PaceActionExecutionObservation(
+                toolName: "edit_selection",
+                summary: "Would \(request.operation.displayName)."
+            )
+        }
+
+        let systemWideElement = AXUIElementCreateSystemWide()
+        var focusedElementValue: CFTypeRef?
+        let focusedElementResult = AXUIElementCopyAttributeValue(
+            systemWideElement,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedElementValue
+        )
+        guard focusedElementResult == .success,
+              let focusedElementValue,
+              CFGetTypeID(focusedElementValue) == AXUIElementGetTypeID() else {
+            return PaceActionExecutionObservation(
+                toolName: "edit_selection",
+                summary: "No focused editable element was found."
+            )
+        }
+
+        let focusedElement = focusedElementValue as! AXUIElement
+        guard let originalText = stringValue(of: focusedElement) else {
+            return PaceActionExecutionObservation(
+                toolName: "edit_selection",
+                summary: "Focused text value could not be read for editing."
+            )
+        }
+
+        guard let selectedText = selectedText(in: focusedElement, currentText: originalText) else {
+            return PaceActionExecutionObservation(
+                toolName: "edit_selection",
+                summary: "No selected text was found to edit."
+            )
+        }
+
+        guard let editedSelectedText = PaceVoiceEditProcessor.process(
+            selectedText: selectedText,
+            request: request
+        ), editedSelectedText != selectedText else {
+            return PaceActionExecutionObservation(
+                toolName: "edit_selection",
+                summary: "No deterministic edit was available for the selected text."
+            )
+        }
+
+        guard let replacementText = selectedTextReplacement(
+            in: focusedElement,
+            currentText: originalText,
+            replacementText: editedSelectedText
+        ) else {
+            return PaceActionExecutionObservation(
+                toolName: "edit_selection",
+                summary: "Selected text range could not be mapped for editing."
+            )
+        }
+
+        let setValueResult = AXUIElementSetAttributeValue(
+            focusedElement,
+            kAXValueAttribute as CFString,
+            replacementText as CFString
+        )
+
+        guard setValueResult == .success else {
+            return PaceActionExecutionObservation(
+                toolName: "edit_selection",
+                summary: "Focused text value could not be changed via Accessibility."
+            )
+        }
+
+        mutationLog.append(.axValue(
+            element: focusedElement,
+            oldValue: originalText,
+            summary: "selected text edit"
+        ))
+
+        return PaceActionExecutionObservation(
+            toolName: "edit_selection",
+            summary: "Edited selected text."
+        )
+    }
+
+    private func undoLastMutation() -> PaceActionExecutionObservation {
+        print("↩️  Undo last mutation (enabled: \(actionsAreEnabled))")
+        guard actionsAreEnabled else {
+            return PaceActionExecutionObservation(
+                toolName: "undo_last",
+                summary: "Would undo the last editable text change."
+            )
+        }
+
+        guard let mutation = mutationLog.popLast() else {
+            return PaceActionExecutionObservation(
+                toolName: "undo_last",
+                summary: "Nothing undoable is available."
+            )
+        }
+
+        switch mutation {
+        case .axValue(let element, let oldValue, let summary):
+            let setValueResult = AXUIElementSetAttributeValue(
+                element,
+                kAXValueAttribute as CFString,
+                oldValue as CFString
+            )
+            guard setValueResult == .success else {
+                return PaceActionExecutionObservation(
+                    toolName: "undo_last",
+                    summary: "Could not undo \(summary); the target element no longer accepts Accessibility updates."
+                )
+            }
+
+            return PaceActionExecutionObservation(
+                toolName: "undo_last",
+                summary: "Undid \(summary)."
+            )
+        }
+    }
+
+    private func stringValue(of focusedElement: AXUIElement) -> String? {
+        var currentValue: CFTypeRef?
+        let currentValueResult = AXUIElementCopyAttributeValue(
+            focusedElement,
+            kAXValueAttribute as CFString,
+            &currentValue
+        )
+        guard currentValueResult == .success else {
+            return nil
+        }
+        return currentValue as? String
+    }
+
+    private func selectedTextReplacement(
+        in focusedElement: AXUIElement,
+        currentText: String,
+        replacementText: String
+    ) -> String? {
+        var selectedRangeValue: CFTypeRef?
+        let selectedRangeResult = AXUIElementCopyAttributeValue(
+            focusedElement,
+            kAXSelectedTextRangeAttribute as CFString,
+            &selectedRangeValue
+        )
+        guard selectedRangeResult == .success,
+              let selectedRangeValue,
+              CFGetTypeID(selectedRangeValue) == AXValueGetTypeID() else {
+            return nil
+        }
+
+        var selectedRange = CFRange()
+        guard AXValueGetValue(
+            selectedRangeValue as! AXValue,
+            .cfRange,
+            &selectedRange
+        ),
+              selectedRange.length > 0 else {
+            return nil
+        }
+
+        guard let swiftRange = Range(
+            NSRange(location: selectedRange.location, length: selectedRange.length),
+            in: currentText
+        ) else {
+            return nil
+        }
+
+        var updatedText = currentText
+        updatedText.replaceSubrange(swiftRange, with: replacementText)
+        return updatedText
+    }
+
+    private func selectedText(
+        in focusedElement: AXUIElement,
+        currentText: String
+    ) -> String? {
+        var selectedRangeValue: CFTypeRef?
+        let selectedRangeResult = AXUIElementCopyAttributeValue(
+            focusedElement,
+            kAXSelectedTextRangeAttribute as CFString,
+            &selectedRangeValue
+        )
+        guard selectedRangeResult == .success,
+              let selectedRangeValue,
+              CFGetTypeID(selectedRangeValue) == AXValueGetTypeID() else {
+            return nil
+        }
+
+        var selectedRange = CFRange()
+        guard AXValueGetValue(
+            selectedRangeValue as! AXValue,
+            .cfRange,
+            &selectedRange
+        ),
+              selectedRange.length > 0,
+              let swiftRange = Range(
+                NSRange(location: selectedRange.location, length: selectedRange.length),
+                in: currentText
+              ) else {
+            return nil
+        }
+
+        return String(currentText[swiftRange])
+    }
+
     private func pressKey(named keyName: String, withModifiers modifiers: [PaceKeyboardModifier]) async {
         print("⌨️  Press \(keyName) with modifiers \(modifiers) (enabled: \(actionsAreEnabled))")
         guard actionsAreEnabled else { return }
@@ -1031,11 +2893,14 @@ final class PaceActionExecutor {
 
     // MARK: - Key name → virtual key code
 
-    private static func virtualKeyCode(forKeyName keyName: String) -> CGKeyCode? {
-        // Subset of common named keys. Add more on demand. Letter/number
-        // keys are intentionally NOT included — use the [TYPE:...] action
-        // for those, which goes through unicode-string events.
+    static func virtualKeyCode(forKeyName keyName: String) -> CGKeyCode? {
+        // Subset of common named keys plus letter keys used with modifiers
+        // by fast commands and local compose fallbacks.
         switch keyName.lowercased() {
+        case "a": return 0x00
+        case "s": return 0x01
+        case "t": return 0x11
+        case "w": return 0x0D
         case "return", "enter": return 0x24
         case "tab": return 0x30
         case "space": return 0x31
@@ -1208,13 +3073,23 @@ struct PaceActionExecutionStep {
     let actions: [PaceParsedAction]
 }
 
+enum PaceActionMutation {
+    case axValue(element: AXUIElement, oldValue: String, summary: String)
+}
+
 /// One action Claude wants pace to perform on the user's behalf.
 /// Parsed out of the assistant's response by `PaceActionTagParser`.
 enum PaceParsedAction {
     case click(ScreenshotPixelLocation)
     case doubleClick(ScreenshotPixelLocation)
+    case clickCandidates(PaceClickCandidateSet)
     case type(String)
+    case setTextValue(PaceSetTextValueRequest)
+    case editSelectedText(PaceVoiceEditRequest)
+    case undoLastMutation
     case pressKey(name: String, modifiers: [PaceKeyboardModifier])
+    case readClipboard
+    case snapWindow(PaceWindowSnapRequest)
     case scroll(PaceScrollDirection, amountInLines: Int)
     case openApplication(String)
     case openURL(String)
@@ -1222,6 +3097,7 @@ enum PaceParsedAction {
     case adjustVolume(PaceSystemAdjustment)
     case adjustBrightness(PaceSystemAdjustment)
     case listCalendarEvents(PaceCalendarQuery)
+    case createCalendarEvent(PaceCalendarEventRequest)
     case createReminder(PaceReminderRequest)
     case finder(PaceFinderRequest)
     case createNote(PaceNoteRequest)
@@ -1239,13 +3115,34 @@ enum PaceParsedAction {
             return "Click at \(location.approvalDescription)"
         case .doubleClick(let location):
             return "Double-click at \(location.approvalDescription)"
+        case .clickCandidates(let clickCandidateSet):
+            let candidateCount = clickCandidateSet.candidates.count
+            if clickCandidateSet.clickCount == 2 {
+                return "Double-click best of \(candidateCount) candidates"
+            }
+            return "Click best of \(candidateCount) candidates"
         case .type(let text):
             return "Type \(text.count) characters"
+        case .setTextValue(let setTextValueRequest):
+            switch setTextValueRequest.target {
+            case .focused:
+                return "Set focused text value"
+            case .selection:
+                return "Replace selected text"
+            }
+        case .editSelectedText(let voiceEditRequest):
+            return "Edit selected text: \(voiceEditRequest.operation.displayName)"
+        case .undoLastMutation:
+            return "Undo last editable text change"
         case .pressKey(let keyName, let modifiers):
             let modifierPrefix = modifiers.isEmpty
                 ? ""
                 : modifiers.map(\.rawValue).joined(separator: "+") + "+"
             return "Press \(modifierPrefix)\(keyName)"
+        case .readClipboard:
+            return "Read clipboard text"
+        case .snapWindow(let snapWindowRequest):
+            return "Snap focused window: \(snapWindowRequest.position.displayName)"
         case .scroll(let direction, let amountInLines):
             return "Scroll \(direction.rawValue) \(amountInLines) lines"
         case .openApplication(let applicationName):
@@ -1260,6 +3157,8 @@ enum PaceParsedAction {
             return "Adjust brightness: \(adjustment.description)"
         case .listCalendarEvents(let calendarQuery):
             return "Read Calendar: \(calendarQuery.range.displayName)"
+        case .createCalendarEvent(let calendarEventRequest):
+            return "Create calendar event: \(calendarEventRequest.title)"
         case .createReminder(let reminderRequest):
             return "Create reminder: \(reminderRequest.title)"
         case .finder(let finderRequest):
@@ -1311,6 +3210,99 @@ enum PaceKeyboardModifier: String {
     case command, option, control, shift
 }
 
+struct PaceWindowSnapRequest {
+    let position: PaceWindowSnapPosition
+}
+
+enum PaceWindowSnapPosition: String {
+    case left
+    case right
+    case top
+    case bottom
+    case maximize
+    case center
+
+    var displayName: String {
+        switch self {
+        case .left:
+            return "left half"
+        case .right:
+            return "right half"
+        case .top:
+            return "top half"
+        case .bottom:
+            return "bottom half"
+        case .maximize:
+            return "maximize"
+        case .center:
+            return "center"
+        }
+    }
+
+    func targetFrame(in visibleFrame: CGRect) -> CGRect {
+        switch self {
+        case .left:
+            return CGRect(
+                x: visibleFrame.minX,
+                y: visibleFrame.minY,
+                width: visibleFrame.width / 2,
+                height: visibleFrame.height
+            )
+        case .right:
+            return CGRect(
+                x: visibleFrame.midX,
+                y: visibleFrame.minY,
+                width: visibleFrame.width / 2,
+                height: visibleFrame.height
+            )
+        case .top:
+            return CGRect(
+                x: visibleFrame.minX,
+                y: visibleFrame.minY,
+                width: visibleFrame.width,
+                height: visibleFrame.height / 2
+            )
+        case .bottom:
+            return CGRect(
+                x: visibleFrame.minX,
+                y: visibleFrame.midY,
+                width: visibleFrame.width,
+                height: visibleFrame.height / 2
+            )
+        case .maximize:
+            return visibleFrame
+        case .center:
+            let width = visibleFrame.width * 0.8
+            let height = visibleFrame.height * 0.85
+            return CGRect(
+                x: visibleFrame.midX - (width / 2),
+                y: visibleFrame.midY - (height / 2),
+                width: width,
+                height: height
+            )
+        }
+    }
+}
+
+struct PaceSetTextValueRequest {
+    let value: String
+    let target: PaceSetTextValueTarget
+}
+
+enum PaceSetTextValueTarget: String {
+    case focused
+    case selection
+
+    var dryRunVerb: String {
+        switch self {
+        case .focused:
+            return "set focused text to"
+        case .selection:
+            return "replace selected text with"
+        }
+    }
+}
+
 enum PaceScrollDirection: String, CustomStringConvertible {
     case up, down
 
@@ -1360,6 +3352,31 @@ struct PaceCalendarQuery {
     }
 }
 
+struct PaceCalendarEventRequest {
+    let title: String
+    let startDate: Date
+    let endDate: Date
+    let isAllDay: Bool
+    let notes: String?
+    let location: String?
+    let calendarTitle: String?
+
+    var displaySummary: String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = isAllDay ? .none : .short
+
+        let timeSummary: String
+        if isAllDay {
+            timeSummary = formatter.string(from: startDate)
+        } else {
+            timeSummary = "\(formatter.string(from: startDate)) - \(formatter.string(from: endDate))"
+        }
+
+        return "\(title) (\(timeSummary))"
+    }
+}
+
 enum PaceCalendarRange: String, Equatable {
     case today
     case tomorrow
@@ -1400,6 +3417,22 @@ struct PaceMailDraft {
     let body: String
 }
 
+private struct PaceStreamingMailDraftState {
+    let lastWrittenSnapshot: PaceStreamingMailDraftSnapshot
+    let pendingSnapshot: PaceStreamingMailDraftSnapshot?
+    let lastWriteDate: Date
+
+    func withPendingSnapshot(
+        _ pendingSnapshot: PaceStreamingMailDraftSnapshot
+    ) -> PaceStreamingMailDraftState {
+        PaceStreamingMailDraftState(
+            lastWrittenSnapshot: lastWrittenSnapshot,
+            pendingSnapshot: pendingSnapshot,
+            lastWriteDate: lastWriteDate
+        )
+    }
+}
+
 struct PaceThingsToDoRequest {
     let title: String
     let notes: String?
@@ -1428,7 +3461,412 @@ struct PaceActionTagParseResult {
     let firstClickVisualisationLocation: ScreenshotPixelLocation?
 }
 
+struct PaceFastActionParseResult {
+    let spokenText: String
+    let executionPlan: PaceActionExecutionPlan
+}
+
+/// Deterministic parser for no-screen, no-reasoning commands that are common
+/// enough to execute without burning a VLM/planner turn. It intentionally
+/// avoids clicks, typing, scrolling, and open-ended app names; those stay on
+/// the normal planner path where screen context and approval copy are richer.
+enum PaceFastActionCommandParser {
+    private static let knownApplicationAliases: [String: String] = [
+        "arc": "Arc",
+        "calendar": "Calendar",
+        "chrome": "Google Chrome",
+        "cursor": "Cursor",
+        "discord": "Discord",
+        "facetime": "FaceTime",
+        "figma": "Figma",
+        "finder": "Finder",
+        "firefox": "Firefox",
+        "google chrome": "Google Chrome",
+        "iterm": "iTerm",
+        "iterm2": "iTerm",
+        "linear": "Linear",
+        "mail": "Mail",
+        "messages": "Messages",
+        "music": "Music",
+        "notes": "Notes",
+        "notion": "Notion",
+        "obsidian": "Obsidian",
+        "photos": "Photos",
+        "preview": "Preview",
+        "raycast": "Raycast",
+        "reminders": "Reminders",
+        "safari": "Safari",
+        "settings": "System Settings",
+        "slack": "Slack",
+        "spotify": "Spotify",
+        "system settings": "System Settings",
+        "terminal": "Terminal",
+        "visual studio code": "Visual Studio Code",
+        "vs code": "Visual Studio Code",
+        "vscode": "Visual Studio Code",
+        "xcode": "Xcode",
+        "zoom": "zoom.us"
+    ]
+
+    static func parse(transcript: String) -> PaceFastActionParseResult? {
+        let normalizedTranscript = normalizeTranscript(transcript)
+        guard !normalizedTranscript.isEmpty else { return nil }
+
+        if let musicCommand = parseMusicCommand(from: normalizedTranscript) {
+            let spokenText = spokenTextForMusicCommand(musicCommand)
+            return PaceFastActionParseResult(
+                spokenText: spokenText,
+                executionPlan: .serial(actions: [.controlMusic(musicCommand)])
+            )
+        }
+
+        if isUndoCommand(normalizedTranscript) {
+            return PaceFastActionParseResult(
+                spokenText: "undoing that.",
+                executionPlan: .serial(actions: [.undoLastMutation])
+            )
+        }
+
+        if let voiceEditRequest = PaceVoiceEditProcessor.parseCommand(normalizedTranscript) {
+            return PaceFastActionParseResult(
+                spokenText: "editing selection.",
+                executionPlan: .serial(actions: [.editSelectedText(voiceEditRequest)])
+            )
+        }
+
+        if let keyPress = parseKeyPressCommand(from: normalizedTranscript) {
+            return PaceFastActionParseResult(
+                spokenText: keyPress.spokenText,
+                executionPlan: .serial(actions: [.pressKey(name: keyPress.keyName, modifiers: keyPress.modifiers)])
+            )
+        }
+
+        if let snapWindowRequest = parseWindowSnapCommand(from: normalizedTranscript) {
+            return PaceFastActionParseResult(
+                spokenText: "moving the window.",
+                executionPlan: .serial(actions: [.snapWindow(snapWindowRequest)])
+            )
+        }
+
+        if let messageRequest = parseOpenMessagesCommand(from: normalizedTranscript) {
+            return PaceFastActionParseResult(
+                spokenText: messageRequest.recipient?.isEmpty == false
+                    ? "opening Messages for \(messageRequest.recipient!)."
+                    : "opening Messages.",
+                executionPlan: .serial(actions: [.openMessages(messageRequest)])
+            )
+        }
+
+        if let volumeAdjustment = parseSystemAdjustment(
+            from: normalizedTranscript,
+            noun: "volume"
+        ) {
+            return PaceFastActionParseResult(
+                spokenText: "adjusting volume.",
+                executionPlan: .serial(actions: [.adjustVolume(volumeAdjustment)])
+            )
+        }
+
+        if let brightnessAdjustment = parseSystemAdjustment(
+            from: normalizedTranscript,
+            noun: "brightness"
+        ) {
+            return PaceFastActionParseResult(
+                spokenText: "adjusting brightness.",
+                executionPlan: .serial(actions: [.adjustBrightness(brightnessAdjustment)])
+            )
+        }
+
+        if let urlString = parseURLCommand(from: normalizedTranscript) {
+            return PaceFastActionParseResult(
+                spokenText: "opening \(urlString).",
+                executionPlan: .serial(actions: [.openURL(urlString)])
+            )
+        }
+
+        if let applicationName = parseKnownApplicationCommand(from: normalizedTranscript) {
+            return PaceFastActionParseResult(
+                spokenText: "opening \(applicationName).",
+                executionPlan: .serial(actions: [.openApplication(applicationName)])
+            )
+        }
+
+        return nil
+    }
+
+    private static func normalizeTranscript(_ transcript: String) -> String {
+        var normalizedTranscript = transcript
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        for wakePrefix in ["hey pace ", "pace ", "ok pace ", "okay pace "] {
+            if normalizedTranscript.hasPrefix(wakePrefix) {
+                normalizedTranscript.removeFirst(wakePrefix.count)
+                break
+            }
+        }
+
+        return normalizedTranscript
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".?!"))
+    }
+
+    private static func isUndoCommand(_ normalizedTranscript: String) -> Bool {
+        switch normalizedTranscript {
+        case "undo that", "undo last", "undo the last thing", "revert that", "revert last", "change it back":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private struct FastKeyPressCommand {
+        let keyName: String
+        let modifiers: [PaceKeyboardModifier]
+        let spokenText: String
+    }
+
+    private static func parseKeyPressCommand(from normalizedTranscript: String) -> FastKeyPressCommand? {
+        switch normalizedTranscript {
+        case "save", "save this", "save file", "save the file", "press command s", "press cmd s", "command s", "cmd s", "hit command s":
+            return FastKeyPressCommand(
+                keyName: "s",
+                modifiers: [.command],
+                spokenText: "saving."
+            )
+        case "new tab", "open new tab", "open a new tab", "press command t", "press cmd t", "command t", "cmd t":
+            return FastKeyPressCommand(
+                keyName: "t",
+                modifiers: [.command],
+                spokenText: "opening a new tab."
+            )
+        case "close tab", "close this tab", "close the tab", "press command w", "press cmd w", "command w", "cmd w":
+            return FastKeyPressCommand(
+                keyName: "w",
+                modifiers: [.command],
+                spokenText: "closing the tab."
+            )
+        case "reopen closed tab", "reopen the closed tab", "reopen last closed tab", "press command shift t", "press cmd shift t", "command shift t", "cmd shift t":
+            return FastKeyPressCommand(
+                keyName: "t",
+                modifiers: [.command, .shift],
+                spokenText: "reopening the tab."
+            )
+        default:
+            return nil
+        }
+    }
+
+    private static func parseWindowSnapCommand(from normalizedTranscript: String) -> PaceWindowSnapRequest? {
+        let position: PaceWindowSnapPosition
+        switch normalizedTranscript {
+        case "snap window left", "move window left", "put window left", "put the window left", "move the window left", "snap the window left", "resize window left", "left half window", "window left half":
+            position = .left
+        case "snap window right", "move window right", "put window right", "put the window right", "move the window right", "snap the window right", "resize window right", "right half window", "window right half":
+            position = .right
+        case "snap window top", "move window top", "put window top", "put the window top", "move the window top", "snap the window top", "top half window", "window top half":
+            position = .top
+        case "snap window bottom", "move window bottom", "put window bottom", "put the window bottom", "move the window bottom", "snap the window bottom", "bottom half window", "window bottom half":
+            position = .bottom
+        case "maximize window", "maximize the window", "make window full size", "make the window full size":
+            position = .maximize
+        case "center window", "center the window", "move window center", "move the window center":
+            position = .center
+        default:
+            return nil
+        }
+
+        return PaceWindowSnapRequest(position: position)
+    }
+
+    private static func parseOpenMessagesCommand(from normalizedTranscript: String) -> PaceMessageRequest? {
+        guard !messageCommandContainsBodyOrSendIntent(normalizedTranscript) else { return nil }
+
+        if normalizedTranscript == "open messages"
+            || normalizedTranscript == "open messages app"
+            || normalizedTranscript == "launch messages" {
+            return PaceMessageRequest(recipient: nil, text: nil)
+        }
+
+        let recipientPrefixes = [
+            "open messages to ",
+            "open message to ",
+            "open messages with ",
+            "open message with ",
+            "message "
+        ]
+
+        for recipientPrefix in recipientPrefixes {
+            guard normalizedTranscript.hasPrefix(recipientPrefix) else { continue }
+            let rawRecipientName = String(normalizedTranscript.dropFirst(recipientPrefix.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let recipientName = normalizedRecipientName(rawRecipientName) else { return nil }
+            return PaceMessageRequest(recipient: recipientName, text: nil)
+        }
+
+        return nil
+    }
+
+    private static func messageCommandContainsBodyOrSendIntent(_ normalizedTranscript: String) -> Bool {
+        let blockedFragments = [
+            " saying ",
+            " say ",
+            " that ",
+            " telling ",
+            " tell ",
+            " about ",
+            " with text ",
+            " body ",
+            "send message",
+            "send a message",
+            "text "
+        ]
+        return blockedFragments.contains { normalizedTranscript.contains($0) }
+    }
+
+    private static func normalizedRecipientName(_ rawRecipientName: String) -> String? {
+        guard !rawRecipientName.isEmpty else { return nil }
+        guard rawRecipientName.rangeOfCharacter(from: CharacterSet(charactersIn: "/\\{}[]<>")) == nil else {
+            return nil
+        }
+
+        let words = rawRecipientName
+            .split(separator: " ")
+            .map { word in
+                let lowercasedWord = word.lowercased()
+                guard let firstCharacter = lowercasedWord.first else { return "" }
+                return firstCharacter.uppercased() + lowercasedWord.dropFirst()
+            }
+        let recipientName = words.joined(separator: " ")
+        return recipientName.isEmpty ? nil : recipientName
+    }
+
+    private static func parseMusicCommand(from normalizedTranscript: String) -> PaceMusicCommand? {
+        switch normalizedTranscript {
+        case "play music", "start music", "resume music", "play the music":
+            return .play
+        case "pause music", "stop music", "pause the music":
+            return .pause
+        case "toggle music", "play pause music", "play or pause music":
+            return .playPause
+        case "next song", "next track", "skip song", "skip track", "music next":
+            return .next
+        case "previous song", "previous track", "last song", "last track", "music previous":
+            return .previous
+        default:
+            return nil
+        }
+    }
+
+    private static func spokenTextForMusicCommand(_ musicCommand: PaceMusicCommand) -> String {
+        switch musicCommand {
+        case .play:
+            return "playing music."
+        case .pause:
+            return "pausing music."
+        case .playPause:
+            return "toggling music."
+        case .next:
+            return "skipping ahead."
+        case .previous:
+            return "going back."
+        }
+    }
+
+    private static func parseSystemAdjustment(
+        from normalizedTranscript: String,
+        noun: String
+    ) -> PaceSystemAdjustment? {
+        let direction: PaceAdjustmentDirection
+        if normalizedTranscript == "\(noun) up"
+            || normalizedTranscript == "turn \(noun) up"
+            || normalizedTranscript == "turn the \(noun) up"
+            || normalizedTranscript == "increase \(noun)"
+            || normalizedTranscript == "raise \(noun)"
+            || normalizedTranscript == "make \(noun) louder"
+            || normalizedTranscript == "make the \(noun) louder"
+            || normalizedTranscript.hasPrefix("\(noun) up ")
+            || normalizedTranscript.hasPrefix("turn \(noun) up ")
+            || normalizedTranscript.hasPrefix("turn the \(noun) up ") {
+            direction = .up
+        } else if normalizedTranscript == "\(noun) down"
+            || normalizedTranscript == "turn \(noun) down"
+            || normalizedTranscript == "turn the \(noun) down"
+            || normalizedTranscript == "decrease \(noun)"
+            || normalizedTranscript == "lower \(noun)"
+            || normalizedTranscript == "make \(noun) quieter"
+            || normalizedTranscript == "make the \(noun) quieter"
+            || normalizedTranscript.hasPrefix("\(noun) down ")
+            || normalizedTranscript.hasPrefix("turn \(noun) down ")
+            || normalizedTranscript.hasPrefix("turn the \(noun) down ") {
+            direction = .down
+        } else {
+            return nil
+        }
+
+        return PaceSystemAdjustment(
+            direction: direction,
+            stepCount: parseStepCount(from: normalizedTranscript)
+        )
+    }
+
+    private static func parseStepCount(from normalizedTranscript: String) -> Int {
+        let tokens = normalizedTranscript
+            .split(whereSeparator: { !$0.isNumber })
+            .compactMap { Int($0) }
+        guard let requestedStepCount = tokens.first else { return 2 }
+        return max(1, min(requestedStepCount, 10))
+    }
+
+    private static func parseURLCommand(from normalizedTranscript: String) -> String? {
+        for prefix in ["open ", "go to ", "visit ", "navigate to "] {
+            guard normalizedTranscript.hasPrefix(prefix) else { continue }
+            let rawURLTarget = String(normalizedTranscript.dropFirst(prefix.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return normalizedURLString(from: rawURLTarget)
+        }
+        return nil
+    }
+
+    private static func normalizedURLString(from rawURLTarget: String) -> String? {
+        guard !rawURLTarget.isEmpty, !rawURLTarget.contains(" ") else { return nil }
+        if rawURLTarget.hasPrefix("http://") || rawURLTarget.hasPrefix("https://") {
+            return rawURLTarget
+        }
+        guard rawURLTarget.contains(".") else { return nil }
+        return "https://\(rawURLTarget)"
+    }
+
+    private static func parseKnownApplicationCommand(from normalizedTranscript: String) -> String? {
+        let candidateApplicationName: String?
+        if normalizedTranscript.hasPrefix("open app ") {
+            candidateApplicationName = String(normalizedTranscript.dropFirst("open app ".count))
+        } else if normalizedTranscript.hasPrefix("open application ") {
+            candidateApplicationName = String(normalizedTranscript.dropFirst("open application ".count))
+        } else if normalizedTranscript.hasPrefix("open ") {
+            candidateApplicationName = String(normalizedTranscript.dropFirst("open ".count))
+        } else if normalizedTranscript.hasPrefix("launch ") {
+            candidateApplicationName = String(normalizedTranscript.dropFirst("launch ".count))
+        } else if normalizedTranscript.hasPrefix("start ") {
+            candidateApplicationName = String(normalizedTranscript.dropFirst("start ".count))
+        } else {
+            candidateApplicationName = nil
+        }
+
+        guard let candidateApplicationName else { return nil }
+        let normalizedCandidate = candidateApplicationName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return knownApplicationAliases[normalizedCandidate]
+    }
+}
+
 enum PaceActionTagParser {
+    private struct PlannerResponseDTO: Decodable {
+        let spokenText: String?
+        let intent: String?
+        let payload: [String: PaceMCPJSONValue]?
+    }
+
     private struct ToolCallDTO: Decodable {
         let tool: String
         let app: String?
@@ -1458,9 +3896,111 @@ enum PaceActionTagParser {
         let x: Int?
         let y: Int?
         let screen: Int?
+        let candidates: [ClickCandidateDTO]
+        let expectStateChange: Bool?
 
         enum CodingKeys: String, CodingKey, CaseIterable {
-            case tool, app, name, url, command, direction, title, query, text, body, notes, range, key, path, action, to, subject, recipient, server, toolName, mcpTool, arguments, steps, amount, x, y, screen
+            case tool, app, name, url, command, direction, title, query, text, body, notes, range, key, path, action, to, subject, recipient, server, toolName, mcpTool, arguments, steps, amount, x, y, screen, candidates, expectStateChange
+        }
+
+        struct ClickCandidateDTO: Decodable {
+            let x: Int?
+            let y: Int?
+            let screen: Int?
+            let label: String?
+            let confidence: Double?
+            let expectStateChange: Bool?
+            let recencyRank: Int?
+            let lastSeenMillisecondsAgo: Double?
+
+            enum CodingKeys: String, CodingKey {
+                case x, y, screen, label, confidence, expectStateChange
+                case recencyRank, recentRank, lastSeenMillisecondsAgo, lastSeenMsAgo, observedMillisecondsAgo, observedMsAgo
+            }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                self.x = Self.decodeIntIfPresent(from: container, forKey: .x)
+                self.y = Self.decodeIntIfPresent(from: container, forKey: .y)
+                self.screen = Self.decodeIntIfPresent(from: container, forKey: .screen)
+                self.label = Self.decodeStringIfPresent(from: container, forKey: .label)
+                self.confidence = try? container.decodeIfPresent(Double.self, forKey: .confidence)
+                self.expectStateChange = try? container.decodeIfPresent(Bool.self, forKey: .expectStateChange)
+                self.recencyRank = Self.firstDecodedInt(
+                    from: container,
+                    keys: [.recencyRank, .recentRank]
+                )
+                self.lastSeenMillisecondsAgo = Self.firstDecodedDouble(
+                    from: container,
+                    keys: [.lastSeenMillisecondsAgo, .lastSeenMsAgo, .observedMillisecondsAgo, .observedMsAgo]
+                )
+            }
+
+            private static func decodeStringIfPresent(
+                from container: KeyedDecodingContainer<CodingKeys>,
+                forKey key: CodingKeys
+            ) -> String? {
+                if let stringValue = try? container.decodeIfPresent(String.self, forKey: key) {
+                    return stringValue
+                }
+                if let intValue = try? container.decodeIfPresent(Int.self, forKey: key) {
+                    return String(intValue)
+                }
+                return nil
+            }
+
+            private static func decodeIntIfPresent(
+                from container: KeyedDecodingContainer<CodingKeys>,
+                forKey key: CodingKeys
+            ) -> Int? {
+                if let intValue = try? container.decodeIfPresent(Int.self, forKey: key) {
+                    return intValue
+                }
+                if let stringValue = try? container.decodeIfPresent(String.self, forKey: key) {
+                    return Int(stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                return nil
+            }
+
+            private static func firstDecodedInt(
+                from container: KeyedDecodingContainer<CodingKeys>,
+                keys: [CodingKeys]
+            ) -> Int? {
+                for key in keys {
+                    if let intValue = decodeIntIfPresent(from: container, forKey: key) {
+                        return intValue
+                    }
+                }
+                return nil
+            }
+
+            private static func decodeDoubleIfPresent(
+                from container: KeyedDecodingContainer<CodingKeys>,
+                forKey key: CodingKeys
+            ) -> Double? {
+                if let doubleValue = try? container.decodeIfPresent(Double.self, forKey: key) {
+                    return doubleValue
+                }
+                if let intValue = try? container.decodeIfPresent(Int.self, forKey: key) {
+                    return Double(intValue)
+                }
+                if let stringValue = try? container.decodeIfPresent(String.self, forKey: key) {
+                    return Double(stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                return nil
+            }
+
+            private static func firstDecodedDouble(
+                from container: KeyedDecodingContainer<CodingKeys>,
+                keys: [CodingKeys]
+            ) -> Double? {
+                for key in keys {
+                    if let doubleValue = decodeDoubleIfPresent(from: container, forKey: key) {
+                        return doubleValue
+                    }
+                }
+                return nil
+            }
         }
 
         init(from decoder: Decoder) throws {
@@ -1493,6 +4033,8 @@ enum PaceActionTagParser {
             self.x = Self.decodeIntIfPresent(from: container, forKey: .x)
             self.y = Self.decodeIntIfPresent(from: container, forKey: .y)
             self.screen = Self.decodeIntIfPresent(from: container, forKey: .screen)
+            self.candidates = (try? container.decodeIfPresent([ClickCandidateDTO].self, forKey: .candidates)) ?? []
+            self.expectStateChange = try? container.decodeIfPresent(Bool.self, forKey: .expectStateChange)
             self.extraArguments = Self.decodeExtraArguments(from: rawContainer)
         }
 
@@ -1570,6 +4112,10 @@ enum PaceActionTagParser {
     ///
     /// Order of tags in the response is preserved in the returned actions array.
     static func parseActions(from responseText: String) -> PaceActionTagParseResult {
+        if let plannerResponseParseResult = parsePlannerResponseJSON(from: responseText) {
+            return plannerResponseParseResult
+        }
+
         let (toolCallSteps, responseTextWithoutToolCallBlocks) = parseToolCallBlocks(in: responseText)
 
         // One regex that matches any of the supported tag shapes. We use a
@@ -1632,6 +4178,716 @@ enum PaceActionTagParser {
             executionPlan: PaceActionExecutionPlan(steps: executionSteps),
             firstClickVisualisationLocation: firstClickVisualisationLocation(in: allActions)
         )
+    }
+
+    private static func parsePlannerResponseJSON(from responseText: String) -> PaceActionTagParseResult? {
+        let trimmedResponseText = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedResponseText.hasPrefix("{"), trimmedResponseText.hasSuffix("}") else {
+            return nil
+        }
+        guard let responseData = trimmedResponseText.data(using: .utf8),
+              let plannerResponseObject = try? JSONDecoder().decode([String: PaceMCPJSONValue].self, from: responseData) else {
+            return nil
+        }
+        guard plannerResponseObject.keys.contains(where: { ["spokenText", "intent", "payload"].contains($0) }) else {
+            return nil
+        }
+
+        let envelopeValidationIssues = validatePlannerResponseEnvelope(plannerResponseObject)
+        guard envelopeValidationIssues.isEmpty else {
+            print("⚠️ Rejected invalid v10 planner response before execution: \(envelopeValidationIssues.joined(separator: "; "))")
+            return PaceActionTagParseResult(
+                spokenText: strictStringValue(for: "spokenText", in: plannerResponseObject) ?? "",
+                actions: [],
+                executionPlan: PaceActionExecutionPlan(steps: []),
+                firstClickVisualisationLocation: nil
+            )
+        }
+
+        guard let plannerResponse = try? JSONDecoder().decode(PlannerResponseDTO.self, from: responseData) else {
+            return nil
+        }
+
+        let spokenText = plannerResponse.spokenText?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let normalizedIntent = plannerResponse.intent?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        guard let payload = plannerResponse.payload,
+              let plannerActions = parsePlannerActions(intent: normalizedIntent, payload: payload),
+              !plannerActions.isEmpty else {
+            return PaceActionTagParseResult(
+                spokenText: spokenText,
+                actions: [],
+                executionPlan: PaceActionExecutionPlan(steps: []),
+                firstClickVisualisationLocation: nil
+            )
+        }
+
+        let executionPlan = PaceActionExecutionPlan.serial(actions: plannerActions)
+        return PaceActionTagParseResult(
+            spokenText: spokenText,
+            actions: plannerActions,
+            executionPlan: executionPlan,
+            firstClickVisualisationLocation: firstClickVisualisationLocation(in: plannerActions)
+        )
+    }
+
+    private static func validatePlannerResponseEnvelope(
+        _ plannerResponseObject: [String: PaceMCPJSONValue]
+    ) -> [String] {
+        let allowedTopLevelKeys = Set(["spokenText", "intent", "payload"])
+        var issues: [String] = []
+
+        for unexpectedKey in Set(plannerResponseObject.keys).subtracting(allowedTopLevelKeys).sorted() {
+            issues.append("unexpected top-level key \(unexpectedKey)")
+        }
+
+        guard strictStringValue(for: "spokenText", in: plannerResponseObject) != nil else {
+            issues.append("spokenText must be a string")
+            return issues
+        }
+
+        guard let rawIntent = strictStringValue(for: "intent", in: plannerResponseObject) else {
+            issues.append("intent must be a string")
+            return issues
+        }
+
+        let normalizedIntent = rawIntent.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let allowedIntents = Set(["answer", "action", "dictate", "edit", "clarify", "refuse"])
+        guard allowedIntents.contains(normalizedIntent) else {
+            issues.append("intent must be one of \(allowedIntents.sorted().joined(separator: ", "))")
+            return issues
+        }
+
+        let payload = objectValue(for: "payload", in: plannerResponseObject)
+        if plannerResponseObject["payload"] != nil && payload == nil {
+            issues.append("payload must be an object")
+        }
+
+        guard let payload else {
+            if normalizedIntent == "action" {
+                issues.append("action intent requires payload")
+            }
+            return issues
+        }
+
+        issues.append(contentsOf: validatePlannerResponsePayload(payload, intent: normalizedIntent))
+        return issues
+    }
+
+    private static func validatePlannerResponsePayload(
+        _ payload: [String: PaceMCPJSONValue],
+        intent normalizedIntent: String
+    ) -> [String] {
+        var issues: [String] = []
+
+        for key in ["name", "answer", "text", "replacement", "command"] {
+            if payload[key] != nil && strictStringValue(for: key, in: payload) == nil {
+                issues.append("payload.\(key) must be a string")
+            }
+        }
+
+        if let target = strictStringValue(for: "target", in: payload),
+           !["focused", "selection"].contains(target.lowercased()) {
+            issues.append("payload.target must be focused or selection")
+        } else if payload["target"] != nil && strictStringValue(for: "target", in: payload) == nil {
+            issues.append("payload.target must be a string")
+        }
+
+        if payload["args"] != nil && objectValue(for: "args", in: payload) == nil {
+            issues.append("payload.args must be an object")
+        }
+
+        if let callsIssue = validatePlannerResponseCallsPayload(payload["calls"]) {
+            issues.append(contentsOf: callsIssue)
+        }
+
+        if normalizedIntent == "action" {
+            let hasSingleActionName = strictStringValue(for: "name", in: payload) != nil
+            let hasCalls = payload["calls"] != nil && validatePlannerResponseCallsPayload(payload["calls"]) == nil
+            if !hasSingleActionName && !hasCalls {
+                issues.append("action payload requires name or calls")
+            }
+        }
+
+        return issues
+    }
+
+    private static func validatePlannerResponseCallsPayload(
+        _ callsValue: PaceMCPJSONValue?
+    ) -> [String]? {
+        guard let callsValue else { return nil }
+        guard case .array(let calls) = callsValue else {
+            return ["payload.calls must be an array"]
+        }
+
+        var issues: [String] = []
+        let allowedCallKeys = Set(["name", "args"])
+        for (index, callValue) in calls.enumerated() {
+            guard case .object(let callObject) = callValue else {
+                issues.append("payload.calls[\(index)] must be an object")
+                continue
+            }
+
+            for unexpectedKey in Set(callObject.keys).subtracting(allowedCallKeys).sorted() {
+                issues.append("payload.calls[\(index)] unexpected key \(unexpectedKey)")
+            }
+
+            if strictStringValue(for: "name", in: callObject) == nil {
+                issues.append("payload.calls[\(index)].name must be a string")
+            }
+            if callObject["args"] != nil && objectValue(for: "args", in: callObject) == nil {
+                issues.append("payload.calls[\(index)].args must be an object")
+            }
+        }
+
+        return issues.isEmpty ? nil : issues
+    }
+
+    private static func parsePlannerActions(
+        intent normalizedIntent: String?,
+        payload: [String: PaceMCPJSONValue]
+    ) -> [PaceParsedAction]? {
+        switch normalizedIntent {
+        case "action":
+            if let calls = actionCallObjects(from: payload) {
+                return calls.compactMap(parsePlannerActionCall)
+            }
+            return parsePlannerActionCall(payload).map { [$0] }
+        case "dictate":
+            let dictatedText = firstStringValue(for: ["text", "body", "value"], in: payload)
+            guard let dictatedText, !dictatedText.isEmpty else { return [] }
+            let processedDictatedText = PaceDictationPostProcessor.process(
+                rawText: dictatedText,
+                mode: firstStringValue(for: ["mode"], in: payload)
+            )
+            guard !processedDictatedText.isEmpty else { return [] }
+            return [.type(processedDictatedText)]
+        case "edit":
+            let replacementText = firstStringValue(for: ["replacement", "text", "value"], in: payload)
+            if let replacementText, !replacementText.isEmpty {
+                let target = parseSetTextValueTarget(
+                    firstStringValue(for: ["target"], in: payload)
+                ) ?? .selection
+                return [.setTextValue(PaceSetTextValueRequest(
+                    value: replacementText,
+                    target: target
+                ))]
+            }
+
+            if let editCommand = firstStringValue(for: ["command", "instruction", "operation"], in: payload),
+               let voiceEditRequest = PaceVoiceEditProcessor.parseCommand(editCommand) {
+                return [.editSelectedText(voiceEditRequest)]
+            }
+
+            return []
+        default:
+            return []
+        }
+    }
+
+    private static func parsePlannerActionCall(_ actionCall: [String: PaceMCPJSONValue]) -> PaceParsedAction? {
+        guard let actionName = stringValue(for: "name", in: actionCall) else { return nil }
+        let actionArguments = objectValue(for: "args", in: actionCall) ?? [:]
+        let validationIssues = validateParameterizedActionCall(name: actionName, arguments: actionArguments)
+        guard validationIssues.isEmpty else {
+            print("⚠️ Rejected invalid \(actionName) planner action before execution: \(validationIssues.joined(separator: "; "))")
+            return nil
+        }
+        return parseParameterizedAction(name: actionName, arguments: actionArguments)
+    }
+
+    private static func actionCallObjects(from payload: [String: PaceMCPJSONValue]) -> [[String: PaceMCPJSONValue]]? {
+        guard case .array(let callsValue)? = payload["calls"] else { return nil }
+        return callsValue.compactMap { callValue in
+            guard case .object(let callObject) = callValue else { return nil }
+            return callObject
+        }
+    }
+
+    private static func parseParameterizedAction(
+        name rawActionName: String,
+        arguments: [String: PaceMCPJSONValue]
+    ) -> PaceParsedAction? {
+        let normalizedActionName = normalizedParameterizedActionName(rawActionName)
+
+        switch normalizedActionName {
+        case "app.launch", "app.open", "open.app":
+            let applicationName = firstStringValue(for: ["name", "app"], in: arguments)
+            return applicationName.map { .openApplication($0) }
+        case "app.openurl", "open.url", "url.open":
+            let urlString = firstStringValue(for: ["url", "text"], in: arguments)
+            return urlString.map { .openURL($0) }
+        case "ax.press", "click", "mouse.click":
+            if let clickCandidateSet = parseClickCandidateSet(fromParameterizedArguments: arguments, clickCount: 1) {
+                return .clickCandidates(clickCandidateSet)
+            }
+            if let location = screenshotPixelLocation(from: arguments) {
+                return .click(location)
+            }
+            return nil
+        case "ax.doublepress", "double.click", "mouse.doubleclick":
+            if let clickCandidateSet = parseClickCandidateSet(fromParameterizedArguments: arguments, clickCount: 2) {
+                return .clickCandidates(clickCandidateSet)
+            }
+            if let location = screenshotPixelLocation(from: arguments) {
+                return .doubleClick(location)
+            }
+            return nil
+        case "ax.setvalue":
+            let value = firstStringValue(for: ["value", "text", "body"], in: arguments)
+            guard let value, !value.isEmpty else { return nil }
+            let target = parseSetTextValueTarget(
+                firstStringValue(for: ["target"], in: arguments)
+            ) ?? .focused
+            return .setTextValue(PaceSetTextValueRequest(
+                value: value,
+                target: target
+            ))
+        case "type", "keyboard.type":
+            let text = firstStringValue(for: ["value", "text", "body"], in: arguments)
+            guard let text, !text.isEmpty else { return nil }
+            return .type(text)
+        case "undo.last", "undo", "undo.lastmutation":
+            return .undoLastMutation
+        case "key.press", "keyboard.press":
+            let key = firstStringValue(for: ["key", "name", "command"], in: arguments) ?? ""
+            return parseKeyPayload(key)
+        case "clipboard.read", "clipboard":
+            return .readClipboard
+        case "window.snap", "window.move", "window.resize":
+            return parseWindowSnapRequest(from: arguments)
+                .map { .snapWindow($0) }
+        case "ax.scroll":
+            let direction = stringValue(for: "direction", in: arguments) ?? "down"
+            let amount = intValue(for: "amount", in: arguments)
+                ?? intValue(for: "steps", in: arguments)
+                ?? 3
+            return parseScrollPayload("\(direction):\(amount)")
+        case "music.control", "music":
+            let command = firstStringValue(for: ["command", "name"], in: arguments) ?? ""
+            return parseMusicPayload(command)
+        case "volume.adjust", "volume":
+            return parseSystemAdjustmentPayloadFromParameterizedArguments(arguments)
+                .map { .adjustVolume($0) }
+        case "brightness.adjust", "brightness":
+            return parseSystemAdjustmentPayloadFromParameterizedArguments(arguments)
+                .map { .adjustBrightness($0) }
+        case "calendar.read", "calendar.list":
+            let range = firstStringValue(for: ["range", "when"], in: arguments) ?? "today"
+            return parseCalendarPayload(range)
+        case "calendar.createevent", "calendar.create", "calendar.add", "cal.event":
+            return parseCalendarEventRequest(from: arguments)
+                .map { .createCalendarEvent($0) }
+        case "reminders.add", "reminder.add":
+            let title = firstStringValue(for: ["title", "text", "name"], in: arguments)
+            guard let title, !title.isEmpty else { return nil }
+            return .createReminder(PaceReminderRequest(
+                title: title,
+                notes: stringValue(for: "notes", in: arguments)
+            ))
+        case "notes.create", "note.create":
+            let title = firstStringValue(for: ["title", "name"], in: arguments) ?? "Pace note"
+            let body = firstStringValue(for: ["body", "text", "notes"], in: arguments) ?? ""
+            guard !title.isEmpty || !body.isEmpty else { return nil }
+            return .createNote(PaceNoteRequest(
+                title: title.isEmpty ? "Pace note" : title,
+                body: body
+            ))
+        case "notes.append", "note.append":
+            let title = firstStringValue(for: ["title", "name"], in: arguments) ?? "Pace note"
+            let body = firstStringValue(for: ["body", "text", "notes"], in: arguments) ?? ""
+            guard !title.isEmpty || !body.isEmpty else { return nil }
+            return .appendNote(PaceNoteRequest(
+                title: title.isEmpty ? "Pace note" : title,
+                body: body
+            ))
+        case "notes.search", "note.search":
+            let query = firstStringValue(for: ["query", "text", "title", "name"], in: arguments)
+            guard let query, !query.isEmpty else { return nil }
+            return .searchNotes(query)
+        case "mail.draft", "mail.compose":
+            let recipients = stringArrayValue(for: "to", in: arguments)
+                + stringArrayValue(for: "recipients", in: arguments)
+                + stringArrayValue(for: "recipient", in: arguments)
+            let subject = firstStringValue(for: ["subject", "title"], in: arguments) ?? ""
+            let body = firstStringValue(for: ["body", "text", "bodyText"], in: arguments) ?? ""
+            guard !recipients.isEmpty || !subject.isEmpty || !body.isEmpty else { return nil }
+            return .composeMail(PaceMailDraft(
+                recipients: recipients,
+                subject: subject.isEmpty ? "Untitled" : subject,
+                body: body
+            ))
+        case "shortcut.run", "shortcuts.run":
+            let shortcutName = firstStringValue(for: ["name", "title", "shortcut"], in: arguments)
+            return shortcutName.map { .runShortcut($0) }
+        case "things.create", "things.add":
+            let title = firstStringValue(for: ["title", "text", "name"], in: arguments)
+            guard let title, !title.isEmpty else { return nil }
+            return .createThingsToDo(PaceThingsToDoRequest(
+                title: title,
+                notes: stringValue(for: "notes", in: arguments)
+            ))
+        case "messages.open", "messages.draft":
+            let recipient = firstStringValue(for: ["recipient", "to", "name"], in: arguments)
+            let text = firstStringValue(for: ["text", "body"], in: arguments)
+            return .openMessages(PaceMessageRequest(
+                recipient: recipient,
+                text: text
+            ))
+        case "mcp.call", "mcp":
+            let serverName = firstStringValue(for: ["server", "serverName"], in: arguments)
+            let toolName = firstStringValue(for: ["tool", "toolName", "name"], in: arguments)
+            guard let serverName, !serverName.isEmpty,
+                  let toolName, !toolName.isEmpty else { return nil }
+            let mcpArguments = objectValue(for: "arguments", in: arguments) ?? arguments
+            return .mcp(PaceMCPToolCall(
+                serverName: serverName,
+                toolName: toolName,
+                arguments: mcpArguments
+            ))
+        case "finder.reveal":
+            let path = firstStringValue(for: ["path", "url"], in: arguments)
+            guard let path, !path.isEmpty else { return nil }
+            return .finder(PaceFinderRequest(path: path, action: .reveal))
+        case "finder.open":
+            let path = firstStringValue(for: ["path", "url"], in: arguments)
+            guard let path, !path.isEmpty else { return nil }
+            return .finder(PaceFinderRequest(path: path, action: .open))
+        default:
+            return nil
+        }
+    }
+
+    private static func validateParameterizedActionCall(
+        name rawActionName: String,
+        arguments: [String: PaceMCPJSONValue]
+    ) -> [String] {
+        let normalizedActionName = normalizedParameterizedActionName(rawActionName)
+        var issues: [String] = []
+
+        switch normalizedActionName {
+        case "app.launch", "app.open", "open.app":
+            if !hasNonEmptyString(for: ["name", "app"], in: arguments) {
+                issues.append("requires app name")
+            }
+        case "app.openurl", "open.url", "url.open":
+            if !hasNonEmptyString(for: ["url", "text"], in: arguments) {
+                issues.append("requires url")
+            }
+        case "ax.press", "click", "mouse.click",
+             "ax.doublepress", "double.click", "mouse.doubleclick":
+            if screenshotPixelLocation(from: arguments) == nil
+                && parseClickCandidateSet(fromParameterizedArguments: arguments, clickCount: 1) == nil {
+                issues.append("requires x/y coordinates or candidates")
+            }
+        case "ax.setvalue", "type", "keyboard.type":
+            if !hasNonEmptyString(for: ["value", "text", "body"], in: arguments) {
+                issues.append("requires non-empty text")
+            }
+        case "undo.last", "undo", "undo.lastmutation", "clipboard.read", "clipboard":
+            break
+        case "key.press", "keyboard.press":
+            let key = firstStringValue(for: ["key", "name", "command"], in: arguments) ?? ""
+            if parseKeyPayload(key) == nil {
+                issues.append("requires supported key")
+            }
+        case "window.snap", "window.move", "window.resize":
+            if parseWindowSnapRequest(from: arguments) == nil {
+                issues.append("requires supported window snap position")
+            }
+        case "ax.scroll":
+            if let direction = stringValue(for: "direction", in: arguments),
+               !["up", "down"].contains(direction.lowercased()) {
+                issues.append("direction must be up or down")
+            }
+        case "music.control", "music":
+            let command = firstStringValue(for: ["command", "name"], in: arguments) ?? ""
+            if parseMusicPayload(command) == nil {
+                issues.append("requires supported music command")
+            }
+        case "volume.adjust", "volume", "brightness.adjust", "brightness":
+            if parseSystemAdjustmentPayloadFromParameterizedArguments(arguments) == nil {
+                issues.append("requires supported adjustment direction")
+            }
+        case "calendar.read", "calendar.list":
+            let range = firstStringValue(for: ["range", "when"], in: arguments) ?? "today"
+            if parseCalendarPayload(range) == nil {
+                issues.append("requires supported calendar range")
+            }
+        case "calendar.createevent", "calendar.create", "calendar.add", "cal.event":
+            if parseCalendarEventRequest(from: arguments) == nil {
+                issues.append("requires title and start date")
+            }
+        case "reminders.add", "reminder.add":
+            if !hasNonEmptyString(for: ["title", "text", "name"], in: arguments) {
+                issues.append("requires reminder title")
+            }
+        case "notes.create", "note.create", "notes.append", "note.append":
+            if !hasNonEmptyString(for: ["title", "name", "body", "text", "notes"], in: arguments) {
+                issues.append("requires note title or body")
+            }
+        case "notes.search", "note.search":
+            if !hasNonEmptyString(for: ["query", "text", "title", "name"], in: arguments) {
+                issues.append("requires notes query")
+            }
+        case "mail.draft", "mail.compose":
+            if stringArrayValue(for: "to", in: arguments).isEmpty
+                && stringArrayValue(for: "recipients", in: arguments).isEmpty
+                && stringArrayValue(for: "recipient", in: arguments).isEmpty
+                && !hasNonEmptyString(for: ["subject", "title", "body", "text", "bodyText"], in: arguments) {
+                issues.append("requires recipient, subject, or body")
+            }
+        case "shortcut.run", "shortcuts.run":
+            if !hasNonEmptyString(for: ["name", "title", "shortcut"], in: arguments) {
+                issues.append("requires shortcut name")
+            }
+        case "things.create", "things.add":
+            if !hasNonEmptyString(for: ["title", "text", "name"], in: arguments) {
+                issues.append("requires todo title")
+            }
+        case "messages.open", "messages.draft":
+            break
+        case "mcp.call", "mcp":
+            if !hasNonEmptyString(for: ["server", "serverName"], in: arguments) {
+                issues.append("requires MCP server")
+            }
+            if !hasNonEmptyString(for: ["tool", "toolName", "name"], in: arguments) {
+                issues.append("requires MCP tool name")
+            }
+        case "finder.reveal", "finder.open":
+            if !hasNonEmptyString(for: ["path", "url"], in: arguments) {
+                issues.append("requires path")
+            }
+        default:
+            issues.append("unknown action")
+        }
+
+        return issues
+    }
+
+    private static func normalizedParameterizedActionName(_ rawActionName: String) -> String {
+        rawActionName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: ".")
+            .replacingOccurrences(of: "-", with: ".")
+    }
+
+    private static func screenshotPixelLocation(from arguments: [String: PaceMCPJSONValue]) -> ScreenshotPixelLocation? {
+        guard let xPixel = intValue(for: "x", in: arguments),
+              let yPixel = intValue(for: "y", in: arguments) else {
+            return nil
+        }
+        return ScreenshotPixelLocation(
+            xInScreenshotPixels: xPixel,
+            yInScreenshotPixels: yPixel,
+            screenNumber: intValue(for: "screen", in: arguments)
+        )
+    }
+
+    private static func parseClickCandidateSet(
+        fromParameterizedArguments arguments: [String: PaceMCPJSONValue],
+        clickCount: Int
+    ) -> PaceClickCandidateSet? {
+        guard case .array(let rawCandidateValues)? = arguments["candidates"] else { return nil }
+        let defaultScreenNumber = intValue(for: "screen", in: arguments)
+        let defaultExpectStateChange = boolValue(for: "expectStateChange", in: arguments) ?? true
+
+        let candidates = rawCandidateValues.compactMap { rawCandidateValue -> PaceClickCandidate? in
+            guard case .object(let candidateObject) = rawCandidateValue else { return nil }
+            let trimmedLabel = firstStringValue(for: ["label", "title", "name"], in: candidateObject)
+            let candidateLocation: ScreenshotPixelLocation? = {
+                guard let xPixel = intValue(for: "x", in: candidateObject),
+                      let yPixel = intValue(for: "y", in: candidateObject) else {
+                    return nil
+                }
+                return ScreenshotPixelLocation(
+                    xInScreenshotPixels: xPixel,
+                    yInScreenshotPixels: yPixel,
+                    screenNumber: intValue(for: "screen", in: candidateObject) ?? defaultScreenNumber
+                )
+            }()
+
+            guard candidateLocation != nil || !(trimmedLabel ?? "").isEmpty else { return nil }
+
+            return PaceClickCandidate(
+                location: candidateLocation,
+                label: trimmedLabel,
+                confidence: max(0, min(doubleValue(for: "confidence", in: candidateObject) ?? 0.5, 1)),
+                expectStateChange: boolValue(for: "expectStateChange", in: candidateObject) ?? defaultExpectStateChange,
+                recency: parseClickCandidateRecency(fromParameterizedArguments: candidateObject)
+            )
+        }
+
+        guard !candidates.isEmpty else { return nil }
+        return PaceClickCandidateSet(candidates: candidates, clickCount: clickCount)
+    }
+
+    private static func parseClickCandidateRecency(
+        fromParameterizedArguments arguments: [String: PaceMCPJSONValue]
+    ) -> PaceClickCandidateRecency? {
+        let rank = intValue(for: "recencyRank", in: arguments)
+            ?? intValue(for: "recentRank", in: arguments)
+        let lastSeenMillisecondsAgo = doubleValue(for: "lastSeenMillisecondsAgo", in: arguments)
+            ?? doubleValue(for: "lastSeenMsAgo", in: arguments)
+            ?? doubleValue(for: "observedMillisecondsAgo", in: arguments)
+            ?? doubleValue(for: "observedMsAgo", in: arguments)
+        guard rank != nil || lastSeenMillisecondsAgo != nil else { return nil }
+        return PaceClickCandidateRecency(
+            rank: rank,
+            lastSeenMillisecondsAgo: lastSeenMillisecondsAgo
+        )
+    }
+
+    private static func parseSystemAdjustmentPayloadFromParameterizedArguments(
+        _ arguments: [String: PaceMCPJSONValue]
+    ) -> PaceSystemAdjustment? {
+        let direction = firstStringValue(for: ["direction", "command"], in: arguments) ?? "up"
+        let steps = intValue(for: "steps", in: arguments)
+            ?? intValue(for: "amount", in: arguments)
+            ?? 2
+        return parseSystemAdjustmentPayload("\(direction):\(steps)")
+    }
+
+    private static func firstStringValue(
+        for keys: [String],
+        in object: [String: PaceMCPJSONValue]
+    ) -> String? {
+        for key in keys {
+            if let value = stringValue(for: key, in: object), !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func stringValue(
+        for key: String,
+        in object: [String: PaceMCPJSONValue]
+    ) -> String? {
+        guard let value = object[key] else { return nil }
+        switch value {
+        case .string(let stringValue):
+            return stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .number(let numberValue):
+            if numberValue.rounded() == numberValue {
+                return String(Int(numberValue))
+            }
+            return String(numberValue)
+        case .bool(let boolValue):
+            return String(boolValue)
+        case .array, .object, .null:
+            return nil
+        }
+    }
+
+    private static func strictStringValue(
+        for key: String,
+        in object: [String: PaceMCPJSONValue]
+    ) -> String? {
+        guard case .string(let stringValue)? = object[key] else { return nil }
+        return stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func intValue(
+        for key: String,
+        in object: [String: PaceMCPJSONValue]
+    ) -> Int? {
+        guard let value = object[key] else { return nil }
+        switch value {
+        case .number(let numberValue):
+            return Int(numberValue)
+        case .string(let stringValue):
+            return Int(stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
+        case .bool, .array, .object, .null:
+            return nil
+        }
+    }
+
+    private static func doubleValue(
+        for key: String,
+        in object: [String: PaceMCPJSONValue]
+    ) -> Double? {
+        guard let value = object[key] else { return nil }
+        switch value {
+        case .number(let numberValue):
+            return numberValue
+        case .string(let stringValue):
+            return Double(stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
+        case .bool, .array, .object, .null:
+            return nil
+        }
+    }
+
+    private static func objectValue(
+        for key: String,
+        in object: [String: PaceMCPJSONValue]
+    ) -> [String: PaceMCPJSONValue]? {
+        guard case .object(let objectValue)? = object[key] else { return nil }
+        return objectValue
+    }
+
+    private static func boolValue(
+        for key: String,
+        in object: [String: PaceMCPJSONValue]
+    ) -> Bool? {
+        guard let value = object[key] else { return nil }
+        switch value {
+        case .bool(let boolValue):
+            return boolValue
+        case .string(let stringValue):
+            switch stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "true", "yes", "1":
+                return true
+            case "false", "no", "0":
+                return false
+            default:
+                return nil
+            }
+        case .number(let numberValue):
+            return numberValue != 0
+        case .array, .object, .null:
+            return nil
+        }
+    }
+
+    private static func stringArrayValue(
+        for key: String,
+        in object: [String: PaceMCPJSONValue]
+    ) -> [String] {
+        guard let value = object[key] else { return [] }
+        switch value {
+        case .string(let stringValue):
+            return stringValue
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        case .array(let arrayValue):
+            return arrayValue.compactMap { element in
+                switch element {
+                case .string(let stringValue):
+                    let trimmedString = stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmedString.isEmpty ? nil : trimmedString
+                case .number(let numberValue):
+                    if numberValue.rounded() == numberValue {
+                        return String(Int(numberValue))
+                    }
+                    return String(numberValue)
+                case .bool, .array, .object, .null:
+                    return nil
+                }
+            }
+        case .number(let numberValue):
+            if numberValue.rounded() == numberValue {
+                return [String(Int(numberValue))]
+            }
+            return [String(numberValue)]
+        case .bool, .object, .null:
+            return []
+        }
     }
 
     private static func parseSingleAction(tagName: String, payload: String) -> PaceParsedAction? {
@@ -1726,16 +4982,44 @@ enum PaceActionTagParser {
             return nil
         }
 
+        let validationIssues = validateLocalToolCall(toolCall, kind: toolKind)
+        guard validationIssues.isEmpty else {
+            print("⚠️ Rejected invalid \(toolCall.tool) tool call before execution: \(validationIssues.joined(separator: "; "))")
+            return nil
+        }
+
         switch toolKind {
         case .click:
+            if let clickCandidateSet = parseClickCandidateSet(toolCall, clickCount: 1) {
+                return .clickCandidates(clickCandidateSet)
+            }
             return parseToolCallLocation(toolCall).map { .click($0) }
         case .doubleClick:
+            if let clickCandidateSet = parseClickCandidateSet(toolCall, clickCount: 2) {
+                return .clickCandidates(clickCandidateSet)
+            }
             return parseToolCallLocation(toolCall).map { .doubleClick($0) }
         case .type:
             guard let text = toolCall.text, !text.isEmpty else { return nil }
             return .type(text)
+        case .setValue:
+            let mergedArguments = mergeMCPArguments(from: toolCall)
+            let value = (firstStringValue(for: ["value", "text", "body"], in: mergedArguments) ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { return nil }
+            let target = parseSetTextValueTarget(firstStringValue(for: ["target", "action"], in: mergedArguments)) ?? .focused
+            return .setTextValue(PaceSetTextValueRequest(
+                value: value,
+                target: target
+            ))
+        case .undo:
+            return .undoLastMutation
         case .key:
             return parseKeyPayload(toolCall.key ?? toolCall.command ?? "")
+        case .clipboard:
+            return .readClipboard
+        case .window:
+            return parseWindowToolCall(toolCall)
         case .scroll:
             return parseScrollPayload(
                 [
@@ -1770,7 +5054,12 @@ enum PaceActionTagParser {
                 .joined(separator: ":")
             ).map { .adjustBrightness($0) }
         case .calendar:
+            if let calendarEventAction = parseCalendarEventToolCallIfRequested(toolCall) {
+                return calendarEventAction
+            }
             return parseCalendarPayload(toolCall.range ?? "today")
+        case .calendarCreate:
+            return parseCalendarEventToolCall(toolCall)
         case .reminder:
             return parseReminderPayload(toolCall.title ?? toolCall.text ?? "")
         case .finder:
@@ -1786,6 +5075,127 @@ enum PaceActionTagParser {
         case .messages:
             return parseMessagesToolCall(toolCall)
         }
+    }
+
+    private static func validateLocalToolCall(_ toolCall: ToolCallDTO, kind: PaceLocalToolKind) -> [String] {
+        let mergedArguments = mergeMCPArguments(from: toolCall)
+        var issues: [String] = []
+
+        switch kind {
+        case .click, .doubleClick:
+            if parseToolCallLocation(toolCall) == nil && parseClickCandidateSet(toolCall, clickCount: 1) == nil {
+                issues.append("requires x/y coordinates or candidates")
+            }
+        case .type:
+            if !hasNonEmptyString(for: ["text", "body", "value"], in: mergedArguments) {
+                issues.append("requires non-empty text")
+            }
+        case .setValue:
+            if !hasNonEmptyString(for: ["value", "text", "body"], in: mergedArguments) {
+                issues.append("requires non-empty value")
+            }
+            if let target = firstStringValue(for: ["target", "action"], in: mergedArguments),
+               parseSetTextValueTarget(target) == nil {
+                issues.append("target must be focused or selection")
+            }
+        case .undo, .clipboard:
+            break
+        case .key:
+            if !hasNonEmptyString(for: ["key", "command", "name"], in: mergedArguments) {
+                issues.append("requires key")
+            }
+        case .window:
+            if parseWindowSnapRequest(from: mergedArguments) == nil {
+                issues.append("requires a supported window snap position")
+            }
+        case .scroll:
+            if let direction = firstStringValue(for: ["direction", "command"], in: mergedArguments) {
+                if !["up", "down"].contains(direction.lowercased()) {
+                    issues.append("direction must be up or down")
+                }
+            }
+        case .openApp:
+            if !hasNonEmptyString(for: ["app", "name"], in: mergedArguments) {
+                issues.append("requires app")
+            }
+        case .openURL:
+            if !hasNonEmptyString(for: ["url", "text"], in: mergedArguments) {
+                issues.append("requires url")
+            }
+        case .music:
+            let command = firstStringValue(for: ["command", "name"], in: mergedArguments) ?? ""
+            if parseMusicPayload(command) == nil {
+                issues.append("requires supported music command")
+            }
+        case .volume, .brightness:
+            let direction = firstStringValue(for: ["direction", "command"], in: mergedArguments)
+            if let direction {
+                if !["up", "down"].contains(direction.lowercased()) {
+                    issues.append("direction must be up or down")
+                }
+            } else {
+                issues.append("requires direction")
+            }
+        case .calendar:
+            let normalizedAction = (firstStringValue(for: ["action"], in: mergedArguments) ?? "")
+                .lowercased()
+                .replacingOccurrences(of: "-", with: "_")
+            if ["create", "create_event", "add", "schedule"].contains(normalizedAction) {
+                if parseCalendarEventToolCall(toolCall) == nil {
+                    issues.append("requires title and start date")
+                }
+                break
+            }
+            let range = firstStringValue(for: ["range", "when"], in: mergedArguments) ?? "today"
+            if parseCalendarPayload(range) == nil {
+                issues.append("requires supported calendar range")
+            }
+        case .calendarCreate:
+            if parseCalendarEventToolCall(toolCall) == nil {
+                issues.append("requires title and start date")
+            }
+        case .reminder:
+            if !hasNonEmptyString(for: ["title", "text", "name"], in: mergedArguments) {
+                issues.append("requires reminder title")
+            }
+        case .finder:
+            if !hasNonEmptyString(for: ["path", "text"], in: mergedArguments) {
+                issues.append("requires path")
+            }
+        case .notes:
+            let normalizedAction = (firstStringValue(for: ["action"], in: mergedArguments) ?? "create")
+                .lowercased()
+            if ["search", "find"].contains(normalizedAction) {
+                if !hasNonEmptyString(for: ["query", "text", "title", "name", "body", "notes"], in: mergedArguments) {
+                    issues.append("requires notes query")
+                }
+            } else if !hasNonEmptyString(for: ["title", "name", "body", "text", "notes"], in: mergedArguments) {
+                issues.append("requires note title or body")
+            }
+        case .mail:
+            if !hasNonEmptyString(for: ["to", "recipient", "subject", "title", "body", "text"], in: mergedArguments) {
+                issues.append("requires recipient, subject, or body")
+            }
+        case .things:
+            if !hasNonEmptyString(for: ["title", "text", "name"], in: mergedArguments) {
+                issues.append("requires todo title")
+            }
+        case .shortcuts:
+            if !hasNonEmptyString(for: ["name", "title", "command"], in: mergedArguments) {
+                issues.append("requires shortcut name")
+            }
+        case .messages:
+            break
+        }
+
+        return issues
+    }
+
+    private static func hasNonEmptyString(
+        for keys: [String],
+        in object: [String: PaceMCPJSONValue]
+    ) -> Bool {
+        firstStringValue(for: keys, in: object) != nil
     }
 
     private static func parseMCPToolCall(_ toolCall: ToolCallDTO) -> PaceMCPToolCall? {
@@ -1873,11 +5283,55 @@ enum PaceActionTagParser {
         )
     }
 
+    private static func parseClickCandidateSet(
+        _ toolCall: ToolCallDTO,
+        clickCount: Int
+    ) -> PaceClickCandidateSet? {
+        let candidates = toolCall.candidates.compactMap { candidateDTO -> PaceClickCandidate? in
+            let trimmedLabel = candidateDTO.label?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let candidateLocation: ScreenshotPixelLocation? = {
+                guard let xPixel = candidateDTO.x, let yPixel = candidateDTO.y else { return nil }
+                return ScreenshotPixelLocation(
+                    xInScreenshotPixels: xPixel,
+                    yInScreenshotPixels: yPixel,
+                    screenNumber: candidateDTO.screen ?? toolCall.screen
+                )
+            }()
+
+            guard candidateLocation != nil || !(trimmedLabel ?? "").isEmpty else { return nil }
+
+            return PaceClickCandidate(
+                location: candidateLocation,
+                label: trimmedLabel,
+                confidence: max(0, min(candidateDTO.confidence ?? 0.5, 1)),
+                expectStateChange: candidateDTO.expectStateChange ?? toolCall.expectStateChange ?? true,
+                recency: parseClickCandidateRecency(candidateDTO)
+            )
+        }
+
+        guard !candidates.isEmpty else { return nil }
+        return PaceClickCandidateSet(candidates: candidates, clickCount: clickCount)
+    }
+
+    private static func parseClickCandidateRecency(
+        _ candidateDTO: ToolCallDTO.ClickCandidateDTO
+    ) -> PaceClickCandidateRecency? {
+        guard candidateDTO.recencyRank != nil || candidateDTO.lastSeenMillisecondsAgo != nil else {
+            return nil
+        }
+        return PaceClickCandidateRecency(
+            rank: candidateDTO.recencyRank,
+            lastSeenMillisecondsAgo: candidateDTO.lastSeenMillisecondsAgo
+        )
+    }
+
     private static func firstClickVisualisationLocation(in actions: [PaceParsedAction]) -> ScreenshotPixelLocation? {
         for action in actions {
             switch action {
             case .click(let location), .doubleClick(let location):
                 return location
+            case .clickCandidates(let clickCandidateSet):
+                return clickCandidateSet.selectedFallbackLocation
             default:
                 continue
             }
@@ -1965,6 +5419,60 @@ enum PaceActionTagParser {
         return .openURL(urlString)
     }
 
+    private static func parseSetTextValueTarget(_ rawTarget: String?) -> PaceSetTextValueTarget? {
+        let normalizedTarget = rawTarget?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+
+        switch normalizedTarget {
+        case "focused", "focus", "field", "value":
+            return .focused
+        case "selection", "selected", "selected_text", "replace_selection":
+            return .selection
+        default:
+            return nil
+        }
+    }
+
+    private static func parseWindowSnapRequest(
+        from arguments: [String: PaceMCPJSONValue]
+    ) -> PaceWindowSnapRequest? {
+        let rawPosition = firstStringValue(
+            for: ["position", "target", "side", "direction", "action"],
+            in: arguments
+        )
+        guard let position = parseWindowSnapPosition(rawPosition) else {
+            return nil
+        }
+        return PaceWindowSnapRequest(position: position)
+    }
+
+    private static func parseWindowSnapPosition(_ rawPosition: String?) -> PaceWindowSnapPosition? {
+        let normalizedPosition = rawPosition?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+
+        switch normalizedPosition {
+        case "left", "left_half", "left_side":
+            return .left
+        case "right", "right_half", "right_side":
+            return .right
+        case "top", "top_half", "upper_half":
+            return .top
+        case "bottom", "bottom_half", "lower_half":
+            return .bottom
+        case "maximize", "maximise", "full", "fullscreen", "full_screen":
+            return .maximize
+        case "center", "centre", "middle":
+            return .center
+        default:
+            return nil
+        }
+    }
+
     private static func parseMusicPayload(_ payload: String) -> PaceParsedAction? {
         let normalizedCommand = payload
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2004,10 +5512,129 @@ enum PaceActionTagParser {
         return .listCalendarEvents(PaceCalendarQuery(range: range))
     }
 
+    private struct ParsedCalendarDate {
+        let date: Date
+        let isDateOnly: Bool
+    }
+
+    private static func parseCalendarEventRequest(
+        from arguments: [String: PaceMCPJSONValue]
+    ) -> PaceCalendarEventRequest? {
+        let title = firstStringValue(for: ["title", "name", "summary"], in: arguments) ?? ""
+        guard !title.isEmpty else { return nil }
+
+        let rawStartDate = firstStringValue(
+            for: ["start", "startDate", "startsAt", "date", "when"],
+            in: arguments
+        )
+        guard let rawStartDate,
+              let parsedStartDate = parseCalendarDate(rawStartDate) else {
+            return nil
+        }
+
+        let rawEndDate = firstStringValue(for: ["end", "endDate", "endsAt"], in: arguments)
+        let parsedEndDate = rawEndDate.flatMap(parseCalendarDate)
+        let isAllDay = boolValue(for: "allDay", in: arguments)
+            ?? boolValue(for: "isAllDay", in: arguments)
+            ?? parsedStartDate.isDateOnly
+
+        let defaultEndDate: Date = {
+            let calendar = Calendar.current
+            if isAllDay {
+                return calendar.date(byAdding: .day, value: 1, to: parsedStartDate.date)
+                    ?? parsedStartDate.date.addingTimeInterval(24 * 60 * 60)
+            }
+            return calendar.date(byAdding: .hour, value: 1, to: parsedStartDate.date)
+                ?? parsedStartDate.date.addingTimeInterval(60 * 60)
+        }()
+
+        let endDate = parsedEndDate?.date ?? defaultEndDate
+        let safeEndDate = endDate > parsedStartDate.date ? endDate : defaultEndDate
+
+        return PaceCalendarEventRequest(
+            title: title,
+            startDate: parsedStartDate.date,
+            endDate: safeEndDate,
+            isAllDay: isAllDay,
+            notes: firstStringValue(for: ["notes", "body", "description"], in: arguments),
+            location: firstStringValue(for: ["location", "place"], in: arguments),
+            calendarTitle: firstStringValue(for: ["calendar", "calendarTitle"], in: arguments)
+        )
+    }
+
+    private static func parseCalendarDate(_ rawDate: String) -> ParsedCalendarDate? {
+        let trimmedRawDate = rawDate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedRawDate.isEmpty else { return nil }
+
+        if let dateOnlyDate = parseDateOnly(trimmedRawDate) {
+            return ParsedCalendarDate(date: dateOnlyDate, isDateOnly: true)
+        }
+
+        let iso8601FormatterWithFractionalSeconds = ISO8601DateFormatter()
+        iso8601FormatterWithFractionalSeconds.formatOptions = [
+            .withInternetDateTime,
+            .withFractionalSeconds
+        ]
+        if let date = iso8601FormatterWithFractionalSeconds.date(from: trimmedRawDate) {
+            return ParsedCalendarDate(date: date, isDateOnly: false)
+        }
+
+        let iso8601Formatter = ISO8601DateFormatter()
+        iso8601Formatter.formatOptions = [.withInternetDateTime]
+        if let date = iso8601Formatter.date(from: trimmedRawDate) {
+            return ParsedCalendarDate(date: date, isDateOnly: false)
+        }
+
+        for format in ["yyyy-MM-dd HH:mm", "yyyy-MM-dd h:mm a"] {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = format
+            if let date = formatter.date(from: trimmedRawDate) {
+                return ParsedCalendarDate(date: date, isDateOnly: false)
+            }
+        }
+
+        return nil
+    }
+
+    private static func parseDateOnly(_ rawDate: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: rawDate).map { Calendar.current.startOfDay(for: $0) }
+    }
+
     private static func parseReminderPayload(_ payload: String) -> PaceParsedAction? {
         let reminderTitle = payload.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !reminderTitle.isEmpty else { return nil }
         return .createReminder(PaceReminderRequest(title: reminderTitle, notes: nil))
+    }
+
+    private static func parseCalendarEventToolCallIfRequested(_ toolCall: ToolCallDTO) -> PaceParsedAction? {
+        let normalizedAction = (toolCall.action ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+
+        guard ["create", "create_event", "add", "schedule"].contains(normalizedAction) else {
+            return nil
+        }
+
+        return parseCalendarEventToolCall(toolCall)
+    }
+
+    private static func parseCalendarEventToolCall(_ toolCall: ToolCallDTO) -> PaceParsedAction? {
+        parseParameterizedAction(
+            name: "Calendar.createEvent",
+            arguments: mergeMCPArguments(from: toolCall)
+        )
+    }
+
+    private static func parseWindowToolCall(_ toolCall: ToolCallDTO) -> PaceParsedAction? {
+        parseParameterizedAction(
+            name: "Window.snap",
+            arguments: mergeMCPArguments(from: toolCall)
+        )
     }
 
     private static func parseFinderToolCall(_ toolCall: ToolCallDTO) -> PaceParsedAction? {

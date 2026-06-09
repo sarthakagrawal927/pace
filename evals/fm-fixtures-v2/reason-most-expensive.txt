@@ -1,0 +1,8 @@
+USER: select the most expensive option
+ELEMENT: [0] button|240,200|Free plan|$0/mo
+ELEMENT: [1] button|400,200|Pro plan|$15/mo
+ELEMENT: [2] button|560,200|Enterprise plan|$99/mo
+EXPECT_POINT_ID: 2
+EXPECT_CLICK_ID: 2
+SPOKEN_MUST_NOT_CONTAIN: ID,coord
+SPOKEN_MAX_WORDS: 14

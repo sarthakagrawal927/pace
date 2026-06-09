@@ -1,0 +1,3 @@
+USER: what time is it in tokyo
+EXPECT_INTENT: out_of_scope
+REASON: No timezone-query action

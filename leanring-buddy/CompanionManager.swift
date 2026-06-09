@@ -10,18 +10,40 @@
 import AVFoundation
 import AppKit
 import Combine
+import Contacts
 import CryptoKit
 import EventKit
 import Foundation
-import PostHog
 import ScreenCaptureKit
 import Speech
 import SwiftUI
 
-/// Per-screen VLM analysis cached by the pixel hash of the screenshot.
-/// As long as the screen hasn't changed visually, repeat questions reuse
-/// the cached element map — zero VLM cost, instant response.
+/// Per-screen VLM analysis cached by the analyzer identity plus pixel hash.
+/// As long as the model/runtime/display and screen pixels haven't changed,
+/// repeat questions reuse the cached element map — zero VLM cost.
+private struct ScreenAnalysisCacheIdentity: Equatable {
+    let analyzerDisplayName: String
+    let screenshotWidthInPixels: Int
+    let screenshotHeightInPixels: Int
+    let displayWidthInPoints: Int
+    let displayHeightInPoints: Int
+    let displayFrame: CGRect
+
+    init(
+        analyzerDisplayName: String,
+        capture: CompanionScreenCapture
+    ) {
+        self.analyzerDisplayName = analyzerDisplayName
+        self.screenshotWidthInPixels = capture.screenshotWidthInPixels
+        self.screenshotHeightInPixels = capture.screenshotHeightInPixels
+        self.displayWidthInPoints = capture.displayWidthInPoints
+        self.displayHeightInPoints = capture.displayHeightInPoints
+        self.displayFrame = capture.displayFrame
+    }
+}
+
 private struct CachedScreenAnalysis {
+    let identity: ScreenAnalysisCacheIdentity
     let pixelHash: String
     let visualFingerprint: PaceScreenVisualFingerprint?
     let analysis: LocalVLMScreenAnalysis
@@ -51,6 +73,13 @@ final class CompanionManager: ObservableObject {
     @Published private(set) var shouldRequestRemindersPermission = false
     @Published private(set) var recentActionResults: [PaceActionRunRecord] = []
     @Published private(set) var localMemorySummary: String = PaceLocalMemoryStore.summaryText
+    @Published private(set) var localRetrievalSummary: String = "Retrieval: local preferences and Pace history"
+    @Published private(set) var localRetrievalSourceStatuses: [PaceRetrievalSourceStatus] = []
+    @Published private(set) var localRetrievalFileRootPaths: [String] = PaceLocalRetrievalFileRootPreferences
+        .rootPaths(for: PaceLocalRetrievalFileRootPreferences.userSelectedRootURLs())
+    @Published private(set) var currentTurnHUDState: PaceTurnHUDState = .idle
+
+    private var pendingIntentClarification: PacePendingIntentClarification?
     let activeTTSVoiceSummary: PaceTTSVoiceSummary = PaceTTSVoiceSummary.current()
 
     /// True when the configured LM Studio (or compatible) HTTP server
@@ -99,21 +128,57 @@ final class CompanionManager: ObservableObject {
 
     /// Classifies the user's transcript into pureKnowledge /
     /// screenDescription / screenAction / chitchat so the pipeline
-    /// can skip work the turn doesn't need. Today only the chitchat
-    /// fast-path is wired (canned response, no VLM, no planner call) —
-    /// other intents still flow through the full pipeline. The
-    /// rule-based backend ships now; the Core ML backend takes over
-    /// once the .mlmodel is bundled (see #113 follow-up).
+    /// can skip work the turn doesn't need. Chitchat bypasses the
+    /// planner entirely; pure knowledge takes a text-only planner path.
+    /// The rule-based backend ships now; a tiny model can replace it
+    /// once it beats these rules on local fixtures.
     private lazy var intentClassifier: PaceIntentClassifier = {
         return PaceIntentClassifier()
     }()
 
-    // The reasoning/planning model. Today this is always a
-    // LocalPlannerClient pointing at LM Studio; the protocol shape stays
-    // so an alternate local runtime (Ollama, raw llama.cpp, MLX-server)
-    // can plug in by writing a new conformer.
+    // Main reasoning/planning model for screen and action turns.
+    // Runtime default remains LocalPlannerClient pointing at LM Studio
+    // because the larger local model wins the harder planner fixtures.
     private lazy var plannerClient: any BuddyPlannerClient = {
         return BuddyPlannerClientFactory.makeDefault()
+    }()
+
+    // Fast answer planner for pure-knowledge turns. Apple Foundation
+    // Models runs in-process when Apple Intelligence is ready; otherwise
+    // the factory falls back to the configured local planner.
+    private lazy var textOnlyPlannerClient: any BuddyPlannerClient = {
+        return BuddyPlannerClientFactory.makeFastTextOnlyPlannerOrFallback()
+    }()
+
+    private lazy var localRetriever: PaceLocalRetriever = {
+        let retriever = PaceLocalRetriever()
+        localRetrievalSourceStatuses = retriever.sourceStatuses
+        localRetrievalSummary = localRetrievalSummaryText(from: retriever.sourceStatuses)
+        return retriever
+    }()
+
+    private lazy var calendarRetrievalConnector: PaceCalendarRetrievalConnector = {
+        return PaceCalendarRetrievalConnector(eventStore: permissionEventStore)
+    }()
+
+    private lazy var remindersRetrievalConnector: PaceRemindersRetrievalConnector = {
+        return PaceRemindersRetrievalConnector(eventStore: permissionEventStore)
+    }()
+
+    private lazy var contactsRetrievalConnector: PaceContactsRetrievalConnector = {
+        return PaceContactsRetrievalConnector()
+    }()
+
+    private lazy var notesRetrievalConnector: PaceNotesRetrievalConnector = {
+        return PaceNotesRetrievalConnector()
+    }()
+
+    private lazy var mailRetrievalConnector: PaceMailRetrievalConnector = {
+        return PaceMailRetrievalConnector()
+    }()
+
+    private lazy var spotlightRetrievalConnector: PaceSpotlightRetrievalConnector = {
+        return PaceSpotlightRetrievalConnector(rootURLs: PaceLocalRetrievalFileRootPreferences.configuredRootURLs())
     }()
 
     // Always the on-device AVSpeechSynthesizer-backed client. Protocol
@@ -163,18 +228,12 @@ final class CompanionManager: ObservableObject {
         let enrichedAnalysesByScreenLabel: [String: LocalVLMScreenAnalysis]
     }
 
-    // Local vision-language model (LM Studio by default) that extracts a
+    // Screen-analysis provider (LM Studio HTTP by default) that extracts a
     // structured element map from screenshots. Only invoked when the
     // `UseLocalVLMForScreenContext` Info.plist key is set to true.
-    // Always allocated so toggling the key doesn't require a restart logic
-    // change, but the LM Studio server only sees traffic when enabled.
-    private lazy var localVLMClient: LocalVLMClient = {
-        let configuredBaseURL = AppBundleConfiguration.stringValue(forKey: "LocalVLMBaseURL")
-            ?? "http://localhost:1234/v1"
-        let configuredModelIdentifier = AppBundleConfiguration.stringValue(forKey: "LocalVLMModelIdentifier")
-            ?? "qwen3-vl-8b-instruct"
-        let resolvedBaseURL = URL(string: configuredBaseURL) ?? URL(string: "http://localhost:1234/v1")!
-        return LocalVLMClient(baseURL: resolvedBaseURL, modelIdentifier: configuredModelIdentifier)
+    // Always allocated so toggling the key doesn't require restart logic.
+    private lazy var screenAnalysisClient: any PaceScreenAnalysisClient = {
+        PaceScreenAnalysisClientFactory.makeDefaultClient()
     }()
 
     /// User-facing toggle for "read my screen". Backed by UserDefaults so
@@ -211,6 +270,20 @@ final class CompanionManager: ObservableObject {
     private var accessibilityCheckTimer: Timer?
     private var lmStudioReachabilityCheckTimer: Timer?
     private var pendingKeyboardShortcutStartTask: Task<Void, Never>?
+    private var lastCalendarRetrievalRefreshAt: Date?
+    private var lastCalendarRetrievalAuthorizationStatus: EKAuthorizationStatus?
+    private var lastRemindersRetrievalRefreshAt: Date?
+    private var lastRemindersRetrievalAuthorizationStatus: EKAuthorizationStatus?
+    private var remindersRetrievalRefreshTask: Task<Void, Never>?
+    private var lastContactsRetrievalRefreshAt: Date?
+    private var lastContactsRetrievalAuthorizationStatus: CNAuthorizationStatus?
+    private var contactsRetrievalRefreshTask: Task<Void, Never>?
+    private var lastFileRetrievalRefreshAt: Date?
+    private var fileRetrievalRefreshTask: Task<Void, Never>?
+    private var lastNotesRetrievalRefreshAt: Date?
+    private var notesRetrievalRefreshTask: Task<Void, Never>?
+    private var lastMailRetrievalRefreshAt: Date?
+    private var mailRetrievalRefreshTask: Task<Void, Never>?
     /// Scheduled hide for transient cursor mode — cancelled if the user
     /// speaks again before the delay elapses.
     private var transientHideTask: Task<Void, Never>?
@@ -268,6 +341,10 @@ final class CompanionManager: ObservableObject {
         plannerClient.displayName
     }
 
+    var activeTextOnlyPlannerDisplayName: String {
+        textOnlyPlannerClient.displayName
+    }
+
     /// User preference for whether the walking avatar overlay is shown
     /// on the bottom of the cursor screen. Defaults to ON so first-run
     /// users see the character; toggleable from the menu-bar panel.
@@ -302,9 +379,9 @@ final class CompanionManager: ObservableObject {
         return areCursorAnnotationsEnabled
     }
 
-    /// User preference for whether Pace asks before executing local tools.
-    /// Defaults on because action mode can click, type, open apps/URLs,
-    /// and modify local system state.
+    /// User preference for whether Pace asks before higher-risk local tools.
+    /// Routine reversible or visible actions auto-run; non-undoable app
+    /// mutations, external tools, and blocking preflight issues still prompt.
     @Published var requiresActionApproval: Bool = PaceUserPreferencesStore
         .bool(.requiresActionApproval, default: true)
 
@@ -354,12 +431,21 @@ final class CompanionManager: ObservableObject {
 
     private func requestUserApprovalForActionPlan(
         _ actionExecutionPlan: PaceActionExecutionPlan,
-        preflightIssues: [PaceToolPreflightIssue] = []
+        preflightIssues: [PaceToolPreflightIssue] = [],
+        smokeAutoCancelAfter: TimeInterval? = nil
     ) -> Bool {
+        let hasBlockingPreflightIssue = preflightIssues.contains { $0.severity == .blocking }
+        let shouldRequestApproval = hasBlockingPreflightIssue
+            || (
+                requiresActionApproval
+                    && PaceActionApprovalPolicy.requiresExplicitApproval(
+                        for: actionExecutionPlan
+                    )
+            )
         let approvalRequest = PaceActionApprovalRequest(
             approvalSummary: actionExecutionPlan.approvalSummary,
             preflightSummary: PaceToolPreflightIssue.formatForApproval(preflightIssues),
-            requiresActionApproval: requiresActionApproval
+            requiresActionApproval: shouldRequestApproval
         )
         guard let approvalRequest else {
             return PaceActionApprovalPolicy.shouldExecuteActions(
@@ -372,12 +458,19 @@ final class CompanionManager: ObservableObject {
         alert.alertStyle = .warning
         alert.messageText = approvalRequest.messageText
         alert.informativeText = approvalRequest.informativeText
-        alert.addButton(withTitle: "Allow Once")
         alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Allow Once")
+
+        if let smokeAutoCancelAfter {
+            DispatchQueue.main.asyncAfter(deadline: .now() + smokeAutoCancelAfter) {
+                alert.window.close()
+                NSApp.abortModal()
+            }
+        }
 
         NSApp.activate(ignoringOtherApps: true)
         let approvalDecision: PaceActionApprovalDecision =
-            alert.runModal() == .alertFirstButtonReturn ? .allowOnce : .cancel
+            alert.runModal() == .alertSecondButtonReturn ? .allowOnce : .cancel
         return PaceActionApprovalPolicy.shouldExecuteActions(
             request: approvalRequest,
             decision: approvalDecision
@@ -386,9 +479,46 @@ final class CompanionManager: ObservableObject {
 
     func smokeRequestApprovalForSyntheticActionPlan() -> Bool {
         let syntheticActionPlan = PaceActionExecutionPlan.serial(actions: [
-            .openURL("https://example.com")
+            .composeMail(PaceMailDraft(
+                recipients: ["smoke@example.com"],
+                subject: "Pace approval smoke",
+                body: "Synthetic draft used only to verify approval cancellation."
+            ))
         ])
-        return requestUserApprovalForActionPlan(syntheticActionPlan)
+        return requestUserApprovalForActionPlan(
+            syntheticActionPlan,
+            smokeAutoCancelAfter: 0.5
+        )
+    }
+
+    func smokeShowSyntheticClarification() -> Bool {
+        let clarification = PaceIntentClarification(
+            question: "Edit selected text or the focused field?",
+            options: ["Selected text", "Focused field"]
+        )
+        pendingIntentClarification = PacePendingIntentClarification(
+            originalTranscript: "rewrite that",
+            clarification: clarification
+        )
+        currentTurnHUDState = .clarification(
+            question: clarification.question,
+            options: clarification.options
+        )
+        return currentTurnHUDState.status == .needsClarification
+    }
+
+    func smokeResolveSyntheticClarification() -> String? {
+        guard let pendingIntentClarification else { return nil }
+        guard let clarifiedTranscript = PaceIntentClarificationResolver.clarifiedTranscript(
+            for: pendingIntentClarification,
+            selectedOption: "Selected text"
+        ) else {
+            return nil
+        }
+
+        self.pendingIntentClarification = nil
+        currentTurnHUDState = .done("clarified")
+        return clarifiedTranscript
     }
 
     private func appendActionResult(_ actionResult: PaceActionRunRecord) {
@@ -398,6 +528,432 @@ final class CompanionManager: ObservableObject {
             updatedActionResults.removeLast(updatedActionResults.count - 8)
         }
         recentActionResults = updatedActionResults
+
+        switch actionResult.status {
+        case .planned:
+            currentTurnHUDState = .acting(actionResult.title)
+        case .completed:
+            currentTurnHUDState = .done(actionResult.title)
+        case .failed, .skipped:
+            currentTurnHUDState = .failed(actionResult.detail)
+        case .denied:
+            currentTurnHUDState = .failed("Action cancelled")
+        }
+    }
+
+    private func routeHUDDetail(for intentPrediction: PaceIntentPrediction) -> String {
+        switch intentPrediction.route {
+        case .chitchatFastPath:
+            return "quick reply"
+        case .answerDirectly:
+            return "answering without screen"
+        case .readScreen:
+            return "reading screen"
+        case .executeTool:
+            return "planning local action"
+        case .phoneLargeModel:
+            return "local-only fallback"
+        case .fullPipeline:
+            return "checking screen and tools"
+        }
+    }
+
+    private func recordConversationTurn(
+        userTranscript: String,
+        assistantResponse: String
+    ) {
+        conversationHistory.append((
+            userTranscript: userTranscript,
+            assistantResponse: assistantResponse
+        ))
+
+        if conversationHistory.count > 1 {
+            conversationHistory.removeFirst(conversationHistory.count - 1)
+        }
+
+        localRetriever.recordPaceHistory(
+            userTranscript: userTranscript,
+            assistantResponse: assistantResponse
+        )
+        refreshLocalRetrievalPublishedState()
+    }
+
+    private func appendLocalRetrievalContext(
+        to userPrompt: String,
+        query: String,
+        route: PaceIntentRoute,
+        isFirstPlannerStep: Bool = true
+    ) -> String {
+        guard isFirstPlannerStep else { return userPrompt }
+        guard PaceRetrievalContextPolicy.shouldQueryLocalContext(
+            forTranscript: query,
+            route: route
+        ) else {
+            return userPrompt
+        }
+
+        let retrievalQuery = PaceRetrievalQuery(
+            text: query,
+            maximumResultCount: 3,
+            maximumSnippetCharacters: 180
+        )
+        defer {
+            refreshLocalRetrievalPublishedState()
+        }
+        guard let localContextBlock = localRetriever.localContextBlock(for: retrievalQuery) else {
+            return userPrompt
+        }
+        return "\(localContextBlock)\n\nUSER REQUEST\n\(userPrompt)"
+    }
+
+    private func localRetrievalSummaryText(
+        from sourceStatuses: [PaceRetrievalSourceStatus],
+        lastQueryDurationMilliseconds: Int? = nil
+    ) -> String {
+        let activeSourceSummaries = sourceStatuses
+            .filter { $0.documentCount > 0 }
+            .map { "\($0.displayName): \($0.documentCount)" }
+
+        guard !activeSourceSummaries.isEmpty else {
+            return "Retrieval: no local context indexed"
+        }
+        var summary = "Retrieval: " + activeSourceSummaries.joined(separator: " · ")
+        if let lastQueryDurationMilliseconds {
+            summary += " · Query: \(lastQueryDurationMilliseconds)ms"
+        }
+        return summary
+    }
+
+    private func refreshLocalRetrievalPublishedState() {
+        let sourceStatuses = localRetriever.sourceStatuses
+        localRetrievalSourceStatuses = sourceStatuses
+        localRetrievalSummary = localRetrievalSummaryText(
+            from: sourceStatuses,
+            lastQueryDurationMilliseconds: localRetriever.lastQueryDurationMilliseconds
+        )
+    }
+
+    func addLocalRetrievalFileRootURLs(_ rootURLs: [URL]) {
+        let safeNewRootURLs = rootURLs
+            .map { URL(fileURLWithPath: $0.path, isDirectory: true).standardizedFileURL }
+            .filter { !PaceSecretPathExclusionPolicy.shouldExclude(localURL: $0) }
+
+        let existingRootURLs = PaceLocalRetrievalFileRootPreferences.userSelectedRootURLs()
+        let mergedRootURLs = PaceLocalRetrievalFileRootPreferences.mergedRootURLs(
+            existingRootURLs: existingRootURLs,
+            addingRootURLs: safeNewRootURLs
+        )
+        saveLocalRetrievalUserSelectedFileRootURLs(mergedRootURLs)
+    }
+
+    func removeLocalRetrievalFileRootPath(_ rootPath: String) {
+        let rootURLToRemove = URL(fileURLWithPath: rootPath, isDirectory: true).standardizedFileURL
+        let remainingRootURLs = PaceLocalRetrievalFileRootPreferences
+            .userSelectedRootURLs()
+            .filter { $0.path != rootURLToRemove.path }
+        saveLocalRetrievalUserSelectedFileRootURLs(remainingRootURLs)
+    }
+
+    func clearLocalRetrievalFileRootPaths() {
+        saveLocalRetrievalUserSelectedFileRootURLs([])
+    }
+
+    private func saveLocalRetrievalUserSelectedFileRootURLs(_ rootURLs: [URL]) {
+        PaceLocalRetrievalFileRootPreferences.saveUserSelectedRootURLs(rootURLs)
+        localRetrievalFileRootPaths = PaceLocalRetrievalFileRootPreferences.rootPaths(for: rootURLs)
+        handleLocalRetrievalFileRootConfigurationChanged()
+    }
+
+    private func handleLocalRetrievalFileRootConfigurationChanged() {
+        fileRetrievalRefreshTask?.cancel()
+        fileRetrievalRefreshTask = nil
+        lastFileRetrievalRefreshAt = nil
+        spotlightRetrievalConnector = PaceSpotlightRetrievalConnector(
+            rootURLs: PaceLocalRetrievalFileRootPreferences.configuredRootURLs()
+        )
+        localRetriever.clearDocuments(forSource: .file)
+        refreshFileRetrievalDocumentsIfAllowed(force: true)
+        refreshLocalRetrievalPublishedState()
+        currentTurnHUDState = .done("file retrieval folders updated")
+    }
+
+    func setLocalRetrievalSourceEnabled(_ isEnabled: Bool, for source: PaceRetrievalSource) {
+        localRetriever.setSourceEnabled(isEnabled, for: source)
+        refreshLocalRetrievalPublishedState()
+
+        guard isEnabled else { return }
+        switch source {
+        case .calendar:
+            refreshCalendarRetrievalDocumentsIfAllowed(force: true)
+        case .reminders:
+            refreshRemindersRetrievalDocumentsIfAllowed(force: true)
+        case .contacts:
+            refreshContactsRetrievalDocumentsIfAllowed(force: true)
+        case .notes:
+            refreshNotesRetrievalDocumentsIfAllowed(force: true)
+        case .mail:
+            refreshMailRetrievalDocumentsIfAllowed(force: true)
+        case .localPreference:
+            localRetriever.refreshPreferenceDocuments()
+            refreshLocalRetrievalPublishedState()
+        case .competitiveResearch:
+            localRetriever.refreshCompetitiveResearchDocuments()
+            refreshLocalRetrievalPublishedState()
+        case .file:
+            refreshFileRetrievalDocumentsIfAllowed(force: true)
+        case .paceHistory:
+            break
+        }
+    }
+
+    func isLocalRetrievalSourceEnabled(_ source: PaceRetrievalSource) -> Bool {
+        localRetriever.isSourceEnabled(source)
+    }
+
+    func clearLocalRetrievalSource(_ source: PaceRetrievalSource) {
+        localRetriever.clearDocuments(forSource: source)
+        refreshLocalRetrievalPublishedState()
+        currentTurnHUDState = .done("\(source.displayName.lowercased()) retrieval cleared")
+        print("🔎 Local retrieval source cleared: \(source.displayName)")
+    }
+
+    private func refreshCalendarRetrievalDocumentsIfAllowed(force: Bool = false) {
+        guard localRetriever.isSourceEnabled(.calendar) else {
+            refreshLocalRetrievalPublishedState()
+            return
+        }
+        let calendarAuthorizationStatus = EKEventStore.authorizationStatus(for: .event)
+        let authorizationStatusChanged = lastCalendarRetrievalAuthorizationStatus != calendarAuthorizationStatus
+        lastCalendarRetrievalAuthorizationStatus = calendarAuthorizationStatus
+
+        guard PaceCalendarRetrievalConnector.canReadCalendarEvents(calendarAuthorizationStatus) else {
+            guard force || authorizationStatusChanged else { return }
+            localRetriever.replaceDocuments(
+                [],
+                forSource: .calendar,
+                status: PaceCalendarRetrievalConnector.skippedStatus(for: calendarAuthorizationStatus)
+            )
+            lastCalendarRetrievalRefreshAt = nil
+            refreshLocalRetrievalPublishedState()
+            return
+        }
+
+        let now = Date()
+        if !force,
+           !authorizationStatusChanged,
+           let lastCalendarRetrievalRefreshAt,
+           now.timeIntervalSince(lastCalendarRetrievalRefreshAt) < 300 {
+            return
+        }
+
+        let result = calendarRetrievalConnector.loadDocuments()
+        localRetriever.replaceDocuments(
+            result.documents,
+            forSource: .calendar,
+            status: result.status
+        )
+        lastCalendarRetrievalRefreshAt = now
+        refreshLocalRetrievalPublishedState()
+        print("🔎 Calendar retrieval refreshed: \(result.documents.count) event(s)")
+    }
+
+    private func refreshRemindersRetrievalDocumentsIfAllowed(force: Bool = false) {
+        guard localRetriever.isSourceEnabled(.reminders) else {
+            refreshLocalRetrievalPublishedState()
+            return
+        }
+        let reminderAuthorizationStatus = EKEventStore.authorizationStatus(for: .reminder)
+        let authorizationStatusChanged = lastRemindersRetrievalAuthorizationStatus != reminderAuthorizationStatus
+        lastRemindersRetrievalAuthorizationStatus = reminderAuthorizationStatus
+
+        guard PaceRemindersRetrievalConnector.canReadReminders(reminderAuthorizationStatus) else {
+            guard force || authorizationStatusChanged else { return }
+            remindersRetrievalRefreshTask?.cancel()
+            remindersRetrievalRefreshTask = nil
+            localRetriever.replaceDocuments(
+                [],
+                forSource: .reminders,
+                status: PaceRemindersRetrievalConnector.skippedStatus(for: reminderAuthorizationStatus)
+            )
+            lastRemindersRetrievalRefreshAt = nil
+            refreshLocalRetrievalPublishedState()
+            return
+        }
+
+        let now = Date()
+        if !force,
+           !authorizationStatusChanged,
+           let lastRemindersRetrievalRefreshAt,
+           now.timeIntervalSince(lastRemindersRetrievalRefreshAt) < 300 {
+            return
+        }
+
+        lastRemindersRetrievalRefreshAt = now
+        remindersRetrievalRefreshTask?.cancel()
+        remindersRetrievalRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            let result = await remindersRetrievalConnector.loadDocuments()
+            guard !Task.isCancelled else { return }
+
+            localRetriever.replaceDocuments(
+                result.documents,
+                forSource: .reminders,
+                status: result.status
+            )
+            refreshLocalRetrievalPublishedState()
+            print("🔎 Reminders retrieval refreshed: \(result.documents.count) reminder(s)")
+        }
+    }
+
+    private func refreshContactsRetrievalDocumentsIfAllowed(force: Bool = false) {
+        guard localRetriever.isSourceEnabled(.contacts) else {
+            refreshLocalRetrievalPublishedState()
+            return
+        }
+        let contactsAuthorizationStatus = CNContactStore.authorizationStatus(for: .contacts)
+        let authorizationStatusChanged = lastContactsRetrievalAuthorizationStatus != contactsAuthorizationStatus
+        lastContactsRetrievalAuthorizationStatus = contactsAuthorizationStatus
+
+        guard PaceContactsRetrievalConnector.canReadContacts(contactsAuthorizationStatus) else {
+            guard force || authorizationStatusChanged else { return }
+            contactsRetrievalRefreshTask?.cancel()
+            contactsRetrievalRefreshTask = nil
+            localRetriever.replaceDocuments(
+                [],
+                forSource: .contacts,
+                status: PaceContactsRetrievalConnector.skippedStatus(for: contactsAuthorizationStatus)
+            )
+            lastContactsRetrievalRefreshAt = nil
+            refreshLocalRetrievalPublishedState()
+            return
+        }
+
+        let now = Date()
+        if !force,
+           !authorizationStatusChanged,
+           let lastContactsRetrievalRefreshAt,
+           now.timeIntervalSince(lastContactsRetrievalRefreshAt) < 300 {
+            return
+        }
+
+        lastContactsRetrievalRefreshAt = now
+        contactsRetrievalRefreshTask?.cancel()
+        contactsRetrievalRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            let result = contactsRetrievalConnector.loadDocuments()
+            guard !Task.isCancelled else { return }
+
+            localRetriever.replaceDocuments(
+                result.documents,
+                forSource: .contacts,
+                status: result.status
+            )
+            refreshLocalRetrievalPublishedState()
+            print("🔎 Contacts retrieval refreshed: \(result.documents.count) contact(s)")
+        }
+    }
+
+    private func refreshNotesRetrievalDocumentsIfAllowed(force: Bool = false) {
+        guard localRetriever.isSourceEnabled(.notes) else {
+            refreshLocalRetrievalPublishedState()
+            return
+        }
+
+        let now = Date()
+        if !force,
+           let lastNotesRetrievalRefreshAt,
+           now.timeIntervalSince(lastNotesRetrievalRefreshAt) < 300 {
+            return
+        }
+
+        lastNotesRetrievalRefreshAt = now
+        notesRetrievalRefreshTask?.cancel()
+        notesRetrievalRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            let result = notesRetrievalConnector.loadDocuments()
+            guard !Task.isCancelled else { return }
+
+            localRetriever.replaceDocuments(
+                result.documents,
+                forSource: .notes,
+                status: result.status
+            )
+            refreshLocalRetrievalPublishedState()
+            print("🔎 Notes retrieval refreshed: \(result.documents.count) note(s)")
+        }
+    }
+
+    private func refreshMailRetrievalDocumentsIfAllowed(force: Bool = false) {
+        guard localRetriever.isSourceEnabled(.mail) else {
+            refreshLocalRetrievalPublishedState()
+            return
+        }
+
+        let now = Date()
+        if !force,
+           let lastMailRetrievalRefreshAt,
+           now.timeIntervalSince(lastMailRetrievalRefreshAt) < 300 {
+            return
+        }
+
+        lastMailRetrievalRefreshAt = now
+        mailRetrievalRefreshTask?.cancel()
+        mailRetrievalRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            let result = mailRetrievalConnector.loadDocuments()
+            guard !Task.isCancelled else { return }
+
+            localRetriever.replaceDocuments(
+                result.documents,
+                forSource: .mail,
+                status: result.status
+            )
+            refreshLocalRetrievalPublishedState()
+            print("🔎 Mail retrieval refreshed: \(result.documents.count) message(s)")
+        }
+    }
+
+    private func refreshFileRetrievalDocumentsIfAllowed(force: Bool = false) {
+        guard localRetriever.isSourceEnabled(.file) else {
+            refreshLocalRetrievalPublishedState()
+            return
+        }
+
+        let now = Date()
+        if !force,
+           let lastFileRetrievalRefreshAt,
+           now.timeIntervalSince(lastFileRetrievalRefreshAt) < 300 {
+            return
+        }
+
+        lastFileRetrievalRefreshAt = now
+        fileRetrievalRefreshTask?.cancel()
+        fileRetrievalRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            let result = spotlightRetrievalConnector.loadDocuments()
+            guard !Task.isCancelled else { return }
+
+            localRetriever.replaceDocuments(
+                result.documents,
+                forSource: .file,
+                status: result.status
+            )
+            refreshLocalRetrievalPublishedState()
+            print("🔎 File retrieval refreshed: \(result.documents.count) file(s)")
+        }
+    }
+
+    func resetLocalRetrievalIndex() {
+        localRetriever.resetIndex(preservePreferences: true)
+        refreshFileRetrievalDocumentsIfAllowed(force: true)
+        refreshCalendarRetrievalDocumentsIfAllowed(force: true)
+        refreshRemindersRetrievalDocumentsIfAllowed(force: true)
+        refreshContactsRetrievalDocumentsIfAllowed(force: true)
+        refreshNotesRetrievalDocumentsIfAllowed(force: true)
+        refreshMailRetrievalDocumentsIfAllowed(force: true)
+        refreshLocalRetrievalPublishedState()
+        currentTurnHUDState = .done("retrieval reset")
+        print("🔎 Local retrieval index reset")
     }
 
     private func handleLocalMemoryCommand(_ command: PaceLocalMemoryCommand) {
@@ -412,6 +968,8 @@ final class CompanionManager: ObservableObject {
         }
 
         localMemorySummary = PaceLocalMemoryStore.summaryText
+        localRetriever.refreshPreferenceDocuments()
+        refreshLocalRetrievalPublishedState()
         responseOverlayManager.showOverlayAndBeginStreaming()
         responseOverlayManager.updateStreamingText(spokenText)
         currentResponseTask = Task {
@@ -543,6 +1101,12 @@ final class CompanionManager: ObservableObject {
         audioPowerCancellable?.cancel()
         accessibilityCheckTimer?.invalidate()
         accessibilityCheckTimer = nil
+        remindersRetrievalRefreshTask?.cancel()
+        remindersRetrievalRefreshTask = nil
+        contactsRetrievalRefreshTask?.cancel()
+        contactsRetrievalRefreshTask = nil
+        fileRetrievalRefreshTask?.cancel()
+        fileRetrievalRefreshTask = nil
     }
 
     func refreshAllPermissions() {
@@ -573,6 +1137,9 @@ final class CompanionManager: ObservableObject {
         hasRemindersPermission = Self.isEventKitPermissionGranted(reminderAuthorizationStatus)
         shouldRequestCalendarPermission = calendarAuthorizationStatus == .notDetermined
         shouldRequestRemindersPermission = reminderAuthorizationStatus == .notDetermined
+        refreshCalendarRetrievalDocumentsIfAllowed()
+        refreshRemindersRetrievalDocumentsIfAllowed()
+        refreshContactsRetrievalDocumentsIfAllowed()
 
         // Debug: log permission state on changes
         if previouslyHadAccessibility != hasAccessibilityPermission
@@ -757,10 +1324,11 @@ final class CompanionManager: ObservableObject {
     private func refreshLMStudioReachability() async {
         let baseURLString = AppBundleConfiguration.stringValue(forKey: "LocalPlannerBaseURL")
             ?? "http://localhost:1234/v1"
-        guard let modelsURL = URL(string: baseURLString.trimmingCharacters(in: .whitespacesAndNewlines))?.appendingPathComponent("models") else {
-            await MainActor.run { self.isLMStudioReachable = false }
-            return
-        }
+        let localPlannerBaseURL = PaceLocalEndpointGuard.resolvedLocalOpenAICompatibleBaseURL(
+            configuredURLString: baseURLString,
+            settingName: "LocalPlannerBaseURL"
+        )
+        let modelsURL = localPlannerBaseURL.appendingPathComponent("models")
 
         var request = URLRequest(url: modelsURL)
         request.httpMethod = "GET"
@@ -871,6 +1439,7 @@ final class CompanionManager: ObservableObject {
             // was the "had to repeat it once" bug. Forcing idle here unblocks
             // the observer's normal state transitions for the new turn.
             voiceState = .idle
+            currentTurnHUDState = .listening
     
 
             PaceAnalytics.trackPushToTalkStarted()
@@ -944,6 +1513,7 @@ final class CompanionManager: ObservableObject {
                             self.lastTranscript = finalTranscript
                             print("🗣️ Companion received transcript: \(finalTranscript)")
                             PaceAnalytics.trackUserMessageSent(transcript: finalTranscript)
+                            self.currentTurnHUDState = .understanding("classifying intent")
                             self.responseOverlayManager.updateStreamingText(finalTranscript)
                             self.sendTranscriptToPlannerWithScreenshot(transcript: finalTranscript)
                         }
@@ -983,6 +1553,7 @@ final class CompanionManager: ObservableObject {
                     self.responseOverlayManager.updateStreamingText("no audio detected")
                     self.responseOverlayManager.finishStreaming()
                     self.voiceState = .idle
+                    self.currentTurnHUDState = .failed("No audio detected")
                     // Mirror the normal turn-end cleanup: bring back the
                     // walking avatar if the user has it on, and reset the
                     // trigger so the next press defaults to keyboard.
@@ -1034,13 +1605,12 @@ final class CompanionManager: ObservableObject {
     /// intent-classifier fast-path in `sendTranscriptToPlannerWithScreenshot`.
     private func handleChitchatFastPath(transcript: String) {
         let cannedReply = cannedChitchatResponse(for: transcript)
+        currentTurnHUDState = .done("quick reply")
 
         // Append to conversation history so multi-turn context still sees
         // the exchange — important so a follow-up question after a
         // greeting still reads naturally to the planner.
-        conversationHistory.append(
-            (userTranscript: transcript, assistantResponse: cannedReply)
-        )
+        recordConversationTurn(userTranscript: transcript, assistantResponse: cannedReply)
 
         responseOverlayManager.showOverlayAndBeginStreaming()
         responseOverlayManager.updateStreamingText(cannedReply)
@@ -1061,25 +1631,134 @@ final class CompanionManager: ObservableObject {
         }
     }
 
+    private func handleClarificationTurn(
+        transcript: String,
+        clarification: PaceIntentClarification
+    ) {
+        let optionsText = clarification.options.isEmpty
+            ? ""
+            : " \(clarification.options.joined(separator: " or "))?"
+        let clarificationText = clarification.question.hasSuffix("?")
+            ? clarification.question
+            : clarification.question + optionsText
+
+        pendingIntentClarification = PacePendingIntentClarification(
+            originalTranscript: transcript,
+            clarification: clarification
+        )
+        currentTurnHUDState = .clarification(
+            question: clarification.question,
+            options: clarification.options
+        )
+        recordConversationTurn(
+            userTranscript: transcript,
+            assistantResponse: clarificationText
+        )
+
+        responseOverlayManager.showOverlayAndBeginStreaming()
+        responseOverlayManager.updateStreamingText(clarificationText)
+
+        currentResponseTask = Task {
+            voiceState = .responding
+            await streamingSentenceTTSPipeline.flushFinal(finalSpokenText: clarificationText)
+            while ttsClient.isPlaying {
+                try? await Task.sleep(nanoseconds: 80_000_000)
+            }
+            responseOverlayManager.finishStreaming()
+            voiceState = .idle
+            if isWalkingAvatarEnabled {
+                avatarOverlayManager?.show()
+            }
+            currentDictationTrigger = .keyboard
+            scheduleTransientHideIfNeeded()
+        }
+    }
+
+    func resolveClarification(option: String) {
+        guard let pendingIntentClarification else {
+            currentTurnHUDState = .failed("Clarification expired")
+            return
+        }
+
+        guard let clarifiedTranscript = PaceIntentClarificationResolver.clarifiedTranscript(
+            for: pendingIntentClarification,
+            selectedOption: option
+        ) else {
+            currentTurnHUDState = .failed("Unknown clarification option")
+            return
+        }
+
+        self.pendingIntentClarification = nil
+        currentResponseTask?.cancel()
+        currentResponseTask = nil
+        ttsClient.stopPlayback()
+        streamingSentenceTTSPipeline.resetForNewTurn()
+        responseOverlayManager.finishStreaming()
+        currentTurnHUDState = .understanding("using \(option.lowercased())")
+        sendTranscriptToPlannerWithScreenshot(transcript: clarifiedTranscript)
+    }
+
+    private func handleUnsupportedTurn(
+        transcript: String,
+        unsupportedResponse: PaceIntentUnsupportedResponse
+    ) {
+        currentTurnHUDState = .unsupported(unsupportedResponse.reason)
+        recordConversationTurn(
+            userTranscript: transcript,
+            assistantResponse: unsupportedResponse.spokenText
+        )
+
+        responseOverlayManager.showOverlayAndBeginStreaming()
+        responseOverlayManager.updateStreamingText(unsupportedResponse.spokenText)
+
+        currentResponseTask = Task {
+            voiceState = .responding
+            await streamingSentenceTTSPipeline.flushFinal(finalSpokenText: unsupportedResponse.spokenText)
+            while ttsClient.isPlaying {
+                try? await Task.sleep(nanoseconds: 80_000_000)
+            }
+            responseOverlayManager.finishStreaming()
+            voiceState = .idle
+            if isWalkingAvatarEnabled {
+                avatarOverlayManager?.show()
+            }
+            currentDictationTrigger = .keyboard
+            scheduleTransientHideIfNeeded()
+        }
+    }
+
     /// Fast path for pure knowledge questions. Skips screenshot capture,
-    /// AX, OCR, and VLM. The local planner still answers, but it gets a
-    /// text-only prompt and no agent-mode tool docs.
+    /// AX, OCR, VLM, and agent-mode tool docs. Uses the dedicated
+    /// text-only planner so short answers can ride Apple Foundation
+    /// Models when available while action/screen turns stay on the
+    /// larger local planner.
     private func handleTextOnlyPlannerFastPath(transcript: String) {
+        currentTurnHUDState = .understanding("answering without screen")
         responseOverlayManager.showOverlayAndBeginStreaming()
 
         currentResponseTask = Task {
             voiceState = .processing
 
             do {
+                let plannerForTextOnlyTurn = textOnlyPlannerClient
+                plannerForTextOnlyTurn.resetForNewTurn()
+                print("🧠 Text-only planner: using \(plannerForTextOnlyTurn.displayName)")
+
                 let historyForPlanner = conversationHistory.map { entry in
                     (userPlaceholder: entry.userTranscript, assistantResponse: entry.assistantResponse)
                 }
 
-                let (fullResponseText, _) = try await plannerClient.generateResponseStreaming(
+                let userPromptForPlanner = appendLocalRetrievalContext(
+                    to: transcript,
+                    query: transcript,
+                    route: .answerDirectly
+                )
+
+                let (fullResponseText, _) = try await plannerForTextOnlyTurn.generateResponseStreaming(
                     images: [],
                     systemPrompt: CompanionSystemPrompt.build(includeAgentMode: false),
                     conversationHistory: historyForPlanner,
-                    userPrompt: transcript,
+                    userPrompt: userPromptForPlanner,
                     onTextChunk: { [weak self] accumulatedPlannerText in
                         self?.responseOverlayManager.updateStreamingText(accumulatedPlannerText)
                         Task { @MainActor [weak self] in
@@ -1094,10 +1773,7 @@ final class CompanionManager: ObservableObject {
                 let pointingParseResult = PaceTagParsers.parsePointingCoordinates(from: textAfterDoneStrip)
                 let spokenText = pointingParseResult.spokenText
 
-                conversationHistory.append((userTranscript: transcript, assistantResponse: spokenText))
-                if conversationHistory.count > 1 {
-                    conversationHistory.removeFirst(conversationHistory.count - 1)
-                }
+                recordConversationTurn(userTranscript: transcript, assistantResponse: spokenText)
 
                 responseOverlayManager.updateStreamingText(spokenText)
                 if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1111,6 +1787,7 @@ final class CompanionManager: ObservableObject {
 
                 responseOverlayManager.finishStreaming()
                 voiceState = .idle
+                currentTurnHUDState = .done("answered")
                 if isWalkingAvatarEnabled {
                     avatarOverlayManager?.show()
                 }
@@ -1119,7 +1796,96 @@ final class CompanionManager: ObservableObject {
                 responseOverlayManager.updateStreamingText("i hit a local planner issue.")
                 responseOverlayManager.finishStreaming()
                 voiceState = .idle
+                currentTurnHUDState = .failed("Local planner issue")
             }
+        }
+    }
+
+    /// Fast path for deterministic local actions that do not need screen
+    /// perception or planner reasoning. This keeps "open Raycast" /
+    /// "volume down" in the sub-second local-control lane while preserving
+    /// the same approval, preflight, result, and TTS surfaces as planner
+    /// generated actions.
+    private func handleFastLocalActionPath(
+        transcript: String,
+        fastActionParseResult: PaceFastActionParseResult
+    ) {
+        let spokenText = fastActionParseResult.spokenText
+        currentTurnHUDState = .acting(fastActionParseResult.executionPlan.approvalSummary)
+        recordConversationTurn(userTranscript: transcript, assistantResponse: spokenText)
+
+        responseOverlayManager.showOverlayAndBeginStreaming()
+        responseOverlayManager.updateStreamingText(spokenText)
+
+        currentResponseTask = Task {
+            voiceState = .responding
+            let shouldSpeakInitialFastActionText = !actionExecutor.actionsAreEnabled
+                || !PaceActionApprovalPolicy.suppressesInitialSpokenFeedback(
+                    for: fastActionParseResult.executionPlan
+                )
+
+            if shouldSpeakInitialFastActionText,
+               !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                await streamingSentenceTTSPipeline.flushFinal(finalSpokenText: spokenText)
+            }
+
+            let preflightIssues = PaceToolPreflight.evaluate(
+                actionExecutionPlan: fastActionParseResult.executionPlan,
+                environment: currentToolPreflightEnvironment()
+            )
+            appendActionResult(.planned(
+                actionExecutionPlan: fastActionParseResult.executionPlan,
+                preflightIssues: preflightIssues
+            ))
+
+            if actionExecutor.actionsAreEnabled {
+                if requestUserApprovalForActionPlan(
+                    fastActionParseResult.executionPlan,
+                    preflightIssues: preflightIssues
+                ) {
+                    let toolObservations = await actionExecutor.executeActionPlan(
+                        fastActionParseResult.executionPlan,
+                        screenCaptures: []
+                    )
+                    if !toolObservations.isEmpty {
+                        appendActionResult(.completed(observations: toolObservations))
+                    }
+                    if let userFeedbackText = PaceActionExecutionObservation
+                        .formatForUserFeedback(toolObservations) {
+                        responseOverlayManager.updateStreamingText(userFeedbackText)
+                        await streamingSentenceTTSPipeline.flushFinal(finalSpokenText: userFeedbackText)
+                    }
+                } else {
+                    appendActionResult(PaceActionRunRecord(
+                        status: .denied,
+                        title: "Action denied",
+                        detail: fastActionParseResult.executionPlan.approvalSummary
+                    ))
+                    print("🛑 Fast local action approval denied")
+                }
+            } else {
+                appendActionResult(PaceActionRunRecord(
+                    status: .skipped,
+                    title: "Actions disabled",
+                    detail: "Parsed local fast action, but EnableActions is false."
+                ))
+                print("🤖 Fast local action parsed but EnableActions is false")
+            }
+
+            while ttsClient.isPlaying {
+                try? await Task.sleep(nanoseconds: 80_000_000)
+            }
+
+            responseOverlayManager.finishStreaming()
+            voiceState = .idle
+            if self.currentTurnHUDState.status == .acting {
+                self.currentTurnHUDState = .done("local action finished")
+            }
+            if isWalkingAvatarEnabled {
+                avatarOverlayManager?.show()
+            }
+            currentDictationTrigger = .keyboard
+            scheduleTransientHideIfNeeded()
         }
     }
 
@@ -1140,10 +1906,8 @@ final class CompanionManager: ObservableObject {
         }
 
         setWatchModeEnabled(enabled)
-        conversationHistory.append((userTranscript: transcript, assistantResponse: spokenText))
-        if conversationHistory.count > 1 {
-            conversationHistory.removeFirst(conversationHistory.count - 1)
-        }
+        currentTurnHUDState = .done(spokenText)
+        recordConversationTurn(userTranscript: transcript, assistantResponse: spokenText)
 
         responseOverlayManager.showOverlayAndBeginStreaming()
         responseOverlayManager.updateStreamingText(spokenText)
@@ -1176,6 +1940,7 @@ final class CompanionManager: ObservableObject {
     private func sendTranscriptToPlannerWithScreenshot(transcript: String) {
         currentResponseTask?.cancel()
         ttsClient.stopPlayback()
+        pendingIntentClarification = nil
 
         // Tell the planner this is a fresh user turn. Stateful conformers
         // (Apple Foundation Models) wipe their cross-call session state
@@ -1202,6 +1967,20 @@ final class CompanionManager: ObservableObject {
         // enough to return .chitchat (not .unknown). Anything ambiguous
         // falls through to the full pipeline.
         let intentPrediction = intentClassifier.classify(transcript)
+        currentTurnHUDState = .understanding(routeHUDDetail(for: intentPrediction))
+        if let clarification = PaceIntentClarifier.clarification(for: transcript) {
+            print("❔ Intent clarification: \(clarification.question)")
+            handleClarificationTurn(transcript: transcript, clarification: clarification)
+            return
+        }
+        if let unsupportedResponse = PaceIntentUnsupportedDetector.unsupportedResponse(
+            for: transcript,
+            prediction: intentPrediction
+        ) {
+            print("🚫 Unsupported intent: \(unsupportedResponse.reason)")
+            handleUnsupportedTurn(transcript: transcript, unsupportedResponse: unsupportedResponse)
+            return
+        }
         if intentPrediction.intent == .chitchat {
             print("🎯 Intent: chitchat (confidence \(String(format: "%.2f", intentPrediction.confidence))) — fast-path")
             handleChitchatFastPath(transcript: transcript)
@@ -1212,10 +1991,16 @@ final class CompanionManager: ObservableObject {
             handleTextOnlyPlannerFastPath(transcript: transcript)
             return
         }
-        if intentPrediction.route == .phoneLargeModel {
-            print("🎯 Intent: phoneLargeModel requested — local-only fallback pipeline")
+        if let fastActionParseResult = PaceFastActionCommandParser.parse(transcript: transcript) {
+            print("🎯 Intent: fastLocalAction — skipping screenshot, VLM, and planner")
+            handleFastLocalActionPath(
+                transcript: transcript,
+                fastActionParseResult: fastActionParseResult
+            )
+            return
         }
         print("🎯 Intent: \(intentPrediction.intent.rawValue) (confidence \(String(format: "%.2f", intentPrediction.confidence))) — \(intentPrediction.route.rawValue)")
+        currentTurnHUDState = .understanding(routeHUDDetail(for: intentPrediction))
 
         currentResponseTask = Task {
             voiceState = .processing
@@ -1224,16 +2009,40 @@ final class CompanionManager: ObservableObject {
             var stepIndex = 0
             var currentTurnUserPrompt = transcript
             var pendingPostActionFeedbackText: String?
+            let streamingMailDraftDetector = PaceStreamingMailDraftDetector()
 
             do {
                 agentStepLoop: while stepIndex < maxAgentStepCount {
                     stepIndex += 1
+                    streamingMailDraftDetector.reset()
                     let isFirstStep = (stepIndex == 1)
                     guard !Task.isCancelled else { return }
 
-                    // 1. Capture all connected screens
+                    // 1. Capture screens for this step. On the first step,
+                    // prefer the PTT-press prewarm capture if it finished:
+                    // it already contains the cursor screen plus enriched
+                    // analysis, so re-capturing before consuming it just
+                    // adds latency to the hot path.
                     let screenCaptureStartedAt = Date()
-                    let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
+                    var prewarmedContextForStep: PrewarmedScreenContext?
+                    let screenCaptures: [CompanionScreenCapture]
+                    if isFirstStep,
+                       let prewarmedTask = prewarmedScreenContextTask {
+                        print("👁️  Awaiting pre-warm capture for first agent step…")
+                        let prewarmedContext = await prewarmedTask.value
+                        prewarmedScreenContextTask = nil
+                        if let prewarmedContext,
+                           !prewarmedContext.screenCaptures.isEmpty {
+                            prewarmedContextForStep = prewarmedContext
+                            screenCaptures = prewarmedContext.screenCaptures
+                            print("👁️  First step using pre-warmed capture(s): \(screenCaptures.count)")
+                        } else {
+                            print("⚠️ Pre-warm capture unavailable — capturing screens now")
+                            screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
+                        }
+                    } else {
+                        screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
+                    }
                     guard !Task.isCancelled else { return }
                     let screenCaptureElapsedMs = Int(
                         Date().timeIntervalSince(screenCaptureStartedAt) * 1000
@@ -1256,11 +2065,16 @@ final class CompanionManager: ObservableObject {
                     //    structured element map — cuts perception cost on the
                     //    planner side and is essential when the planner is text-only.
                     let screenContextStartedAt = Date()
-                    let userPromptForPlanner = appendConfiguredMCPContext(
-                        to: await buildUserPromptWithLocalVLMContextIfEnabled(
-                            transcript: currentTurnUserPrompt,
-                            screenCaptures: screenCaptures
-                        )
+                    let screenContextPrompt = await buildUserPromptWithLocalVLMContextIfEnabled(
+                        transcript: currentTurnUserPrompt,
+                        screenCaptures: screenCaptures,
+                        prewarmedContext: prewarmedContextForStep
+                    )
+                    let userPromptForPlanner = appendLocalRetrievalContext(
+                        to: appendConfiguredMCPContext(to: screenContextPrompt),
+                        query: transcript,
+                        route: intentPrediction.route,
+                        isFirstPlannerStep: isFirstStep
                     )
                     let screenContextElapsedMs = Int(
                         Date().timeIntervalSince(screenContextStartedAt) * 1000
@@ -1311,7 +2125,26 @@ final class CompanionManager: ObservableObject {
                             //    the planner has finished generating the rest.
                             //    This is the dominant perceived-latency win.
                             Task { @MainActor [weak self] in
-                                await self?.streamingSentenceTTSPipeline.acceptStreamedText(accumulatedPlannerText)
+                                guard let self else { return }
+                                let shouldSuppressStreamingNarration = self.actionExecutor.actionsAreEnabled
+                                    && PaceActionApprovalPolicy.suppressesInitialSpokenFeedback(
+                                        forPlannerResponseText: accumulatedPlannerText
+                                    )
+                                guard !shouldSuppressStreamingNarration else { return }
+                                await self.streamingSentenceTTSPipeline.acceptStreamedText(accumulatedPlannerText)
+                            }
+                            if let streamingMailDraftSnapshot = streamingMailDraftDetector
+                                .detectChange(in: accumulatedPlannerText) {
+                                Task { @MainActor [weak self] in
+                                    guard let self,
+                                          self.actionExecutor.actionsAreEnabled,
+                                          !self.requiresActionApproval else {
+                                        return
+                                    }
+                                    _ = await self.actionExecutor.beginOrUpdateStreamingMailDraft(
+                                        streamingMailDraftSnapshot
+                                    )
+                                }
                             }
                         }
                     )
@@ -1321,6 +2154,12 @@ final class CompanionManager: ObservableObject {
                     //    Each pass strips its own tag class so the final
                     //    `spokenText` is clean enough to play via TTS.
                     let actionParseResult = PaceActionTagParser.parseActions(from: fullResponseText)
+                    let streamedMailDraftForFinalization = PaceStreamingMailDraftDetector
+                        .firstMailDraft(in: actionParseResult.executionPlan)
+                    if actionExecutor.hasActiveStreamingMailDraft,
+                       streamedMailDraftForFinalization == nil {
+                        actionExecutor.cancelActiveStreamingMailDraftTracking()
+                    }
                     let (plannerSignaledDone, textAfterDoneStrip) =
                         PaceTagParsers.parseAndStripDoneSignal(from: actionParseResult.spokenText)
                     let pointingParseResultRaw = PaceTagParsers.parsePointingCoordinates(from: textAfterDoneStrip)
@@ -1403,19 +2242,10 @@ final class CompanionManager: ObservableObject {
                     //    gets the real transcript; later steps record the
                     //    continuation placeholder so the planner sees its
                     //    own previous narration via assistant turns.
-                    conversationHistory.append((
+                    recordConversationTurn(
                         userTranscript: isFirstStep ? transcript : "(agent step \(stepIndex))",
                         assistantResponse: spokenText
-                    ))
-                    // Keep history very short — Apple Foundation Models'
-                    // 4K context window is the hard constraint, and we
-                    // saw it bust at exactly the 3-exchange mark in the
-                    // last test run. 1 exchange is enough for "remember
-                    // what we just discussed" without eating the budget
-                    // that should go to the current screen's element map.
-                    if conversationHistory.count > 1 {
-                        conversationHistory.removeFirst(conversationHistory.count - 1)
-                    }
+                    )
                     print("🧠 Conversation history: \(conversationHistory.count) exchanges")
                     PaceAnalytics.trackAIResponseReceived(response: spokenText)
 
@@ -1427,7 +2257,12 @@ final class CompanionManager: ObservableObject {
                     //    using the fully-cleaned spokenText as the
                     //    source of truth (the streamer used a coarser
                     //    in-flight strip).
-                    if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let shouldSpeakInitialPlannerText = !actionExecutor.actionsAreEnabled
+                        || !PaceActionApprovalPolicy.suppressesInitialSpokenFeedback(
+                            for: actionParseResult.executionPlan
+                        )
+                    if shouldSpeakInitialPlannerText,
+                       !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         await streamingSentenceTTSPipeline.flushFinal(finalSpokenText: spokenText)
                         voiceState = .responding
                     }
@@ -1454,10 +2289,26 @@ final class CompanionManager: ObservableObject {
                                 // before the synthetic click fires.
                                 try? await Task.sleep(nanoseconds: 350_000_000)
                                 guard !Task.isCancelled else { return }
-                                toolObservations = await actionExecutor.executeActionPlan(
-                                    actionParseResult.executionPlan,
-                                    screenCaptures: screenCaptures
-                                )
+                                if actionExecutor.hasActiveStreamingMailDraft,
+                                   let finalMailDraft = streamedMailDraftForFinalization {
+                                    if let streamingMailObservation = await actionExecutor
+                                        .finishActiveStreamingMailDraft(finalMailDraft: finalMailDraft) {
+                                        toolObservations.append(streamingMailObservation)
+                                    }
+
+                                    let remainingActionPlan = actionParseResult
+                                        .executionPlan
+                                        .removingFirstMailDraftAction()
+                                    toolObservations += await actionExecutor.executeActionPlan(
+                                        remainingActionPlan,
+                                        screenCaptures: screenCaptures
+                                    )
+                                } else {
+                                    toolObservations = await actionExecutor.executeActionPlan(
+                                        actionParseResult.executionPlan,
+                                        screenCaptures: screenCaptures
+                                    )
+                                }
                                 if !toolObservations.isEmpty {
                                     print("🧰 Tool observations:\n\(PaceActionExecutionObservation.formatForPlanner(toolObservations))")
                                     appendActionResult(.completed(observations: toolObservations))
@@ -1530,6 +2381,10 @@ final class CompanionManager: ObservableObject {
                     await streamingSentenceTTSPipeline.flushFinal(finalSpokenText: pendingPostActionFeedbackText)
                     voiceState = .responding
                 }
+                if currentTurnHUDState.status == .understanding
+                    || currentTurnHUDState.status == .acting {
+                    currentTurnHUDState = .done("turn finished")
+                }
             } catch is CancellationError {
                 // User spoke again — response was interrupted. Hide the
                 // overlay immediately so it doesn't linger over the next
@@ -1540,6 +2395,7 @@ final class CompanionManager: ObservableObject {
                 print("⚠️ Companion response error: \(error)")
                 responseOverlayManager.updateStreamingText("error: \(error.localizedDescription)")
                 responseOverlayManager.finishStreaming()
+                currentTurnHUDState = .failed(error.localizedDescription)
                 speakCreditsErrorFallback()
             }
 
@@ -1597,11 +2453,22 @@ final class CompanionManager: ObservableObject {
     /// for debugging but never surfaced to the user.
     private func buildUserPromptWithLocalVLMContextIfEnabled(
         transcript: String,
-        screenCaptures: [CompanionScreenCapture]
+        screenCaptures: [CompanionScreenCapture],
+        prewarmedContext: PrewarmedScreenContext? = nil
     ) async -> String {
         guard useLocalVLMForScreenContext else {
             print("👁️  VLM skipped — 'Read My Screen' toggle is off")
             return transcript
+        }
+
+        if let prewarmedContext,
+           !prewarmedContext.screenCaptures.isEmpty {
+            print("👁️  Pre-warm context supplied by first-step capture path")
+            return buildPromptFromEnrichedAnalyses(
+                transcript: transcript,
+                captures: prewarmedContext.screenCaptures,
+                enrichedAnalysesByLabel: prewarmedContext.enrichedAnalysesByScreenLabel
+            )
         }
 
         // First try: did the PTT-press pre-warm finish? If yes, we
@@ -1651,7 +2518,16 @@ final class CompanionManager: ObservableObject {
         for (captureIndex, capture) in orderedCaptures.enumerated() {
             let pixelHash = Self.computePixelHash(for: capture.imageData)
             let visualFingerprint = PaceScreenImageDiffer.fingerprint(for: capture.imageData)
+            let cacheIdentity = ScreenAnalysisCacheIdentity(
+                analyzerDisplayName: screenAnalysisClient.displayName,
+                capture: capture
+            )
             if let cached = perScreenAnalysisCache[capture.label] {
+                guard cached.identity == cacheIdentity else {
+                    print("👁️  Cache MISS for \(capture.label) — analyzer or display changed")
+                    capturesToAnalyze.append((captureIndex, capture, pixelHash, visualFingerprint))
+                    continue
+                }
                 if cached.pixelHash == pixelHash {
                     perCaptureCachedAnalysis[captureIndex] = cached.analysis
                     print("👁️  Cache HIT for \(capture.label) — reusing \(cached.analysis.elements.count) elements")
@@ -1667,6 +2543,7 @@ final class CompanionManager: ObservableObject {
                    !visualDiff.isMeaningful {
                     perCaptureCachedAnalysis[captureIndex] = cached.analysis
                     perScreenAnalysisCache[capture.label] = CachedScreenAnalysis(
+                        identity: cacheIdentity,
                         pixelHash: pixelHash,
                         visualFingerprint: visualFingerprint,
                         analysis: cached.analysis,
@@ -1707,6 +2584,10 @@ final class CompanionManager: ObservableObject {
                     print("👁️  In-loop AX HIT for \(capture.label): \(axElements.count) elements + \(ocrBoxes.count) OCR boxes — skipping VLM")
                     freshAnalysesByCaptureIndex[captureIndex] = axBackedAnalysis
                     perScreenAnalysisCache[capture.label] = CachedScreenAnalysis(
+                        identity: ScreenAnalysisCacheIdentity(
+                            analyzerDisplayName: screenAnalysisClient.displayName,
+                            capture: capture
+                        ),
                         pixelHash: pixelHash,
                         visualFingerprint: visualFingerprint,
                         analysis: axBackedAnalysis,
@@ -1727,10 +2608,10 @@ final class CompanionManager: ObservableObject {
                 of: (Int, String, LocalVLMScreenAnalysis?, String, PaceScreenVisualFingerprint?).self
             ) { taskGroup in
                 for (captureIndex, capture, pixelHash, visualFingerprint) in capturesStillNeedingVLM {
-                    taskGroup.addTask { [localVLMClient, visionOCRClient] in
+                    taskGroup.addTask { [screenAnalysisClient, visionOCRClient] in
                         // VLM + OCR concurrent. OCR finishes much faster
                         // (~100-200ms); we wait on the VLM and then merge.
-                        async let vlmAnalysisFuture = localVLMClient.analyzeScreenshot(
+                        async let vlmAnalysisFuture = screenAnalysisClient.analyzeScreenshot(
                             screenshotImageData: capture.imageData,
                             userIntent: transcript
                         )
@@ -1763,6 +2644,10 @@ final class CompanionManager: ObservableObject {
                 guard let analysis = maybeAnalysis else { continue }
                 freshAnalysesByCaptureIndex[captureIndex] = analysis
                 perScreenAnalysisCache[label] = CachedScreenAnalysis(
+                    identity: ScreenAnalysisCacheIdentity(
+                        analyzerDisplayName: screenAnalysisClient.displayName,
+                        capture: orderedCaptures[captureIndex]
+                    ),
                     pixelHash: pixelHash,
                     visualFingerprint: visualFingerprint,
                     analysis: analysis,
@@ -1865,8 +2750,12 @@ final class CompanionManager: ObservableObject {
         let elementCountSummary = analysis.elements.count > maxElementsRendered
             ? "top \(maxElementsRendered) of \(analysis.elements.count)"
             : "\(analysis.elements.count)"
+        let trimmedDescription = analysis.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        let descriptionLine = trimmedDescription.isEmpty
+            ? ""
+            : "\nsummary: \(trimmedDescription)"
         return """
-        === \(screenLabel) (\(elementCountSummary) elements) ===
+        === \(screenLabel) (\(elementCountSummary) elements) ===\(descriptionLine)
         \(elementSummaryText)
         """
     }
@@ -1894,7 +2783,7 @@ final class CompanionManager: ObservableObject {
         }
         // Snapshot the dependencies so the detached task doesn't have
         // to hop back to MainActor for them.
-        let vlmClient = localVLMClient
+        let vlmClient = screenAnalysisClient
         let ocrClient = visionOCRClient
         prewarmedScreenContextTask = Task { [weak self] in
             do {
@@ -1909,9 +2798,17 @@ final class CompanionManager: ObservableObject {
                 // MainActor-bound so we hop briefly.
                 let pixelHash = Self.computePixelHash(for: cursorScreenCapture.imageData)
                 let visualFingerprint = PaceScreenImageDiffer.fingerprint(for: cursorScreenCapture.imageData)
+                let cacheIdentity = ScreenAnalysisCacheIdentity(
+                    analyzerDisplayName: vlmClient.displayName,
+                    capture: cursorScreenCapture
+                )
                 let cachedAnalysis = await MainActor.run { () -> LocalVLMScreenAnalysis? in
                     guard let self else { return nil }
                     guard let cached = self.perScreenAnalysisCache[cursorScreenCapture.label] else {
+                        return nil
+                    }
+                    guard cached.identity == cacheIdentity else {
+                        print("👁️  Prewarm cache MISS for \(cursorScreenCapture.label) — analyzer or display changed")
                         return nil
                     }
                     if cached.pixelHash == pixelHash {
@@ -1926,6 +2823,7 @@ final class CompanionManager: ObservableObject {
                        ),
                        !visualDiff.isMeaningful {
                         self.perScreenAnalysisCache[cursorScreenCapture.label] = CachedScreenAnalysis(
+                            identity: cacheIdentity,
                             pixelHash: pixelHash,
                             visualFingerprint: visualFingerprint,
                             analysis: cached.analysis,
@@ -1975,6 +2873,7 @@ final class CompanionManager: ObservableObject {
                     print("👁️  Prewarm AX HIT: \(axElements.count) elements + \(earlyOCRBoxes.count) OCR boxes — skipping VLM")
                     await MainActor.run { [weak self] in
                         self?.perScreenAnalysisCache[cursorScreenCapture.label] = CachedScreenAnalysis(
+                            identity: cacheIdentity,
                             pixelHash: pixelHash,
                             visualFingerprint: visualFingerprint,
                             analysis: enrichedFromAX,
@@ -2030,6 +2929,7 @@ final class CompanionManager: ObservableObject {
                 // Update cache for next turn.
                 await MainActor.run { [weak self] in
                     self?.perScreenAnalysisCache[cursorScreenCapture.label] = CachedScreenAnalysis(
+                        identity: cacheIdentity,
                         pixelHash: pixelHash,
                         visualFingerprint: visualFingerprint,
                         analysis: enriched,

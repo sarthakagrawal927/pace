@@ -1,0 +1,3 @@
+USER: tell me a joke
+EXPECT_INTENT: out_of_scope
+REASON: No conversational-output action — this is planner, not chat

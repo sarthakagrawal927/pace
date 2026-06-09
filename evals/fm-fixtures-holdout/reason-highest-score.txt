@@ -1,0 +1,8 @@
+USER: open the highest scoring game
+ELEMENT: [0] game_row|240,200|Match A|72 points
+ELEMENT: [1] game_row|240,240|Match B|118 points
+ELEMENT: [2] game_row|240,280|Match C|55 points
+EXPECT_POINT_ID: 1
+EXPECT_CLICK_ID: 1
+SPOKEN_MUST_NOT_CONTAIN: ID,coord
+SPOKEN_MAX_WORDS: 14

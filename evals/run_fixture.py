@@ -32,30 +32,10 @@ import urllib.error
 import urllib.request
 
 
-def main() -> int:
-    if len(sys.argv) != 4:
-        print(json.dumps({
-            "ttft_ms": 0,
-            "total_ms": 0,
-            "content": "",
-            "http_status": 0,
-            "error": "usage: run_fixture.py <fixture-path> <url> <model-id>",
-        }))
-        return 2
-
-    fixture_path = sys.argv[1]
-    chat_completions_url = sys.argv[2]
-    model_identifier = sys.argv[3]
-
-    with open(fixture_path) as fixture_file:
-        fixture = json.load(fixture_file)
-
-    request_body = dict(fixture["request"])
-    request_body["model"] = model_identifier
-    # Force streaming regardless of what the fixture said — the whole
-    # point of this script is measuring TTFT, which requires SSE.
-    request_body["stream"] = True
-
+def execute_streaming_request(
+    request_body: dict,
+    chat_completions_url: str,
+) -> dict:
     request = urllib.request.Request(
         chat_completions_url,
         data=json.dumps(request_body).encode("utf-8"),
@@ -102,23 +82,21 @@ def main() -> int:
         http_status_code = http_error.code
         # Read the body so the wrapper can show the error message.
         error_body_bytes = http_error.read() if hasattr(http_error, "read") else b""
-        print(json.dumps({
+        return {
             "ttft_ms": 0,
             "total_ms": int((time.monotonic() - started_at) * 1000),
             "content": error_body_bytes.decode("utf-8", errors="replace")[:500],
             "http_status": http_status_code,
             "error": f"HTTPError {http_status_code}",
-        }))
-        return 0
+        }
     except (urllib.error.URLError, TimeoutError) as transport_error:
-        print(json.dumps({
+        return {
             "ttft_ms": 0,
             "total_ms": int((time.monotonic() - started_at) * 1000),
             "content": "",
             "http_status": 0,
             "error": f"transport: {transport_error}",
-        }))
-        return 0
+        }
 
     finished_at = time.monotonic()
     raw_content = "".join(full_response_content_parts)
@@ -138,13 +116,119 @@ def main() -> int:
     )
     total_ms = int((finished_at - started_at) * 1000)
 
-    print(json.dumps({
+    return {
         "ttft_ms": ttft_ms,
         "total_ms": total_ms,
         "content": spoken_content,
         "raw_content_length": len(raw_content),
         "http_status": http_status_code,
-    }))
+    }
+
+
+def execute_non_streaming_fallback_request(
+    request_body: dict,
+    chat_completions_url: str,
+) -> dict:
+    fallback_request_body = dict(request_body)
+    fallback_request_body["stream"] = False
+    fallback_request_body["cache_prompt"] = False
+
+    request = urllib.request.Request(
+        chat_completions_url,
+        data=json.dumps(fallback_request_body).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer lm-studio",
+        },
+        method="POST",
+    )
+
+    started_at = time.monotonic()
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            response_body = response.read().decode("utf-8", errors="replace")
+            payload = json.loads(response_body)
+            choices = payload.get("choices") or []
+            message = (choices[0].get("message") if choices else {}) or {}
+            raw_content = message.get("content") or ""
+            spoken_content = re.sub(
+                r"<think>.*?</think>",
+                "",
+                raw_content,
+                flags=re.DOTALL | re.IGNORECASE,
+            ).strip()
+            total_ms = int((time.monotonic() - started_at) * 1000)
+            return {
+                "ttft_ms": total_ms,
+                "total_ms": total_ms,
+                "content": spoken_content,
+                "raw_content_length": len(raw_content),
+                "http_status": response.status,
+                "fallback": "non_streaming",
+            }
+    except urllib.error.HTTPError as http_error:
+        error_body_bytes = http_error.read() if hasattr(http_error, "read") else b""
+        return {
+            "ttft_ms": 0,
+            "total_ms": int((time.monotonic() - started_at) * 1000),
+            "content": error_body_bytes.decode("utf-8", errors="replace")[:500],
+            "http_status": http_error.code,
+            "error": f"fallback HTTPError {http_error.code}",
+        }
+    except (json.JSONDecodeError, urllib.error.URLError, TimeoutError) as error:
+        return {
+            "ttft_ms": 0,
+            "total_ms": int((time.monotonic() - started_at) * 1000),
+            "content": "",
+            "http_status": 0,
+            "error": f"fallback transport: {error}",
+        }
+
+
+def main() -> int:
+    if len(sys.argv) != 4:
+        print(json.dumps({
+            "ttft_ms": 0,
+            "total_ms": 0,
+            "content": "",
+            "http_status": 0,
+            "error": "usage: run_fixture.py <fixture-path> <url> <model-id>",
+        }))
+        return 2
+
+    fixture_path = sys.argv[1]
+    chat_completions_url = sys.argv[2]
+    model_identifier = sys.argv[3]
+
+    with open(fixture_path) as fixture_file:
+        fixture = json.load(fixture_file)
+
+    request_body = dict(fixture["request"])
+    request_body["model"] = model_identifier
+    # Force streaming regardless of what the fixture said — the whole
+    # point of this script is measuring TTFT, which requires SSE.
+    request_body["stream"] = True
+
+    maximum_attempts = 3
+    result: dict = {}
+    for attempt_number in range(1, maximum_attempts + 1):
+        request_body_for_attempt = dict(request_body)
+        if attempt_number > 1:
+            request_body_for_attempt["cache_prompt"] = False
+        result = execute_streaming_request(request_body_for_attempt, chat_completions_url)
+        result["attempts"] = attempt_number
+        if not (
+            result.get("http_status") == 200
+            and result.get("raw_content_length", 0) == 0
+            and attempt_number < maximum_attempts
+        ):
+            break
+
+    if result.get("http_status") == 200 and result.get("raw_content_length", 0) == 0:
+        result = execute_non_streaming_fallback_request(request_body, chat_completions_url)
+        result["attempts"] = maximum_attempts + 1
+
+    print(json.dumps(result))
     return 0
 
 

@@ -1,0 +1,5 @@
+USER: draft a slack message to my team that i am running late
+ELEMENT: [0] menu_bar|600,12|Slack|workspace
+ELEMENT: [1] channel_name|140,80|#engineering|channel
+BODY_MUST_NOT_BE_EMPTY: 1
+BODY_MIN_WORDS: 3

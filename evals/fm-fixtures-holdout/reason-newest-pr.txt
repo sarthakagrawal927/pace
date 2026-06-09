@@ -1,0 +1,9 @@
+USER: open the newest pull request
+ELEMENT: [0] pr_row|240,100|fix auth bug|opened last week
+ELEMENT: [1] pr_row|240,140|add dark mode|opened yesterday
+ELEMENT: [2] pr_row|240,180|refactor db layer|opened 4 hours ago
+ELEMENT: [3] pr_row|240,220|update deps|opened 3 days ago
+EXPECT_POINT_ID: 2
+EXPECT_CLICK_ID: 2
+SPOKEN_MUST_NOT_CONTAIN: ID,coord
+SPOKEN_MAX_WORDS: 14

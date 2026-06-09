@@ -1,0 +1,25 @@
+{
+  "name": "valid-multi-call",
+  "valid": true,
+  "response": {
+    "spokenText": "Opening Safari and lowering volume.",
+    "intent": "action",
+    "payload": {
+      "calls": [
+        {
+          "name": "App.launch",
+          "args": {
+            "name": "Safari"
+          }
+        },
+        {
+          "name": "Volume.adjust",
+          "args": {
+            "direction": "down",
+            "steps": 2
+          }
+        }
+      ]
+    }
+  }
+}

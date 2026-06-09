@@ -6,6 +6,8 @@
 	<true/>
 	<key>UseLocalVLMForScreenContext</key>
 	<string>true</string>
+	<key>ScreenAnalysisProvider</key>
+	<string>lmStudio</string>
 	<key>LocalVLMBaseURL</key>
 	<string>http://localhost:1234/v1</string>
 	<key>LocalVLMModelIdentifier</key>
@@ -36,10 +38,16 @@
 	<string>8</string>
 	<key>PushToTalkShortcut</key>
 	<string>controlOption</string>
+	<key>PrewarmMailForDrafts</key>
+	<string>true</string>
+	<key>TranscriptionProvider</key>
+	<string>appleSpeech</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Pace uses your microphone so you can talk to it</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Pace uses Apple Events only when you ask it to control local Mac apps like Notes, Music, Mail, Things, Shortcuts, or Messages.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Pace uses contacts access only to address local mail drafts by name and retrieve contact context locally when access is already granted.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Pace uses calendar access only when you ask it to check your schedule.</string>
 	<key>NSCalendarsUsageDescription</key>
