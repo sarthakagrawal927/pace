@@ -1,0 +1,3 @@
+USER: create a calendar event
+EXPECT_INTENT: clarify
+EXPECT_CLARIFY_TOPIC: when

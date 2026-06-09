@@ -1,0 +1,3 @@
+USER: what did i do yesterday on this mac
+EXPECT_INTENT: out_of_scope
+REASON: Pace has no session memory

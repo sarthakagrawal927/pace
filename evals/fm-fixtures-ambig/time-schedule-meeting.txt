@@ -1,0 +1,3 @@
+USER: schedule a meeting
+EXPECT_INTENT: clarify
+EXPECT_CLARIFY_TOPIC: when

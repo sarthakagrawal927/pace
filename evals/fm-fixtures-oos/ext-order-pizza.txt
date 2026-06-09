@@ -1,0 +1,3 @@
+USER: order me a large pepperoni pizza
+EXPECT_INTENT: out_of_scope
+REASON: No delivery-service integration

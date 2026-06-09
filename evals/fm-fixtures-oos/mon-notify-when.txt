@@ -1,0 +1,3 @@
+USER: let me know when john gets online
+EXPECT_INTENT: out_of_scope
+REASON: No watch/notify action in registry

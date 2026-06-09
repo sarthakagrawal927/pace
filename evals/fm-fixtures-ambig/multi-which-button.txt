@@ -1,0 +1,6 @@
+USER: click the button
+ELEMENT: [0] button|100,100|Save|Save this draft
+ELEMENT: [1] button|200,100|Cancel|Discard changes
+ELEMENT: [2] button|300,100|Submit|Submit form
+EXPECT_INTENT: clarify
+EXPECT_CLARIFY_TOPIC: which button

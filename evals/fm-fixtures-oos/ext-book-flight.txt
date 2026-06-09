@@ -1,0 +1,3 @@
+USER: book me a flight to san francisco for friday
+EXPECT_INTENT: out_of_scope
+REASON: No flight-booking integration

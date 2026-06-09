@@ -1,0 +1,3 @@
+USER: change the tv to channel 5
+EXPECT_INTENT: out_of_scope
+REASON: Pace doesn't control TV
