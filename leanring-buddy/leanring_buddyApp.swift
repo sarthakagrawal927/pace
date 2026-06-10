@@ -125,6 +125,13 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // Tear down every visible surface FIRST: the LM Studio model unload
+        // below is synchronous (100ms–seconds via the lms CLI), and any
+        // panel or settings window still on screen would visibly linger for
+        // that whole time after the user hit quit.
+        for window in NSApp.windows {
+            window.orderOut(nil)
+        }
         menuBarOverlayManager?.hide()
         companionManager.stop()
         // Stop the keepalive heartbeat so it doesn't race with the
