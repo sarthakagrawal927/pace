@@ -91,8 +91,8 @@ Once approved, the artifact (LoRA file + base reference, or external model dir, 
 
 | Baby | Base | Job | Status |
 |---|---|---|---|
-| `pace-planner-v9` | Qwen3-0.6B + LoRA rank 32 | intent routing + compose body emission | training now |
-| `pace-planner-v10` | Qwen3-0.6B + LoRA | parameterized actions (5th `action.payload` field) | next |
+| `pace-planner` (runtime today) | `qwen/qwen3-30b-a3b` MoE via LM Studio | main screen/action planning | shipped — eval-validated 15/15 on FM fixtures at 925ms mean (`scripts/eval-planners.py`); the v8 LoRA deployment PRD is superseded by this off-the-shelf choice |
+| `pace-planner-v9/v10` (LoRA path) | Qwen3-0.6B + LoRA | intent routing, compose body, parameterized actions | parked on the TinyGPT side; resumes if the trained specialist beats the MoE on the eval gate |
 | `pace-vlm` | UI-Venus-1.5-2B / Qwen3-VL | screen understanding beyond OCR | porting (#266) |
 | `pace-rag` | JSON-backed BM25-style lexical scaffold now; **Qwen3-Embedding-0.6B** planned for vector retrieval | retrieval over personal corpus | lexical fallback + built-in Project Minimi competitive seed + Settings-selected explicit-root Spotlight files + Calendar/Reminders/Contacts/Notes/Mail sources wired; embedding/vector runtime queued |
 | `pace-edit` | Rule scaffold now; Qwen3-0.6B + LoRA later | selected-text transforms ("more direct", "shorter", "delete that") | deterministic scaffold wired |
@@ -105,9 +105,9 @@ Every baby is English-only + Mac-only. No localization. No cross-platform. Narro
 
 | Step | Today | Target | Mechanism |
 |---|---|---|---|
-| ASR streaming partial first chunk | 100-200 ms (Apple Speech) | ≤ 100 ms | WhisperKit provider scaffold wired; real streaming bridge + LocalAgreement queued |
-| Intent + planner TTFW | 119 ms warm | ≤ 100 ms | tinygpt serve token-bytes cache shipped; MLX compile next (#262) |
-| RAG retrieve top-K | JSON-backed BM25-style lexical scaffold | ≤ 80 ms | preferences/Pace history/Calendar/Reminders/Contacts/Notes/Mail now; Qwen3-Embedding + SQLite-vec queued |
+| ASR streaming partial first chunk | 100-200 ms (Apple Speech) | ≤ 100 ms | WhisperKit provider scaffold wired with LocalAgreement partial stabilization already runtime-wired; real streaming bridge queued |
+| Intent + planner TTFW | LM Studio qwen3-30b-a3b, ~925 ms mean per eval-planners.py | ≤ 100 ms | trained-specialist path (119 ms warm via tinygpt serve) parked until it beats the MoE on the eval gate |
+| RAG retrieve top-K | JSON-backed BM25-style lexical scaffold | ≤ 80 ms | preferences/Pace history/Calendar/Reminders/Contacts/Notes/Mail/screen-watch + app-usage journals now; Qwen3-Embedding + SQLite-vec queued |
 | Vision single-frame analyze | LM Studio HTTP + provider scaffold | ≤ 200 ms | UI-Venus 24 vision blocks on ANE chunked (#275); in-process runtime bridge queued |
 | Executor — AX dispatch | < 20 ms when target known | ≤ 50 ms | AXPress + setValue, no scripting layer |
 | Responder — TTS first audible | ~ 200 ms | ≤ 200 ms | Apple SpeechSynthesizer streaming |
@@ -172,7 +172,7 @@ No network egress. Loopback-only HTTP is allowed for local development runtimes 
 
 Built in this sequence because each baby unblocks the next:
 
-1. v9 (training now) — body streaming demo
+1. v9 (LoRA path parked; runtime planner is LM Studio qwen3-30b-a3b) — body streaming demo
 2. Executor surface (Pace-side Swift, AX-first dispatcher with first-party fallbacks)
 3. v10 (parameterized actions) — depends on executor surface existing
 4. WhisperKit integration — replace Apple Speech for code-mode + vocab biasing

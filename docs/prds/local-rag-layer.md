@@ -1,10 +1,12 @@
 # Local RAG layer
 
-Status: partial (2026-06-09). Protocols, in-memory BM25-style lexical retrieval,
+Status: partial (2026-06-10). Protocols, in-memory BM25-style lexical retrieval,
 secret-path exclusions, explicit file connector, local preference/history
 documents, explicit-root Spotlight file discovery, Settings file-root picker,
 permission-aware Calendar, Reminders, Contacts, Notes, and Mail indexing,
-Project Minimi competitive-research seed data, JSON-backed local persistence,
+competitive-research seed data (Minimi, Dayflow, voice-assistant category),
+screen-watch journal and app-usage journal sources for "what did I do
+today?" / "how did I spend my time?" recall, JSON-backed local persistence,
 planner prompt injection, and panel/settings status are wired. Retrieval prompt
 injection is route-aware so generic Q&A, screen-only reads, and follow-up agent
 steps do not carry unrelated local context. SQLite/vector retrieval remains
