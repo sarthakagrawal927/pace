@@ -820,18 +820,24 @@ final class PaceInMemoryRetrievalStore: PaceRetrievalStore {
 final class PaceLocalRetriever: PaceRetriever {
     private let store: PaceRetrievalStore
     private let maximumContextCharacters: Int
+    private let embeddingClient: PaceTextEmbedding
     private(set) var lastQueryDurationMilliseconds: Int?
     private var screenWatchJournal: PaceScreenWatchJournal?
 
     init(
         store: PaceRetrievalStore? = nil,
         maximumContextCharacters: Int = 900,
-        appliesPersistedSourcePreferences: Bool = true
+        appliesPersistedSourcePreferences: Bool = true,
+        embeddingClient: PaceTextEmbedding? = nil
     ) {
         self.store = store ?? PaceInMemoryRetrievalStore(
             persistenceURL: Self.defaultPersistenceURL()
         )
         self.maximumContextCharacters = maximumContextCharacters
+        // Short timeout: re-ranking sits on the turn path, so a cold or
+        // missing embedding model must degrade to lexical order quickly.
+        self.embeddingClient = embeddingClient
+            ?? LMStudioEmbeddingClient(requestTimeoutInSeconds: 2)
         if appliesPersistedSourcePreferences {
             applyPersistedSourcePreferences()
         }
@@ -970,18 +976,52 @@ final class PaceLocalRetriever: PaceRetriever {
 
     func localContextBlock(for query: PaceRetrievalQuery) -> String? {
         let retrievalStartedAt = Date()
-        // Search a wider candidate pool, then enforce source diversity:
-        // best match per source first, remaining slots filled by score.
-        // Without this, one chatty source can monopolize the block — e.g.
-        // recent Pace turns that echo the user's exact question outrank the
-        // journal/data documents that actually hold the answer, and the
-        // planner ends up parroting its own previous reply.
+        let matches = selectMatches(
+            from: lexicalCandidateMatches(for: query),
+            limit: query.maximumResultCount
+        )
+        return composeContextBlock(from: matches, startedAt: retrievalStartedAt)
+    }
+
+    /// Async variant that re-ranks the lexical candidate pool by embedding
+    /// similarity (local /v1/embeddings) before source-diverse selection.
+    /// Best-effort: endpoint down, model missing, or timeout falls back to
+    /// the plain lexical order — never worse than `localContextBlock`.
+    func rerankedLocalContextBlock(for query: PaceRetrievalQuery) async -> String? {
+        let retrievalStartedAt = Date()
+        let candidateMatches = lexicalCandidateMatches(for: query)
+        guard !candidateMatches.isEmpty else {
+            return composeContextBlock(from: [], startedAt: retrievalStartedAt)
+        }
+        let rerankedMatches = await PaceEmbeddingReranker.rerank(
+            queryText: query.text,
+            matches: candidateMatches,
+            embedder: embeddingClient
+        )
+        let matches = selectMatches(from: rerankedMatches, limit: query.maximumResultCount)
+        return composeContextBlock(from: matches, startedAt: retrievalStartedAt)
+    }
+
+    /// Wider-than-requested lexical candidate pool so re-ranking and source
+    /// diversity have something to work with.
+    private func lexicalCandidateMatches(for query: PaceRetrievalQuery) -> [PaceRetrievalMatch] {
         let candidatePoolQuery = PaceRetrievalQuery(
             text: query.text,
             maximumResultCount: query.maximumResultCount * 3,
             maximumSnippetCharacters: query.maximumSnippetCharacters
         )
-        let candidateMatches = store.search(candidatePoolQuery)
+        return store.search(candidatePoolQuery)
+    }
+
+    /// Source-diverse selection: best match per source first, remaining
+    /// slots filled in order. Without this, one chatty source can
+    /// monopolize the block — e.g. recent Pace turns that echo the user's
+    /// exact question outrank the journal/data documents that actually hold
+    /// the answer, and the planner ends up parroting its own previous reply.
+    private func selectMatches(
+        from candidateMatches: [PaceRetrievalMatch],
+        limit: Int
+    ) -> [PaceRetrievalMatch] {
         var diverseMatches: [PaceRetrievalMatch] = []
         var overflowMatches: [PaceRetrievalMatch] = []
         var seenSources: Set<PaceRetrievalSource> = []
@@ -992,7 +1032,13 @@ final class PaceLocalRetriever: PaceRetriever {
                 overflowMatches.append(candidateMatch)
             }
         }
-        let matches = Array((diverseMatches + overflowMatches).prefix(query.maximumResultCount))
+        return Array((diverseMatches + overflowMatches).prefix(limit))
+    }
+
+    private func composeContextBlock(
+        from matches: [PaceRetrievalMatch],
+        startedAt retrievalStartedAt: Date
+    ) -> String? {
         let retrievalDurationMilliseconds = Int(Date().timeIntervalSince(retrievalStartedAt) * 1000)
         lastQueryDurationMilliseconds = retrievalDurationMilliseconds
         let sourceCount = Set(matches.map(\.source)).count

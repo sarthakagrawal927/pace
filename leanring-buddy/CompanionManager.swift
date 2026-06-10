@@ -676,7 +676,7 @@ final class CompanionManager: ObservableObject {
         query: String,
         route: PaceIntentRoute,
         isFirstPlannerStep: Bool = true
-    ) -> String {
+    ) async -> String {
         guard isFirstPlannerStep else { return userPrompt }
         guard PaceRetrievalContextPolicy.shouldQueryLocalContext(
             forTranscript: query,
@@ -693,7 +693,11 @@ final class CompanionManager: ObservableObject {
         defer {
             refreshLocalRetrievalPublishedState()
         }
-        guard let localContextBlock = localRetriever.localContextBlock(for: retrievalQuery) else {
+        // Embedding-reranked when the local embeddings endpoint responds in
+        // time; degrades to plain lexical order otherwise.
+        guard let localContextBlock = await localRetriever.rerankedLocalContextBlock(
+            for: retrievalQuery
+        ) else {
             return userPrompt
         }
         return "\(localContextBlock)\n\nUSER REQUEST\n\(userPrompt)"
@@ -1918,7 +1922,7 @@ final class CompanionManager: ObservableObject {
                     (userPlaceholder: entry.userTranscript, assistantResponse: entry.assistantResponse)
                 }
 
-                let userPromptForPlanner = appendLocalRetrievalContext(
+                let userPromptForPlanner = await appendLocalRetrievalContext(
                     to: transcript,
                     query: transcript,
                     route: .answerDirectly
@@ -2240,7 +2244,7 @@ final class CompanionManager: ObservableObject {
                         screenCaptures: screenCaptures,
                         prewarmedContext: prewarmedContextForStep
                     )
-                    let userPromptForPlanner = appendLocalRetrievalContext(
+                    let userPromptForPlanner = await appendLocalRetrievalContext(
                         to: appendConfiguredMCPContext(to: screenContextPrompt),
                         query: transcript,
                         route: intentPrediction.route,

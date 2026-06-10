@@ -31,16 +31,21 @@ struct PaceEmbeddingClientError: LocalizedError {
 
 /// OpenAI-compatible /v1/embeddings client (LM Studio locally).
 final class LMStudioEmbeddingClient: PaceTextEmbedding {
-    static let defaultModelIdentifier = "qwen3-embedding-0.6b-8bit"
+    // Matches the artifact name `lms ls` reports for the downloaded model
+    // (the 8bit suffix is a quantization detail LM Studio's API identifier
+    // does not carry). Override via the RetrievalEmbeddingModel plist key.
+    static let defaultModelIdentifier = "qwen3-embedding-0.6b"
 
     private let baseURL: URL
     private let modelIdentifier: String
     private let urlSession: URLSession
+    private let requestTimeoutInSeconds: TimeInterval
 
     init(
         baseURL: URL? = nil,
         modelIdentifier: String? = nil,
-        urlSession: URLSession = .shared
+        urlSession: URLSession = .shared,
+        requestTimeoutInSeconds: TimeInterval = 10
     ) {
         let configuredBase = AppBundleConfiguration.stringValue(forKey: "RetrievalEmbeddingBaseURL")
             ?? AppBundleConfiguration.stringValue(forKey: "LocalVLMBaseURL")
@@ -50,6 +55,7 @@ final class LMStudioEmbeddingClient: PaceTextEmbedding {
             ?? AppBundleConfiguration.stringValue(forKey: "RetrievalEmbeddingModel")
             ?? Self.defaultModelIdentifier
         self.urlSession = urlSession
+        self.requestTimeoutInSeconds = requestTimeoutInSeconds
     }
 
     private struct EmbeddingsRequest: Encodable {
@@ -71,7 +77,7 @@ final class LMStudioEmbeddingClient: PaceTextEmbedding {
         var request = URLRequest(url: baseURL.appendingPathComponent("embeddings"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 10
+        request.timeoutInterval = requestTimeoutInSeconds
         request.httpBody = try JSONEncoder().encode(
             EmbeddingsRequest(model: modelIdentifier, input: texts)
         )

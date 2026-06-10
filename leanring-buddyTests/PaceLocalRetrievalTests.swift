@@ -424,6 +424,65 @@ struct PaceLocalRetrievalTests {
         #expect(contextBlock?.contains("Xcode") == true)
     }
 
+    private final class StubEmbedder: PaceTextEmbedding {
+        /// Maps each text to a vector; unknown texts embed to the zero axis.
+        let vectorsByText: [String: [Float]]
+
+        init(vectorsByText: [String: [Float]]) {
+            self.vectorsByText = vectorsByText
+        }
+
+        func embed(_ texts: [String]) async throws -> [[Float]] {
+            texts.map { vectorsByText[$0] ?? [0, 0, 1] }
+        }
+    }
+
+    private final class FailingEmbedder: PaceTextEmbedding {
+        func embed(_ texts: [String]) async throws -> [[Float]] {
+            throw PaceEmbeddingClientError(message: "endpoint down")
+        }
+    }
+
+    @Test func rerankedContextBlockPromotesSemanticMatchAndFallsBackOnFailure() async throws {
+        let store = PaceInMemoryRetrievalStore()
+        store.upsertDocuments([
+            PaceRetrievalDocument(
+                id: "history-one", source: .paceHistory, title: "Turn",
+                text: "invoice quarterly report planning"
+            ),
+            PaceRetrievalDocument(
+                id: "history-two", source: .paceHistory, title: "Turn",
+                text: "invoice email from the vendor"
+            ),
+        ])
+
+        let semanticEmbedder = StubEmbedder(vectorsByText: [
+            "find the invoice": [1, 0, 0],
+            "invoice quarterly report planning": [0, 1, 0],
+            "invoice email from the vendor": [0.95, 0, 0.1],
+        ])
+        let semanticRetriever = PaceLocalRetriever(
+            store: store,
+            appliesPersistedSourcePreferences: false,
+            embeddingClient: semanticEmbedder
+        )
+        let rerankedBlock = await semanticRetriever.rerankedLocalContextBlock(
+            for: PaceRetrievalQuery(text: "find the invoice", maximumResultCount: 1)
+        )
+        #expect(rerankedBlock?.contains("vendor") == true)
+
+        // Embedder failure degrades to plain lexical behavior, never nil-er.
+        let failingRetriever = PaceLocalRetriever(
+            store: store,
+            appliesPersistedSourcePreferences: false,
+            embeddingClient: FailingEmbedder()
+        )
+        let fallbackBlock = await failingRetriever.rerankedLocalContextBlock(
+            for: PaceRetrievalQuery(text: "find the invoice")
+        )
+        #expect(fallbackBlock?.hasPrefix("LOCAL CONTEXT") == true)
+    }
+
     @Test func fileConnectorSkipsSensitiveRootsAndLoadsAllowedTextFiles() async throws {
         let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("pace-retrieval-tests-\(UUID().uuidString)", isDirectory: true)
