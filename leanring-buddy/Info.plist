@@ -67,6 +67,8 @@
 	<string>whisperKit</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Pace uses your microphone so you can talk to it</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Pace queries Apple's on-device Speech Recognition framework only when the Apple Speech transcription provider is selected. All recognition happens on-device; nothing is sent off the Mac.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Pace uses the camera only for the optional posture watch. Frames are analyzed on-device and never stored or sent anywhere.</string>
 	<key>NSAppleEventsUsageDescription</key>

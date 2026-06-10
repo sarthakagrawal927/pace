@@ -1363,7 +1363,17 @@ final class CompanionManager: ObservableObject {
 
         let micAuthStatus = AVCaptureDevice.authorizationStatus(for: .audio)
         hasMicrophonePermission = micAuthStatus == .authorized
-        hasSpeechRecognitionPermission = SFSpeechRecognizer.authorizationStatus() == .authorized
+        // SFSpeechRecognizer.authorizationStatus() is a TCC-gated call; even
+        // reading it crashes any process without NSSpeechRecognitionUsage-
+        // Description in Info.plist. Skip it entirely when the active
+        // transcription provider does not use Speech (WhisperKit), so the
+        // call site cannot regress past whichever usage-description is in
+        // the bundle today.
+        if buddyDictationManager.transcriptionProvider.requiresSpeechRecognitionPermission {
+            hasSpeechRecognitionPermission = SFSpeechRecognizer.authorizationStatus() == .authorized
+        } else {
+            hasSpeechRecognitionPermission = true
+        }
 
         let calendarAuthorizationStatus = EKEventStore.authorizationStatus(for: .event)
         let reminderAuthorizationStatus = EKEventStore.authorizationStatus(for: .reminder)

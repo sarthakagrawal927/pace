@@ -43,13 +43,16 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         print("🎯 Pace: Starting...")
         print("🎯 Pace: Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")")
 
-        // Single-instance enforcement. If another Pace is already
-        // running (e.g. login-item launched at boot and now Xcode is
-        // Cmd+R'ing a dev build on top), the newer launch wins —
-        // terminate the older instance so the user doesn't see two
-        // walking avatars, two cursors, and two notch overlays. Bug
-        // confirmed by `ps -ax | grep Pace` showing duplicate PIDs.
+        // Single-instance enforcement is fundamentally hostile to macOS's
+        // own "restart the app to apply the new permission" flow for
+        // Screen Recording / Accessibility: macOS launches a fresh process
+        // post-grant, and us killing the older one (or the older killing
+        // us first) churns through ANOTHER permission re-prompt. Only run
+        // duplicate cleanup in RELEASE builds where the user is unlikely
+        // to be cycling permissions.
+        #if !DEBUG
         terminateOtherRunningPaceInstances()
+        #endif
 
         PaceToolRegistry.validateForAppStartup()
         UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 0])
@@ -182,7 +185,15 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
     /// Registers the app as a login item so it launches automatically on
     /// startup. Uses SMAppService which shows the app in System Settings >
     /// General > Login Items, letting the user toggle it off if they want.
+    ///
+    /// Skipped for DEBUG builds: an unsigned dev bundle's path can change
+    /// each Xcode rebuild, leaving stale launch-services records that
+    /// resurrect old copies (and re-trigger TCC permission prompts) after
+    /// every grant. Release builds keep the convenience.
     private func registerAsLoginItemIfNeeded() {
+        #if DEBUG
+        return
+        #else
         let loginItemService = SMAppService.mainApp
         if loginItemService.status != .enabled {
             do {
@@ -192,6 +203,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
                 print("⚠️ Pace: Failed to register as login item: \(error)")
             }
         }
+        #endif
     }
 
     /// Eats Mail's cold-launch cost before the first compose command. This is
