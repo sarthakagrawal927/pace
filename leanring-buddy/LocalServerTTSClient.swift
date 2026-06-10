@@ -26,8 +26,14 @@ nonisolated struct LocalServerTTSConfiguration: Equatable {
     static let defaultModelIdentifier = "kokoro"
     static let defaultVoiceIdentifier = "af_heart"
     static let defaultSpeed = 1.0
-    static let requestTimeoutInSeconds: TimeInterval = 5
-    static let unavailabilityMemoInSeconds: TimeInterval = 30
+    // 20s, not 5s — Kokoro's FIRST synthesis after the model has been
+    // paged out can take 10-15s while MLX reloads weights. A tight
+    // timeout there sends an entire turn of audio to the Apple fallback.
+    static let requestTimeoutInSeconds: TimeInterval = 20
+    // 5s, not 30s — when the sidecar truly is down we want to know on
+    // the next sentence, not after the whole turn. The brief memo only
+    // exists to avoid hammering a dead port mid-sentence-burst.
+    static let unavailabilityMemoInSeconds: TimeInterval = 5
 
     let baseURL: URL
     let modelIdentifier: String
@@ -111,6 +117,20 @@ final class LocalServerTTSClient: NSObject, BuddyTTSClient {
         self.urlSession = urlSession
         super.init()
         print("🔊 Server TTS: \(configuration.baseURL.absoluteString) model=\(configuration.modelIdentifier) voice=\(configuration.voiceIdentifier) (Apple TTS fallback ready)")
+        warmUpSynthesizer()
+    }
+
+    /// Fire-and-forget warm-up synth at construction so the user's FIRST
+    /// real sentence after launch doesn't pay Kokoro's 10-15s cold-load
+    /// cost and fall through to the Apple voice. The result audio is
+    /// thrown away — only the model load matters.
+    private func warmUpSynthesizer() {
+        let warmUpConfiguration = configuration
+        let warmUpSession = urlSession
+        Task.detached(priority: .background) {
+            let warmUpRequest = warmUpConfiguration.speechRequest(for: ".")
+            _ = try? await warmUpSession.data(for: warmUpRequest)
+        }
     }
 
     var isPlaying: Bool {

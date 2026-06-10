@@ -1827,6 +1827,13 @@ final class CompanionManager: ObservableObject {
         if lowercased.contains("bye") || lowercased.contains("later") || lowercased.contains("see you") {
             return ["catch you later", "see you", "talk soon"].randomElement() ?? "see you"
         }
+        if lowercased.contains("hear me") || lowercased.contains("are you there")
+            || lowercased.contains("are you listening") || lowercased.contains("you listening")
+            || lowercased.contains("can you understand me")
+            || lowercased.contains("mic check") || lowercased.contains("test test")
+            || lowercased.contains("is this on") || lowercased.contains("is it working") {
+            return ["yes, i can hear you.", "loud and clear.", "yep, hearing you fine."].randomElement() ?? "yes, i can hear you."
+        }
         if lowercased.contains("how are you") || lowercased.contains("how's it going")
             || lowercased.contains("how is it going") || lowercased.contains("how are things")
             || lowercased.contains("how's everything") || lowercased.contains("how's your day")

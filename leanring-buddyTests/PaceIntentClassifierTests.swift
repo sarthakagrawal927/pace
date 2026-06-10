@@ -47,6 +47,21 @@ struct PaceIntentClassifierTests {
         }
     }
 
+    @Test func micCheckQuestionsRouteToChitchatAndNotTheScreenPipeline() async throws {
+        let classifier = PaceIntentClassifier()
+        for question in [
+            "can you hear me",
+            "Can you hear me?",
+            "are you there",
+            "hey pace, do you hear me?",
+            "mic check",
+        ] {
+            let prediction = classifier.classify(question)
+            #expect(prediction.intent == .chitchat,
+                "expected chitchat for \(question), got \(prediction.intent)")
+        }
+    }
+
     @Test func wakePhraseGreetingsHitTheChitchatFastPath() async throws {
         let classifier = PaceIntentClassifier()
         for greeting in [
