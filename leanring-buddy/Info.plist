@@ -31,6 +31,8 @@
 	<string>http://localhost:1234/v1</string>
 	<key>LocalPlannerModelIdentifier</key>
 	<string>qwen3-4b-instruct-2507</string>
+	<key>RetrievalEmbeddingModel</key>
+	<string>text-embedding-nomic-embed-text-v1.5</string>
 	<key>TTSProvider</key>
 	<string>localServer</string>
 	<key>LocalTTSServerBaseURL</key>

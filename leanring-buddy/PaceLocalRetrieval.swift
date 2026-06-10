@@ -1010,7 +1010,48 @@ final class PaceLocalRetriever: PaceRetriever {
             maximumResultCount: query.maximumResultCount * 3,
             maximumSnippetCharacters: query.maximumSnippetCharacters
         )
-        return store.search(candidatePoolQuery)
+        return filterSelfEchoMatches(store.search(candidatePoolQuery), queryText: query.text)
+    }
+
+    /// Drops past Pace turns whose QUESTION was the same as the current
+    /// query. They match near-perfectly (lexically AND semantically), crowd
+    /// the context block, and teach the model to parrot its own previous
+    /// answer — including previous WRONG answers. A repeat of the question
+    /// means the prior answer didn't satisfy, so it is never useful context.
+    /// Only the past turn's "User:" segment is compared (for equality, not
+    /// containment), so history that merely mentions the topic stays.
+    private func filterSelfEchoMatches(
+        _ matches: [PaceRetrievalMatch],
+        queryText: String
+    ) -> [PaceRetrievalMatch] {
+        let normalizedQuery = Self.normalizedForEchoComparison(queryText)
+        guard !normalizedQuery.isEmpty else { return matches }
+        return matches.filter { match in
+            guard match.source == .paceHistory,
+                  let pastQuestion = Self.pastQuestionSegment(ofPaceHistoryExcerpt: match.excerpt) else {
+                return true
+            }
+            return Self.normalizedForEchoComparison(pastQuestion) != normalizedQuery
+        }
+    }
+
+    /// Extracts the transcript between the "User:" and "Pace:" markers that
+    /// `recordPaceHistory` writes. Nil when the excerpt has no marker (the
+    /// snippet started mid-document, or the doc isn't turn-shaped).
+    private static func pastQuestionSegment(ofPaceHistoryExcerpt excerpt: String) -> String? {
+        let lowercasedExcerpt = excerpt.lowercased()
+        guard let userMarkerRange = lowercasedExcerpt.range(of: "user:") else { return nil }
+        let afterUserMarker = lowercasedExcerpt[userMarkerRange.upperBound...]
+        guard let paceMarkerRange = afterUserMarker.range(of: "pace:") else {
+            return String(afterUserMarker)
+        }
+        return String(afterUserMarker[..<paceMarkerRange.lowerBound])
+    }
+
+    private static func normalizedForEchoComparison(_ text: String) -> String {
+        String(text.lowercased().unicodeScalars.filter {
+            CharacterSet.alphanumerics.contains($0)
+        })
     }
 
     /// Source-diverse selection: best match per source first, remaining

@@ -422,6 +422,10 @@ struct PaceLocalRetrievalTests {
         )
         #expect(contextBlock?.contains("App usage journal") == true)
         #expect(contextBlock?.contains("Xcode") == true)
+        // Self-echo filter: past turns that asked this exact question are
+        // excluded entirely — their old (wrong) answers must never reach
+        // the planner as precedent.
+        #expect(contextBlock?.contains("can't see") != true)
     }
 
     private final class StubEmbedder: PaceTextEmbedding {
