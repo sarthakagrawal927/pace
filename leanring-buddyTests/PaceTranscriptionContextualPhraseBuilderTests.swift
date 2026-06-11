@@ -5,7 +5,7 @@
 
 import Testing
 
-@testable import leanring_buddy
+@testable import Pace
 
 struct PaceTranscriptionContextualPhraseBuilderTests {
     @Test func includesFrontmostApplicationAndToolNames() async throws {

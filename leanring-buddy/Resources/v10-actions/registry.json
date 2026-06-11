@@ -23,6 +23,7 @@
     {"kind": "mail", "tool": "mail", "aliases": ["compose_email", "email"], "risk": "appOrSystemMutation", "schemaExample": {"tool": "mail", "to": "name@example.com", "subject": "Hello", "body": "draft text"}},
     {"kind": "things", "tool": "things", "aliases": ["things_todo"], "risk": "appOrSystemMutation", "schemaExample": {"tool": "things", "title": "Buy milk", "notes": "optional"}},
     {"kind": "shortcuts", "tool": "shortcuts", "aliases": ["run_shortcut", "shortcut"], "risk": "appOrSystemMutation", "schemaExample": {"tool": "shortcuts", "name": "My Shortcut"}},
-    {"kind": "messages", "tool": "messages", "aliases": ["message"], "risk": "appOrSystemMutation", "schemaExample": {"tool": "messages", "recipient": "Alex", "text": "draft text"}}
+    {"kind": "messages", "tool": "messages", "aliases": ["message"], "risk": "appOrSystemMutation", "schemaExample": {"tool": "messages", "recipient": "Alex", "text": "draft text"}},
+    {"kind": "downloadFile", "tool": "download_file", "aliases": ["download", "save_file"], "risk": "externalIntegration", "schemaExample": {"tool": "download_file", "url": "https://example.com/report.pdf", "name": "report.pdf"}}
   ]
 }

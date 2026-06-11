@@ -25,6 +25,7 @@ enum PaceUserPreferenceKey: String {
     case isPaceCursorEnabled
     case areCursorAnnotationsEnabled
     case requiresActionApproval
+    case isPostureWatchEnabled
 }
 
 enum PaceUserPreferencesStore {

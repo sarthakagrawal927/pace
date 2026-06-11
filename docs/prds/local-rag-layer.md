@@ -1,10 +1,12 @@
 # Local RAG layer
 
-Status: partial (2026-06-09). Protocols, in-memory BM25-style lexical retrieval,
+Status: partial (2026-06-10). Protocols, in-memory BM25-style lexical retrieval,
 secret-path exclusions, explicit file connector, local preference/history
 documents, explicit-root Spotlight file discovery, Settings file-root picker,
 permission-aware Calendar, Reminders, Contacts, Notes, and Mail indexing,
-Project Minimi competitive-research seed data, JSON-backed local persistence,
+competitive-research seed data (Minimi, Dayflow, voice-assistant category),
+screen-watch journal and app-usage journal sources for "what did I do
+today?" / "how did I spend my time?" recall, JSON-backed local persistence,
 planner prompt injection, and panel/settings status are wired. Retrieval prompt
 injection is route-aware so generic Q&A, screen-only reads, and follow-up agent
 steps do not carry unrelated local context. SQLite/vector retrieval remains
@@ -55,8 +57,8 @@ maps Apple Notes into compact read-only retrieval documents through AppleScript
 on user-triggered source refresh/reset, reporting Automation denial as skipped
 status instead of failing retrieval. `PaceMailRetrievalConnector` does the same
 for recent Apple Mail inbox messages. `PaceCompetitiveResearchSeeds` adds a
-local Project Minimi snapshot covering its Claude/MCP ambient-memory wedge,
-local vector-DB claims, Gemini embedding note, and Pace differentiation. The
+built-in competitive snapshots for Project Minimi, Dayflow (work journal),
+and the local private-voice-assistant category (Dottie/OpenFelix patterns). The
 BM25-style ranker prefers rare query terms and focused chunks over repeated
 generic words, so the lexical fallback is materially closer to the future vector
 path while the embedding model, SQLite store, and vector search remain queued.
@@ -108,7 +110,7 @@ Out of scope:
 | Reminders | EventKit | First-pass indexed when full Reminders access is already granted; no retrieval-time prompt. |
 | Contacts | Contacts framework | First-pass indexed when Contacts access is already granted; no retrieval-time prompt. |
 | Pace history | local app store | Store only user-approved local summaries. |
-| Competitive research | built-in local seed documents | First seed covers Project Minimi from the 2026-06-09 site snapshot. |
+| Competitive research | built-in local seed documents | Seeds cover Project Minimi, Dayflow work journal, and local voice-assistant category snapshots (2026-06-10). |
 
 ## Index Design
 

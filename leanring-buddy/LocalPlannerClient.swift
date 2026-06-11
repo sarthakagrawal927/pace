@@ -156,6 +156,14 @@ final class LocalPlannerClient: BuddyPlannerClient {
                     errorBodyChunks.append(line)
                 }
                 let errorBody = errorBodyChunks.joined(separator: "\n")
+                PaceAPIAuditLog.shared.record(
+                    subsystem: "planner",
+                    operation: "chat.completions.stream",
+                    target: modelIdentifier,
+                    durationMilliseconds: Int(Date().timeIntervalSince(startTime) * 1000),
+                    outcome: "http_\(httpResponse.statusCode)",
+                    detail: String(errorBody.prefix(160))
+                )
                 throw NSError(
                     domain: "LocalPlannerClient",
                     code: httpResponse.statusCode,
@@ -212,6 +220,15 @@ final class LocalPlannerClient: BuddyPlannerClient {
             let duration = Date().timeIntervalSince(startTime)
             let strippedFinalText = LocalPlannerClient.stripThinkingBlocks(from: accumulatedResponseText)
             if !strippedFinalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                PaceAPIAuditLog.shared.record(
+                    subsystem: "planner",
+                    operation: "chat.completions.stream",
+                    target: modelIdentifier,
+                    durationMilliseconds: Int(duration * 1000),
+                    outcome: "ok",
+                    outputCharacterCount: strippedFinalText.count,
+                    detail: "\(messages.count) msgs"
+                )
                 return (text: strippedFinalText, duration: duration)
             }
 

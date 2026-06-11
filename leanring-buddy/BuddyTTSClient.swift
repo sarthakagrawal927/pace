@@ -2,10 +2,11 @@
 //  BuddyTTSClient.swift
 //  leanring-buddy
 //
-//  Shared protocol surface for text-to-speech backends. Only
-//  LocalTTSClient (AVSpeechSynthesizer) conforms today. The protocol
-//  stays so a future on-device runtime (Kokoro/Piper-MLX) can plug in
-//  via a new conformer without touching CompanionManager.
+//  Shared protocol surface for text-to-speech backends. Two conformers:
+//  LocalTTSClient (AVSpeechSynthesizer, always available) and
+//  LocalServerTTSClient (loopback OpenAI-compatible /v1/audio/speech —
+//  Kokoro by default — which itself falls back to LocalTTSClient
+//  whenever the sidecar is unavailable).
 //
 
 import Foundation
@@ -28,7 +29,18 @@ protocol BuddyTTSClient: AnyObject {
 enum BuddyTTSClientFactory {
     @MainActor
     static func makeDefault() -> any BuddyTTSClient {
-        print("🔊 TTS: using local AVSpeechSynthesizer")
-        return LocalTTSClient()
+        let configuredProvider = AppBundleConfiguration
+            .stringValue(forKey: "TTSProvider")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        // `localServer` is the default: when no sidecar is running it
+        // degrades to the Apple voice within milliseconds per turn, so the
+        // upgrade is free to opt out of and automatic to opt into.
+        if configuredProvider == "apple" {
+            print("🔊 TTS: using local AVSpeechSynthesizer")
+            return LocalTTSClient()
+        }
+        return LocalServerTTSClient()
     }
 }

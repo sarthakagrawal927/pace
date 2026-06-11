@@ -1085,7 +1085,9 @@ struct PaceActionTagParserTests {
         </tool_calls>
         """)
 
-        #expect(parseResult.actions.count == 2)
+        // #require, not #expect: subscripting below would crash the whole test
+        // host on a count mismatch instead of failing just this test.
+        try #require(parseResult.actions.count == 2)
 
         guard case .appendNote(let appendRequest) = parseResult.actions[0] else {
             Issue.record("Expected append note action")

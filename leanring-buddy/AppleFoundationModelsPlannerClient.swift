@@ -115,6 +115,15 @@ final class AppleFoundationModelsPlannerClient: BuddyPlannerClient {
 
         let timeToFirstTokenMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1000)
         print("⚡ FM Planner TTFT: \(timeToFirstTokenMilliseconds)ms (\(conversationHistory.count + 1) msgs)")
+        PaceAPIAuditLog.shared.record(
+            subsystem: "planner",
+            operation: "fm.respond.typed",
+            target: "apple-foundation-models-3b",
+            durationMilliseconds: timeToFirstTokenMilliseconds,
+            outcome: "ok",
+            inputCharacterCount: userPrompt.count,
+            detail: "\(conversationHistory.count + 1) msgs"
+        )
         PaceTelemetryLog.recordPlannerTimeToFirstToken(
             milliseconds: timeToFirstTokenMilliseconds,
             modelIdentifier: displayName,

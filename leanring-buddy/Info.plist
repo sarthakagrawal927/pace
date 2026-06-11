@@ -2,6 +2,25 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/sarthakagrawal927/pace/main/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>UGbOz43wfHeH3fwSu45Z0dNFIlomd1Tra+B9mjOFdSI=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>3600</integer>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.pace.deeplink</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>pace</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSUIElement</key>
 	<true/>
 	<key>UseLocalVLMForScreenContext</key>
@@ -19,7 +38,19 @@
 	<key>LocalPlannerBaseURL</key>
 	<string>http://localhost:1234/v1</string>
 	<key>LocalPlannerModelIdentifier</key>
-	<string>qwen/qwen3-30b-a3b</string>
+	<string>qwen3-4b-instruct-2507</string>
+	<key>RetrievalEmbeddingModel</key>
+	<string>text-embedding-nomic-embed-text-v1.5</string>
+	<key>TTSProvider</key>
+	<string>localServer</string>
+	<key>LocalTTSServerBaseURL</key>
+	<string>http://localhost:8880/v1</string>
+	<key>LocalTTSServerModel</key>
+	<string>mlx-community/Kokoro-82M-bf16</string>
+	<key>LocalTTSServerVoice</key>
+	<string>af_heart</string>
+	<key>LocalTTSServerSpeed</key>
+	<string>1.2</string>
 	<key>LocalTTSVoiceIdentifier</key>
 	<string>com.apple.voice.compact.en-IN.Rishi</string>
 	<key>LocalTTSSpeechRate</key>
@@ -41,9 +72,13 @@
 	<key>PrewarmMailForDrafts</key>
 	<string>true</string>
 	<key>TranscriptionProvider</key>
-	<string>appleSpeech</string>
+	<string>whisperKit</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Pace uses your microphone so you can talk to it</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Pace queries Apple's on-device Speech Recognition framework only when the Apple Speech transcription provider is selected. All recognition happens on-device; nothing is sent off the Mac.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Pace uses the camera only for the optional posture watch. Frames are analyzed on-device and never stored or sent anywhere.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Pace uses Apple Events only when you ask it to control local Mac apps like Notes, Music, Mail, Things, Shortcuts, or Messages.</string>
 	<key>NSContactsUsageDescription</key>

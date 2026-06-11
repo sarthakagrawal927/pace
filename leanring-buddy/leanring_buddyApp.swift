@@ -33,17 +33,26 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
     private var runtimeSmokeTestHooks: PaceRuntimeSmokeTestHooks?
     private let companionManager = CompanionManager()
 
+    // A cold launch via URL delivers application(_:open:) before
+    // applicationDidFinishLaunching has built the managers — buffer the
+    // commands and drain them once launch completes.
+    private var pendingDeepLinkCommands: [PaceDeepLinkCommand] = []
+    private var hasFinishedLaunching = false
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("🎯 Pace: Starting...")
         print("🎯 Pace: Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")")
 
-        // Single-instance enforcement. If another Pace is already
-        // running (e.g. login-item launched at boot and now Xcode is
-        // Cmd+R'ing a dev build on top), the newer launch wins —
-        // terminate the older instance so the user doesn't see two
-        // walking avatars, two cursors, and two notch overlays. Bug
-        // confirmed by `ps -ax | grep Pace` showing duplicate PIDs.
+        // Single-instance enforcement is fundamentally hostile to macOS's
+        // own "restart the app to apply the new permission" flow for
+        // Screen Recording / Accessibility: macOS launches a fresh process
+        // post-grant, and us killing the older one (or the older killing
+        // us first) churns through ANOTHER permission re-prompt. Only run
+        // duplicate cleanup in RELEASE builds where the user is unlikely
+        // to be cycling permissions.
+        #if !DEBUG
         terminateOtherRunningPaceInstances()
+        #endif
 
         PaceToolRegistry.validateForAppStartup()
         UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 0])
@@ -55,7 +64,18 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         // user's first push-to-talk doesn't pay the cold-load tax.
         // Fire-and-forget — app launch is not blocked. Companion
         // unload happens in `applicationWillTerminate`.
+        // Auto-update: Sparkle starts its background check immediately
+        // against the GitHub-hosted appcast. Manual checks live behind
+        // PaceAutoUpdateController.shared.checkForUpdatesManually().
+        _ = PaceAutoUpdateController.shared
+
         PaceLMStudioModelLoader.warmUpConfiguredModelsAsync()
+        // Auto-start the Kokoro TTS sidecar so the user never has to
+        // remember scripts/start-tts-server.sh. Idempotent — does
+        // nothing if the sidecar is already reachable on the configured
+        // port. Detached so it survives Pace quit/restart and stays
+        // warm for the next launch.
+        PaceTTSSidecarLauncher.startIfNotRunning()
         prewarmMailForFastDraftsIfNeeded()
 
         let menuBarPanelManager = MenuBarPanelManager(companionManager: companionManager)
@@ -81,9 +101,51 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
             menuBarPanelManager.showPanelOnLaunch()
         }
         registerAsLoginItemIfNeeded()
+
+        hasFinishedLaunching = true
+        let bufferedDeepLinkCommands = pendingDeepLinkCommands
+        pendingDeepLinkCommands = []
+        for deepLinkCommand in bufferedDeepLinkCommands {
+            executeDeepLinkCommand(deepLinkCommand)
+        }
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            guard let deepLinkCommand = PaceDeepLinkParser.parse(url) else {
+                print("🔗 Pace: ignoring unrecognized deeplink \(url.absoluteString)")
+                continue
+            }
+            print("🔗 Pace: deeplink \(url.absoluteString)")
+            if hasFinishedLaunching {
+                executeDeepLinkCommand(deepLinkCommand)
+            } else {
+                pendingDeepLinkCommands.append(deepLinkCommand)
+            }
+        }
+    }
+
+    private func executeDeepLinkCommand(_ command: PaceDeepLinkCommand) {
+        switch command {
+        case .showPanel:
+            menuBarPanelManager?.showPanelFromDeepLink()
+        case .setWatchMode(let enabled):
+            companionManager.setWatchModeEnabled(enabled)
+        case .startListening:
+            companionManager.beginListeningFromDeepLink()
+        case .sendChatMessage(let text):
+            companionManager.submitChatTranscriptFromDeepLink(text)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // Tear down every visible surface FIRST: the LM Studio model unload
+        // below is synchronous (100ms–seconds via the lms CLI), and any
+        // panel or settings window still on screen would visibly linger for
+        // that whole time after the user hit quit.
+        for window in NSApp.windows {
+            window.orderOut(nil)
+        }
         menuBarOverlayManager?.hide()
         companionManager.stop()
         // Stop the keepalive heartbeat so it doesn't race with the
@@ -134,7 +196,15 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
     /// Registers the app as a login item so it launches automatically on
     /// startup. Uses SMAppService which shows the app in System Settings >
     /// General > Login Items, letting the user toggle it off if they want.
+    ///
+    /// Skipped for DEBUG builds: an unsigned dev bundle's path can change
+    /// each Xcode rebuild, leaving stale launch-services records that
+    /// resurrect old copies (and re-trigger TCC permission prompts) after
+    /// every grant. Release builds keep the convenience.
     private func registerAsLoginItemIfNeeded() {
+        #if DEBUG
+        return
+        #else
         let loginItemService = SMAppService.mainApp
         if loginItemService.status != .enabled {
             do {
@@ -144,6 +214,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
                 print("⚠️ Pace: Failed to register as login item: \(error)")
             }
         }
+        #endif
     }
 
     /// Eats Mail's cold-launch cost before the first compose command. This is

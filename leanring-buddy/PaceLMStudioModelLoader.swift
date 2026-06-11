@@ -70,8 +70,15 @@ enum PaceLMStudioModelLoader {
         let vlmModelIdentifier = AppBundleConfiguration
             .stringValue(forKey: "LocalVLMModelIdentifier")
             ?? "ui-venus-1.5-2b"
+        // The embedding model powers retrieval re-ranking on every turn
+        // that injects LOCAL CONTEXT. Without warming it here, the first
+        // such turn after launch has to wait for JIT load — observed in
+        // the audit log as embeddings transport_error timeouts.
+        let embeddingModelIdentifier = AppBundleConfiguration
+            .stringValue(forKey: "RetrievalEmbeddingModel")
+            ?? "text-embedding-nomic-embed-text-v1.5"
 
-        print("🔥 LM Studio warmup: starting (planner=\(configuredPlannerIdentifier), vlm=\(useLocalVLM ? vlmModelIdentifier : "off"))")
+        print("🔥 LM Studio warmup: starting (planner=\(configuredPlannerIdentifier), vlm=\(useLocalVLM ? vlmModelIdentifier : "off"), embeddings=\(embeddingModelIdentifier))")
 
         guard await isLMStudioReachable() else {
             print("⚠️  LM Studio warmup: server unreachable at localhost:1234. Start LM Studio and ensure JIT loading is on.")
@@ -102,8 +109,49 @@ enum PaceLMStudioModelLoader {
                 role: "VLM"
             )
         }()
-        _ = await (plannerWarmup, vlmWarmup)
+        async let embeddingsWarmup: Void = sendEmbeddingsWarmup(
+            modelIdentifier: embeddingModelIdentifier
+        )
+        _ = await (plannerWarmup, vlmWarmup, embeddingsWarmup)
         print("🔥 LM Studio warmup: complete")
+    }
+
+    /// One-shot tiny embedding call so the embedding model is JIT-loaded
+    /// before the first retrieval-using turn arrives. Mirrors
+    /// `sendChatCompletionWarmup` but hits /v1/embeddings.
+    private static func sendEmbeddingsWarmup(modelIdentifier: String) async {
+        let startedAt = Date()
+        let embeddingsURL = lmStudioBaseURL.appendingPathComponent("v1/embeddings")
+        var request = URLRequest(url: embeddingsURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer lm-studio", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = warmupTimeoutSeconds
+
+        let requestBody: [String: Any] = [
+            "model": modelIdentifier,
+            "input": "ok",
+        ]
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        } catch {
+            print("⚠️  LM Studio warmup (embeddings/\(modelIdentifier)): encode failed: \(error.localizedDescription)")
+            return
+        }
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1000)
+            if let httpResponse = response as? HTTPURLResponse,
+               (200...299).contains(httpResponse.statusCode) {
+                print("🔥 LM Studio warmup (embeddings/\(modelIdentifier)): loaded in \(durationMilliseconds)ms")
+            } else {
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                print("⚠️  LM Studio warmup (embeddings/\(modelIdentifier)): HTTP \(statusCode) after \(durationMilliseconds)ms")
+            }
+        } catch {
+            print("⚠️  LM Studio warmup (embeddings/\(modelIdentifier)): \(error.localizedDescription)")
+        }
     }
 
     /// Quick reachability check: hit `/v1/models` with a 2-second

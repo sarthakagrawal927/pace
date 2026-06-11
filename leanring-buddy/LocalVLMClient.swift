@@ -356,20 +356,49 @@ final class LocalVLMClient: PaceScreenAnalysisClient, @unchecked Sendable {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-        let (responseData, urlResponse) = try await urlSession.data(for: request)
+        let requestStartedAt = Date()
+        func auditVLMCall(outcome: String, outputCharacterCount: Int? = nil, detail: String? = nil) {
+            PaceAPIAuditLog.shared.record(
+                subsystem: "vlm",
+                operation: "chat.completions.image",
+                target: modelIdentifier,
+                durationMilliseconds: Int(Date().timeIntervalSince(requestStartedAt) * 1000),
+                outcome: outcome,
+                outputCharacterCount: outputCharacterCount,
+                detail: detail
+            )
+        }
+
+        let responseData: Data
+        let urlResponse: URLResponse
+        do {
+            (responseData, urlResponse) = try await urlSession.data(for: request)
+        } catch {
+            auditVLMCall(outcome: "transport_error", detail: String(error.localizedDescription.prefix(160)))
+            throw error
+        }
 
         guard let httpResponse = urlResponse as? HTTPURLResponse else {
+            auditVLMCall(outcome: "non_http_response")
             throw LocalVLMClientError(message: "Local VLM returned a non-HTTP response.")
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
             let errorBody = String(data: responseData, encoding: .utf8) ?? "<binary>"
+            auditVLMCall(outcome: "http_\(httpResponse.statusCode)", detail: String(errorBody.prefix(160)))
             throw LocalVLMClientError(
                 message: "Local VLM error (\(httpResponse.statusCode)): \(errorBody)"
             )
         }
 
-        return try Self.parseChatCompletionResponse(responseData)
+        do {
+            let analysis = try Self.parseChatCompletionResponse(responseData)
+            auditVLMCall(outcome: "ok", outputCharacterCount: responseData.count, detail: "\(analysis.elements.count) elements")
+            return analysis
+        } catch {
+            auditVLMCall(outcome: "decode_error", detail: String(error.localizedDescription.prefix(160)))
+            throw error
+        }
     }
 
     // MARK: - Response parsing

@@ -164,7 +164,12 @@ struct PaceLocalRetrievalTests {
 
         let reloadedStore = PaceInMemoryRetrievalStore(persistenceURL: persistenceURL)
         #expect(reloadedStore.search(PaceRetrievalQuery(text: "Friday")).isEmpty)
-        #expect(reloadedStore.search(PaceRetrievalQuery(text: "privacy local")).first?.source == .notes)
+        // Built-in competitive-research seeds also rank for generic
+        // privacy/local terms, so assert source membership instead of
+        // first-place ranking.
+        let privacyMatches = reloadedStore.search(PaceRetrievalQuery(text: "privacy local"))
+        #expect(privacyMatches.contains { $0.source == .notes })
+        #expect(!privacyMatches.contains { $0.source == .calendar })
     }
 
     @Test func localContextBlockCapsItemsAndCharacters() async throws {
@@ -222,16 +227,21 @@ struct PaceLocalRetrievalTests {
     }
 
     @Test func builtInCompetitiveResearchIncludesProjectMinimi() async throws {
+        // Wider context/snippet limits than the runtime defaults: this test
+        // asserts on facts deep inside the Minimi seed chunks ("Gemini",
+        // "cloud embeddings"), and the built-in corpus also seeds Dayflow and
+        // voice-assistant research that competes for the capped block.
         let retriever = PaceLocalRetriever(
             store: PaceInMemoryRetrievalStore(),
+            maximumContextCharacters: 2400,
             appliesPersistedSourcePreferences: false
         )
 
         let contextBlock = retriever.localContextBlock(
             for: PaceRetrievalQuery(
-                text: "how does Pace differ from Project Minimi Gemini embeddings Claude ambient memory",
-                maximumResultCount: 2,
-                maximumSnippetCharacters: 260
+                text: "Project Minimi Gemini embeddings paid plan cloud privacy gap",
+                maximumResultCount: 4,
+                maximumSnippetCharacters: 480
             )
         )
 
@@ -244,6 +254,33 @@ struct PaceLocalRetrievalTests {
             for: PaceRetrievalQuery(text: "Project Minimi Gemini embeddings")
         )
         #expect(disabledContextBlock == nil)
+    }
+
+    @Test func builtInCompetitiveResearchIncludesDayflowAndVoiceAssistantCategory() async throws {
+        let retriever = PaceLocalRetriever(
+            store: PaceInMemoryRetrievalStore(),
+            appliesPersistedSourcePreferences: false
+        )
+
+        let dayflowContextBlock = retriever.localContextBlock(
+            for: PaceRetrievalQuery(
+                text: "how does Pace differ from Dayflow work journal timeline LM Studio",
+                maximumResultCount: 2,
+                maximumSnippetCharacters: 260
+            )
+        )
+        #expect(dayflowContextBlock?.contains("Dayflow") == true)
+        #expect(dayflowContextBlock?.contains("work journal") == true)
+
+        let voiceAssistantContextBlock = retriever.localContextBlock(
+            for: PaceRetrievalQuery(
+                text: "Dottie OpenFelix private voice assistant menu bar push to talk",
+                maximumResultCount: 2,
+                maximumSnippetCharacters: 260
+            )
+        )
+        #expect(voiceAssistantContextBlock?.contains("Dottie") == true)
+        #expect(voiceAssistantContextBlock?.contains("push-to-talk") == true)
     }
 
     @Test func retrievalContextPolicySkipsGenericAndScreenOnlyTurns() async throws {
@@ -278,6 +315,176 @@ struct PaceLocalRetrievalTests {
             forTranscript: "compare this to my latest note",
             route: .readScreen
         ))
+    }
+
+    @Test func retrievalContextPolicyMatchesJournalTimePhrases() async throws {
+        #expect(PaceRetrievalContextPolicy.shouldQueryLocalContext(
+            forTranscript: "what was I doing earlier today",
+            route: .answerDirectly
+        ))
+        #expect(PaceRetrievalContextPolicy.shouldQueryLocalContext(
+            forTranscript: "what have I been working on",
+            route: .fullPipeline
+        ))
+        #expect(PaceRetrievalContextPolicy.shouldQueryLocalContext(
+            forTranscript: "how did I spend my time this afternoon",
+            route: .fullPipeline
+        ))
+    }
+
+    @Test func recordedScreenWatchObservationIsRetrievableByWhatDidIDoQuery() async throws {
+        let retriever = PaceLocalRetriever(
+            store: PaceInMemoryRetrievalStore(),
+            appliesPersistedSourcePreferences: false
+        )
+        retriever.recordScreenWatchObservation(
+            screenLabel: "primary focus",
+            categoryDisplayName: "major screen change",
+            frontmostApplicationName: "Xcode",
+            screenDescription: "editing CompanionManager.swift in the Pace project"
+        )
+
+        let contextBlock = retriever.localContextBlock(
+            for: PaceRetrievalQuery(text: "what did I do today in Xcode CompanionManager")
+        )
+        #expect(contextBlock?.contains("Screen watch journal") == true)
+        #expect(contextBlock?.contains("Xcode") == true)
+    }
+
+    @Test func disabledScreenWatchSourceSkipsRecording() async throws {
+        let store = PaceInMemoryRetrievalStore()
+        let retriever = PaceLocalRetriever(
+            store: store,
+            appliesPersistedSourcePreferences: false
+        )
+        retriever.setSourceEnabled(false, for: .screenWatchHistory)
+        retriever.recordScreenWatchObservation(
+            screenLabel: "primary focus",
+            categoryDisplayName: "content update",
+            frontmostApplicationName: "Safari",
+            screenDescription: nil
+        )
+        #expect(store.documents(withSource: .screenWatchHistory).isEmpty)
+    }
+
+    @Test func flushedAppUsageDocumentIsRetrievableByTimeQuery() async throws {
+        let store = PaceInMemoryRetrievalStore()
+        let retriever = PaceLocalRetriever(
+            store: store,
+            appliesPersistedSourcePreferences: false
+        )
+        var journal = retriever.rehydratedAppUsageJournal()
+        let startedAt = Date()
+        journal.recordActivation(appName: "Xcode", at: startedAt)
+        journal.recordActivation(appName: "Safari", at: startedAt.addingTimeInterval(1200))
+        let flushed_flushedDocument = journal.flush(now: startedAt.addingTimeInterval(1500))
+        let flushedDocument = try #require(flushed_flushedDocument)
+        retriever.recordAppUsageDocument(flushedDocument)
+
+        // The exact phrasing a user says — must match through the doc's
+        // natural-language retrieval header, not just lucky data tokens.
+        let contextBlock = retriever.localContextBlock(
+            for: PaceRetrievalQuery(text: "what apps did I use today")
+        )
+        #expect(contextBlock?.contains("App usage journal") == true)
+        #expect(contextBlock?.contains("Xcode") == true)
+        #expect(PaceRetrievalContextPolicy.shouldQueryLocalContext(
+            forTranscript: "what apps did I use today",
+            route: .answerDirectly
+        ))
+    }
+
+    @Test func repeatedIdenticalPaceTurnsDoNotCrowdOutJournalDocuments() async throws {
+        let store = PaceInMemoryRetrievalStore()
+        let retriever = PaceLocalRetriever(
+            store: store,
+            appliesPersistedSourcePreferences: false
+        )
+
+        // Self-poisoning setup: several past turns echo the exact question
+        // (and a useless answer). They match the query perfectly and would
+        // fill every slot without source-diverse selection.
+        for turnIndex in 0..<5 {
+            retriever.recordPaceHistory(
+                userTranscript: "what apps did I use today",
+                assistantResponse: "i can't see a list of apps on this screen (attempt \(turnIndex)).",
+                now: Date().addingTimeInterval(TimeInterval(turnIndex))
+            )
+        }
+
+        var journal = retriever.rehydratedAppUsageJournal()
+        journal.recordActivation(appName: "Xcode", at: Date().addingTimeInterval(-600))
+        let flushedJournalDocument = journal.flush(now: Date())
+        retriever.recordAppUsageDocument(try #require(flushedJournalDocument))
+
+        let contextBlock = retriever.localContextBlock(
+            for: PaceRetrievalQuery(text: "what apps did I use today")
+        )
+        #expect(contextBlock?.contains("App usage journal") == true)
+        #expect(contextBlock?.contains("Xcode") == true)
+        // Self-echo filter: past turns that asked this exact question are
+        // excluded entirely — their old (wrong) answers must never reach
+        // the planner as precedent.
+        #expect(contextBlock?.contains("can't see") != true)
+    }
+
+    private final class StubEmbedder: PaceTextEmbedding {
+        /// Maps each text to a vector; unknown texts embed to the zero axis.
+        let vectorsByText: [String: [Float]]
+
+        init(vectorsByText: [String: [Float]]) {
+            self.vectorsByText = vectorsByText
+        }
+
+        func embed(_ texts: [String]) async throws -> [[Float]] {
+            texts.map { vectorsByText[$0] ?? [0, 0, 1] }
+        }
+    }
+
+    private final class FailingEmbedder: PaceTextEmbedding {
+        func embed(_ texts: [String]) async throws -> [[Float]] {
+            throw PaceEmbeddingClientError(message: "endpoint down")
+        }
+    }
+
+    @Test func rerankedContextBlockPromotesSemanticMatchAndFallsBackOnFailure() async throws {
+        let store = PaceInMemoryRetrievalStore()
+        store.upsertDocuments([
+            PaceRetrievalDocument(
+                id: "history-one", source: .paceHistory, title: "Turn",
+                text: "invoice quarterly report planning"
+            ),
+            PaceRetrievalDocument(
+                id: "history-two", source: .paceHistory, title: "Turn",
+                text: "invoice email from the vendor"
+            ),
+        ])
+
+        let semanticEmbedder = StubEmbedder(vectorsByText: [
+            "find the invoice": [1, 0, 0],
+            "invoice quarterly report planning": [0, 1, 0],
+            "invoice email from the vendor": [0.95, 0, 0.1],
+        ])
+        let semanticRetriever = PaceLocalRetriever(
+            store: store,
+            appliesPersistedSourcePreferences: false,
+            embeddingClient: semanticEmbedder
+        )
+        let rerankedBlock = await semanticRetriever.rerankedLocalContextBlock(
+            for: PaceRetrievalQuery(text: "find the invoice", maximumResultCount: 1)
+        )
+        #expect(rerankedBlock?.contains("vendor") == true)
+
+        // Embedder failure degrades to plain lexical behavior, never nil-er.
+        let failingRetriever = PaceLocalRetriever(
+            store: store,
+            appliesPersistedSourcePreferences: false,
+            embeddingClient: FailingEmbedder()
+        )
+        let fallbackBlock = await failingRetriever.rerankedLocalContextBlock(
+            for: PaceRetrievalQuery(text: "find the invoice")
+        )
+        #expect(fallbackBlock?.hasPrefix("LOCAL CONTEXT") == true)
     }
 
     @Test func fileConnectorSkipsSensitiveRootsAndLoadsAllowedTextFiles() async throws {

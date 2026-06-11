@@ -4,7 +4,7 @@ status: partial — coordinate/label top-K parser/scorer plus focused-window sco
 owner: future Pace-repo agent
 created: 2026-06-08
 source-conversation: tinygpt session 2026-06-08 (planner v5→v6 daily-drive feedback)
-upstream-deps: TinyGPT v6 planner (label-based architecture, shipped 2026-06-08), tool-caller plumbing (in flight)
+upstream-deps: TinyGPT v6 planner (label-based architecture, shipped 2026-06-08); tool-caller plumbing landed — the readiness gate is satisfied
 priority: P0 — addresses real-screen click misses observed during v5 daily-drive ("trouble clicking the exact part, was going at wrong point")
 ---
 
@@ -346,12 +346,12 @@ Likely file names (verify before assuming):
 - `PlannerClient.swift` / `LocalPlannerClient.swift` — schema decode
 - `AccessibilityTree.swift` / `ElementMap.swift` — AX tree management
 
-## Tool-caller readiness gate
+## Tool-caller readiness gate (satisfied)
 
-Per Sarthak (2026-06-08): "will let an agent work on pace, once the
-tool caller is ready". This brief is queued. Do not begin work in
-clickyLocal until the v6 planner integration + tool-caller plumbing
-has landed on the Pace side.
+Originally gated on tool-caller plumbing landing on the Pace side. That
+plumbing shipped (grouped tool calls, registry validation, v10 envelope),
+so the gate is satisfied — implementation landed; only the manual
+ambiguity evals remain queued.
 
 ## TinyGPT-side coordination
 

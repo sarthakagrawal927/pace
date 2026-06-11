@@ -85,6 +85,11 @@ final class MenuBarPanelManager: NSObject {
         showPanel()
     }
 
+    /// Entry point for the pace://panel deeplink (Raycast/Shortcuts).
+    func showPanelFromDeepLink() {
+        showPanel()
+    }
+
     func hidePanelForSmokeTest() {
         hidePanel()
     }

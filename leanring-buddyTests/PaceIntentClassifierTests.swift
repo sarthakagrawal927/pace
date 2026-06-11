@@ -47,6 +47,58 @@ struct PaceIntentClassifierTests {
         }
     }
 
+    @Test func micCheckQuestionsRouteToChitchatAndNotTheScreenPipeline() async throws {
+        let classifier = PaceIntentClassifier()
+        for question in [
+            "can you hear me",
+            "Can you hear me?",
+            "are you there",
+            "hey pace, do you hear me?",
+            "mic check",
+        ] {
+            let prediction = classifier.classify(question)
+            #expect(prediction.intent == .chitchat,
+                "expected chitchat for \(question), got \(prediction.intent)")
+        }
+    }
+
+    @Test func wakePhraseGreetingsHitTheChitchatFastPath() async throws {
+        let classifier = PaceIntentClassifier()
+        for greeting in [
+            "Hey Pace, how is it going?",
+            "hey pace how's it going",
+            "Hi Pace, how are you?",
+            "how is it going?",
+            "how are things",
+        ] {
+            let prediction = classifier.classify(greeting)
+            #expect(prediction.intent == .chitchat, "expected chitchat for \(greeting), got \(prediction.intent)")
+        }
+    }
+
+    @Test func wakePhrasePrefixDoesNotChangeNonChitchatRouting() async throws {
+        let classifier = PaceIntentClassifier()
+        #expect(classifier.classify("hey pace, what is html").intent == .pureKnowledge)
+        #expect(classifier.classify("ok pace, what apps did i use today").intent == .pureKnowledge)
+        #expect(classifier.classify("hey pace, click the save button").intent == .screenAction)
+        #expect(classifier.classify("hey pace, what's on the screen").intent == .screenDescription)
+    }
+
+    @Test func journalRecallQuestionsRouteTextOnly() async throws {
+        let classifier = PaceIntentClassifier()
+        for question in [
+            "what apps did i use today",
+            "what did i do today",
+            "how did i spend my time this afternoon",
+            "what have i been working on",
+            "what was i doing earlier",
+        ] {
+            let prediction = classifier.classify(question)
+            #expect(prediction.intent == .pureKnowledge, "expected pureKnowledge for \(question), got \(prediction.intent)")
+            #expect(prediction.route == .answerDirectly)
+        }
+    }
+
     @Test func screenDescriptionRequests() async throws {
         let classifier = PaceIntentClassifier()
         for request in [

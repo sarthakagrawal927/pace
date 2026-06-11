@@ -169,8 +169,12 @@ struct PaceClickCandidateSet {
                 candidateGlobalPoint.x - currentGlobalCursorPoint.x,
                 candidateGlobalPoint.y - currentGlobalCursorPoint.y
             )
-            if distanceFromCursor <= 200 {
-                score += 3.0
+            // Linear falloff instead of a flat in-radius bonus: when several
+            // candidates sit within the radius (common with repeated labels in
+            // one window), the nearest one must actually win the tiebreak.
+            let proximityRadius: CGFloat = 200
+            if distanceFromCursor <= proximityRadius {
+                score += 3.0 * Double((proximityRadius - distanceFromCursor) / proximityRadius)
             }
         }
 
@@ -749,6 +753,31 @@ final class PaceActionExecutor {
         _ action: PaceParsedAction,
         screenCaptures: [CompanionScreenCapture]
     ) async -> PaceActionExecutionObservation? {
+        let observation = await dispatchSingleAction(action, screenCaptures: screenCaptures)
+        let outcomeText: String
+        if let observation, observation.summary.lowercased().contains("fail")
+            || observation.summary.lowercased().contains("error")
+            || observation.summary.lowercased().contains("could not") {
+            outcomeText = "error"
+        } else {
+            outcomeText = "ok"
+        }
+        PaceAPIAuditLog.shared.record(
+            subsystem: "action",
+            operation: action.auditOperationName,
+            target: action.auditTarget,
+            durationMilliseconds: 0,
+            outcome: outcomeText,
+            outputCharacterCount: observation?.summary.count,
+            detail: observation?.summary.prefix(160).description
+        )
+        return observation
+    }
+
+    private func dispatchSingleAction(
+        _ action: PaceParsedAction,
+        screenCaptures: [CompanionScreenCapture]
+    ) async -> PaceActionExecutionObservation? {
         switch action {
         case .click(let location):
             await clickAtScreenshotLocation(location, screenCaptures: screenCaptures, clickCount: 1)
@@ -804,6 +833,8 @@ final class PaceActionExecutor {
             return await runShortcut(named: shortcutName)
         case .openMessages(let messageRequest):
             return await openMessages(messageRequest)
+        case .downloadFile(let downloadRequest):
+            return await downloadFile(downloadRequest)
         case .mcp(let mcpToolCall):
             return await callMCPTool(mcpToolCall)
         }
@@ -1245,6 +1276,66 @@ final class PaceActionExecutor {
         )
     }
 
+    private func downloadFile(_ downloadRequest: PaceFileDownloadRequest) async -> PaceActionExecutionObservation {
+        let downloadURL = downloadRequest.url
+        print("🧰 Download file \"\(downloadURL.absoluteString)\" (enabled: \(actionsAreEnabled))")
+        guard actionsAreEnabled else {
+            return PaceActionExecutionObservation(
+                toolName: "download_file",
+                summary: "Would download file: \(downloadURL.absoluteString)"
+            )
+        }
+
+        guard let downloadsDirectoryURL = FileManager.default.urls(
+            for: .downloadsDirectory,
+            in: .userDomainMask
+        ).first else {
+            return PaceActionExecutionObservation(
+                toolName: "download_file",
+                summary: "Could not locate the Downloads folder."
+            )
+        }
+
+        do {
+            let (temporaryFileURL, response) = try await URLSession.shared.download(from: downloadURL)
+            if let httpResponse = response as? HTTPURLResponse,
+               !(200...299).contains(httpResponse.statusCode) {
+                try? FileManager.default.removeItem(at: temporaryFileURL)
+                return PaceActionExecutionObservation(
+                    toolName: "download_file",
+                    summary: "Download failed with HTTP \(httpResponse.statusCode): \(downloadURL.absoluteString)"
+                )
+            }
+
+            let sanitizedFilename = PaceDownloadFilenameSanitizer.sanitizedFilename(
+                suggestedFilename: downloadRequest.suggestedFilename ?? response.suggestedFilename,
+                downloadURL: downloadURL
+            )
+            let existingFilenames = Set(
+                (try? FileManager.default.contentsOfDirectory(atPath: downloadsDirectoryURL.path)) ?? []
+            )
+            let finalFilename = PaceDownloadFilenameSanitizer.collisionFreeFilename(
+                sanitizedFilename,
+                existingFilenames: existingFilenames
+            )
+            let destinationURL = downloadsDirectoryURL.appendingPathComponent(finalFilename)
+            try FileManager.default.moveItem(at: temporaryFileURL, to: destinationURL)
+
+            let downloadedByteCount = (try? FileManager.default.attributesOfItem(
+                atPath: destinationURL.path
+            )[.size] as? Int) ?? 0
+            return PaceActionExecutionObservation(
+                toolName: "download_file",
+                summary: "Downloaded \(finalFilename) (\(downloadedByteCount) bytes) to ~/Downloads."
+            )
+        } catch {
+            return PaceActionExecutionObservation(
+                toolName: "download_file",
+                summary: "Download failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
     private func openURL(_ rawURLString: String) async -> PaceActionExecutionObservation {
         let trimmedURLString = rawURLString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedURLString.isEmpty else {
@@ -1391,7 +1482,7 @@ final class PaceActionExecutor {
         guard await requestCalendarAccessIfNeeded() else {
             return PaceActionExecutionObservation(
                 toolName: "calendar",
-                summary: "Calendar access was not granted."
+                summary: "Calendar access not granted. Open System Settings → Privacy & Security → Calendars and toggle Pace on."
             )
         }
 
@@ -1451,7 +1542,7 @@ final class PaceActionExecutor {
         guard await requestCalendarAccessIfNeeded() else {
             return PaceActionExecutionObservation(
                 toolName: "calendar_create",
-                summary: "Calendar access was not granted."
+                summary: "Calendar access not granted. Open System Settings → Privacy & Security → Calendars and toggle Pace on."
             )
         }
 
@@ -1517,7 +1608,7 @@ final class PaceActionExecutor {
         guard await requestReminderAccessIfNeeded() else {
             return PaceActionExecutionObservation(
                 toolName: "reminder",
-                summary: "Reminder access was not granted."
+                summary: "Reminders access not granted. Open System Settings → Privacy & Security → Reminders and toggle Pace on."
             )
         }
 
@@ -2166,22 +2257,15 @@ final class PaceActionExecutor {
     }
 
     private func requestContactsAccessIfNeeded() async -> Bool {
+        // Never trigger a mid-action TCC prompt — fail with an error
+        // observation if the user hasn't granted access yet. They grant
+        // once from System Settings on their own time, not while a
+        // dictation turn is in progress.
         let authorizationStatus = CNContactStore.authorizationStatus(for: .contacts)
         switch authorizationStatus {
         case .authorized, .limited:
             return true
-        case .denied, .restricted:
-            return false
-        case .notDetermined:
-            return await withCheckedContinuation { continuation in
-                contactStore.requestAccess(for: .contacts) { granted, error in
-                    if let error {
-                        print("⚠️ PaceActionExecutor: contacts access error: \(error.localizedDescription)")
-                    }
-                    continuation.resume(returning: granted)
-                }
-            }
-        @unknown default:
+        default:
             return false
         }
     }
@@ -2375,43 +2459,22 @@ final class PaceActionExecutor {
     }
 
     private func requestCalendarAccessIfNeeded() async -> Bool {
-        await withCheckedContinuation { continuation in
-            if #available(macOS 14.0, *) {
-                eventStore.requestFullAccessToEvents { granted, error in
-                    if let error {
-                        print("⚠️ PaceActionExecutor: calendar access error: \(error.localizedDescription)")
-                    }
-                    continuation.resume(returning: granted)
-                }
-            } else {
-                eventStore.requestAccess(to: .event) { granted, error in
-                    if let error {
-                        print("⚠️ PaceActionExecutor: calendar access error: \(error.localizedDescription)")
-                    }
-                    continuation.resume(returning: granted)
-                }
-            }
-        }
+        // No mid-action TCC prompt: check status, fail with an error
+        // observation if missing. The user grants once from Settings on
+        // their own time, never during a voice turn.
+        return Self.isEventKitAccessAlreadyGranted(for: .event)
     }
 
     private func requestReminderAccessIfNeeded() async -> Bool {
-        await withCheckedContinuation { continuation in
-            if #available(macOS 14.0, *) {
-                eventStore.requestFullAccessToReminders { granted, error in
-                    if let error {
-                        print("⚠️ PaceActionExecutor: reminders access error: \(error.localizedDescription)")
-                    }
-                    continuation.resume(returning: granted)
-                }
-            } else {
-                eventStore.requestAccess(to: .reminder) { granted, error in
-                    if let error {
-                        print("⚠️ PaceActionExecutor: reminders access error: \(error.localizedDescription)")
-                    }
-                    continuation.resume(returning: granted)
-                }
-            }
+        return Self.isEventKitAccessAlreadyGranted(for: .reminder)
+    }
+
+    private static func isEventKitAccessAlreadyGranted(for entityType: EKEntityType) -> Bool {
+        let authorizationStatus = EKEventStore.authorizationStatus(for: entityType)
+        if #available(macOS 14.0, *) {
+            return authorizationStatus == .fullAccess
         }
+        return authorizationStatus == .authorized
     }
 
     private func runAppleScript(source: String) -> (output: String?, errorDescription: String?) {
@@ -2894,17 +2957,64 @@ final class PaceActionExecutor {
     // MARK: - Key name → virtual key code
 
     static func virtualKeyCode(forKeyName keyName: String) -> CGKeyCode? {
-        // Subset of common named keys plus letter keys used with modifiers
-        // by fast commands and local compose fallbacks.
+        // ANSI (US-layout) virtual key codes for every letter, digit, common
+        // punctuation, function key, and named key. parseKeyPayload validates
+        // against this table, so parse-time acceptance and execution-time
+        // capability stay in lockstep — an unmappable key name is rejected
+        // before it reaches the executor instead of failing mid-plan.
         switch keyName.lowercased() {
         case "a": return 0x00
         case "s": return 0x01
-        case "t": return 0x11
+        case "d": return 0x02
+        case "f": return 0x03
+        case "h": return 0x04
+        case "g": return 0x05
+        case "z": return 0x06
+        case "x": return 0x07
+        case "c": return 0x08
+        case "v": return 0x09
+        case "b": return 0x0B
+        case "q": return 0x0C
         case "w": return 0x0D
+        case "e": return 0x0E
+        case "r": return 0x0F
+        case "y": return 0x10
+        case "t": return 0x11
+        case "1": return 0x12
+        case "2": return 0x13
+        case "3": return 0x14
+        case "4": return 0x15
+        case "6": return 0x16
+        case "5": return 0x17
+        case "=", "equals": return 0x18
+        case "9": return 0x19
+        case "7": return 0x1A
+        case "-", "minus": return 0x1B
+        case "8": return 0x1C
+        case "0": return 0x1D
+        case "]": return 0x1E
+        case "o": return 0x1F
+        case "u": return 0x20
+        case "[": return 0x21
+        case "i": return 0x22
+        case "p": return 0x23
+        case "l": return 0x25
+        case "j": return 0x26
+        case "'": return 0x27
+        case "k": return 0x28
+        case ";": return 0x29
+        case "\\": return 0x2A
+        case ",", "comma": return 0x2B
+        case "/", "slash": return 0x2C
+        case "n": return 0x2D
+        case "m": return 0x2E
+        case ".", "period": return 0x2F
+        case "`", "backtick", "grave": return 0x32
         case "return", "enter": return 0x24
         case "tab": return 0x30
         case "space": return 0x31
         case "delete", "backspace": return 0x33
+        case "forwarddelete": return 0x75
         case "escape", "esc": return 0x35
         case "up", "uparrow": return 0x7E
         case "down", "downarrow": return 0x7D
@@ -2914,6 +3024,18 @@ final class PaceActionExecutor {
         case "end": return 0x77
         case "pageup": return 0x74
         case "pagedown": return 0x79
+        case "f1": return 0x7A
+        case "f2": return 0x78
+        case "f3": return 0x63
+        case "f4": return 0x76
+        case "f5": return 0x60
+        case "f6": return 0x61
+        case "f7": return 0x62
+        case "f8": return 0x64
+        case "f9": return 0x65
+        case "f10": return 0x6D
+        case "f11": return 0x67
+        case "f12": return 0x6F
         default:
             return nil
         }
@@ -3107,7 +3229,91 @@ enum PaceParsedAction {
     case createThingsToDo(PaceThingsToDoRequest)
     case runShortcut(String)
     case openMessages(PaceMessageRequest)
+    case downloadFile(PaceFileDownloadRequest)
     case mcp(PaceMCPToolCall)
+
+    /// Audit-log operation slug — the verb part. Mirrors the case name.
+    var auditOperationName: String {
+        switch self {
+        case .click: return "click"
+        case .doubleClick: return "double_click"
+        case .clickCandidates: return "click_candidates"
+        case .type: return "type"
+        case .setTextValue: return "set_value"
+        case .editSelectedText: return "edit_selection"
+        case .undoLastMutation: return "undo"
+        case .pressKey: return "key_press"
+        case .readClipboard: return "clipboard_read"
+        case .snapWindow: return "window_snap"
+        case .scroll: return "scroll"
+        case .openApplication: return "open_app"
+        case .openURL: return "open_url"
+        case .controlMusic: return "music"
+        case .adjustVolume: return "volume"
+        case .adjustBrightness: return "brightness"
+        case .listCalendarEvents: return "calendar_read"
+        case .createCalendarEvent: return "calendar_create"
+        case .createReminder: return "reminder_create"
+        case .finder: return "finder"
+        case .createNote: return "note_create"
+        case .appendNote: return "note_append"
+        case .searchNotes: return "note_search"
+        case .composeMail: return "mail_draft"
+        case .createThingsToDo: return "things_create"
+        case .runShortcut: return "shortcut_run"
+        case .openMessages: return "messages_open"
+        case .downloadFile: return "download_file"
+        case .mcp: return "mcp_call"
+        }
+    }
+
+    /// Audit-log target — the noun: what app, server, or URL the action
+    /// touches. Sizes capped so even pathological inputs stay log-safe.
+    var auditTarget: String {
+        switch self {
+        case .openApplication(let appName):
+            return appName
+        case .openURL(let urlString):
+            return String(urlString.prefix(120))
+        case .runShortcut(let name):
+            return name
+        case .openMessages(let request):
+            return request.recipient ?? "messages"
+        case .composeMail(let draft):
+            return draft.recipients.first ?? "mail"
+        case .createCalendarEvent(let request):
+            return String(request.title.prefix(60))
+        case .createReminder(let request):
+            return String(request.title.prefix(60))
+        case .createNote(let request), .appendNote(let request):
+            return String(request.title.prefix(60))
+        case .searchNotes(let query):
+            return String(query.prefix(60))
+        case .createThingsToDo(let request):
+            return String(request.title.prefix(60))
+        case .finder(let request):
+            return String(request.path.prefix(120))
+        case .downloadFile(let request):
+            return String(request.url.absoluteString.prefix(120))
+        case .mcp(let toolCall):
+            return "\(toolCall.serverName).\(toolCall.toolName)"
+        case .pressKey(let keyName, let modifiers):
+            let modifierPrefix = modifiers.isEmpty
+                ? ""
+                : modifiers.map(\.rawValue).joined(separator: "+") + "+"
+            return "\(modifierPrefix)\(keyName)"
+        case .controlMusic(let command):
+            return command.rawValue
+        case .adjustVolume, .adjustBrightness:
+            return auditOperationName
+        case .scroll(let direction, _):
+            return direction.rawValue
+        case .snapWindow(let request):
+            return request.position.rawValue
+        default:
+            return ""
+        }
+    }
 
     var approvalDescription: String {
         switch self {
@@ -3184,6 +3390,8 @@ enum PaceParsedAction {
                 return "Open Messages for: \(recipient)"
             }
             return "Open Messages"
+        case .downloadFile(let downloadRequest):
+            return "Download file to ~/Downloads: \(downloadRequest.url.absoluteString)"
         case .mcp(let mcpToolCall):
             return "Call MCP tool: \(mcpToolCall.approvalDescription)"
         }
@@ -4548,6 +4756,16 @@ enum PaceActionTagParser {
                 toolName: toolName,
                 arguments: mcpArguments
             ))
+        case "file.download", "download.file":
+            let rawURLString = firstStringValue(for: ["url", "text"], in: arguments) ?? ""
+            guard let downloadURL = PaceFileDownloadURLValidator.validatedDownloadURL(from: rawURLString) else {
+                return nil
+            }
+            let suggestedFilename = firstStringValue(for: ["filename", "name", "title"], in: arguments)
+            return .downloadFile(PaceFileDownloadRequest(
+                url: downloadURL,
+                suggestedFilename: suggestedFilename
+            ))
         case "finder.reveal":
             let path = firstStringValue(for: ["path", "url"], in: arguments)
             guard let path, !path.isEmpty else { return nil }
@@ -4632,6 +4850,11 @@ enum PaceActionTagParser {
         case "notes.search", "note.search":
             if !hasNonEmptyString(for: ["query", "text", "title", "name"], in: arguments) {
                 issues.append("requires notes query")
+            }
+        case "file.download", "download.file":
+            let rawURLString = firstStringValue(for: ["url", "text"], in: arguments) ?? ""
+            if PaceFileDownloadURLValidator.validatedDownloadURL(from: rawURLString) == nil {
+                issues.append("requires a valid http(s) download url")
             }
         case "mail.draft", "mail.compose":
             if stringArrayValue(for: "to", in: arguments).isEmpty
@@ -5074,12 +5297,22 @@ enum PaceActionTagParser {
             return parseShortcutToolCall(toolCall)
         case .messages:
             return parseMessagesToolCall(toolCall)
+        case .downloadFile:
+            return parseDownloadFileToolCall(toolCall)
         }
     }
 
     private static func validateLocalToolCall(_ toolCall: ToolCallDTO, kind: PaceLocalToolKind) -> [String] {
         let mergedArguments = mergeMCPArguments(from: toolCall)
         var issues: [String] = []
+
+        // Defense-in-depth for the no-destructive-tools invariant (also
+        // enforced by registry startup validation): even if a destructive
+        // definition slipped past startup, its calls are rejected here
+        // before approval or execution.
+        if PaceToolRegistry.localTools.first(where: { $0.kind == kind })?.riskLevel == .destructive {
+            issues.append("destructive actions are not permitted")
+        }
 
         switch kind {
         case .click, .doubleClick:
@@ -5186,6 +5419,11 @@ enum PaceActionTagParser {
             }
         case .messages:
             break
+        case .downloadFile:
+            let rawURLString = firstStringValue(for: ["url", "text"], in: mergedArguments) ?? ""
+            if PaceFileDownloadURLValidator.validatedDownloadURL(from: rawURLString) == nil {
+                issues.append("requires a valid http(s) download url")
+            }
         }
 
         return issues
@@ -5219,10 +5457,20 @@ enum PaceActionTagParser {
             .first { !$0.isEmpty }
 
             guard let mcpToolName else { return nil }
+            var serverArguments = mergeMCPArguments(from: toolCall)
+            // Top-level `name`/`action`/`command` can carry the MCP tool name
+            // rather than a real tool argument — drop them when they only
+            // duplicate the resolved tool name so servers get clean arguments.
+            for routingKey in ["name", "action", "command"] {
+                if case .string(let routingValue)? = serverArguments[routingKey],
+                   routingValue == mcpToolName {
+                    serverArguments.removeValue(forKey: routingKey)
+                }
+            }
             return PaceMCPToolCall(
                 serverName: serverName,
                 toolName: mcpToolName,
-                arguments: mergeMCPArguments(from: toolCall)
+                arguments: serverArguments
             )
         }
 
@@ -5246,7 +5494,9 @@ enum PaceActionTagParser {
             ("command", toolCall.command.map { .string($0) }),
             ("direction", toolCall.direction.map { .string($0) }),
             ("title", toolCall.title.map { .string($0) }),
+            ("name", toolCall.name.map { .string($0) }),
             ("query", toolCall.query.map { .string($0) }),
+            ("action", toolCall.action.map { .string($0) }),
             ("text", toolCall.text.map { .string($0) }),
             ("body", toolCall.body.map { .string($0) }),
             ("notes", toolCall.notes.map { .string($0) }),
@@ -5373,6 +5623,9 @@ enum PaceActionTagParser {
             $0.trimmingCharacters(in: .whitespaces).lowercased()
         }
         guard let mainKeyToken = plusSeparatedTokens.last, !mainKeyToken.isEmpty else { return nil }
+        // Reject key names the executor cannot map to a virtual key code, so
+        // the planner gets a parse-time rejection instead of a mid-plan failure.
+        guard PaceActionExecutor.virtualKeyCode(forKeyName: mainKeyToken) != nil else { return nil }
 
         var modifiers: [PaceKeyboardModifier] = []
         for modifierToken in plusSeparatedTokens.dropLast() {
@@ -5677,6 +5930,19 @@ enum PaceActionTagParser {
         }
 
         return .createNote(noteRequest)
+    }
+
+    private static func parseDownloadFileToolCall(_ toolCall: ToolCallDTO) -> PaceParsedAction? {
+        let rawURLString = toolCall.url ?? toolCall.text ?? ""
+        guard let downloadURL = PaceFileDownloadURLValidator.validatedDownloadURL(from: rawURLString) else {
+            return nil
+        }
+        let suggestedFilename = (toolCall.name ?? toolCall.title)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return .downloadFile(PaceFileDownloadRequest(
+            url: downloadURL,
+            suggestedFilename: suggestedFilename?.isEmpty == false ? suggestedFilename : nil
+        ))
     }
 
     private static func parseMailToolCall(_ toolCall: ToolCallDTO) -> PaceParsedAction? {

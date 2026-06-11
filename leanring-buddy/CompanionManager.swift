@@ -61,6 +61,13 @@ enum CompanionVoiceState {
 final class CompanionManager: ObservableObject {
     @Published private(set) var voiceState: CompanionVoiceState = .idle
     @Published private(set) var lastTranscript: String?
+
+    /// Most recent partial transcript from the active dictation session.
+    /// Used by the post-release safety net so a slow WhisperKit finalize
+    /// doesn't lose the user's words — if no final transcript arrives
+    /// within the timeout but a partial exists, we treat the partial as
+    /// the final instead of dropping the whole turn as "no audio detected".
+    private var lastPartialTranscriptFromActiveDictation: String?
     @Published private(set) var currentAudioPowerLevel: CGFloat = 0
     @Published private(set) var hasAccessibilityPermission = false
     @Published private(set) var hasScreenRecordingPermission = false
@@ -132,8 +139,8 @@ final class CompanionManager: ObservableObject {
     /// planner entirely; pure knowledge takes a text-only planner path.
     /// The rule-based backend ships now; a tiny model can replace it
     /// once it beats these rules on local fixtures.
-    private lazy var intentClassifier: PaceIntentClassifier = {
-        return PaceIntentClassifier()
+    private lazy var intentClassifier: any PaceIntentClassifying = {
+        return PaceIntentClassifierFactory.makeDefault()
     }()
 
     // Main reasoning/planning model for screen and action turns.
@@ -156,6 +163,25 @@ final class CompanionManager: ObservableObject {
         localRetrievalSummary = localRetrievalSummaryText(from: retriever.sourceStatuses)
         return retriever
     }()
+
+    private lazy var screenTimeRetrievalConnector = PaceScreenTimeRetrievalConnector()
+
+    private lazy var postureMonitor: PacePostureMonitor = {
+        let monitor = PacePostureMonitor()
+        monitor.onPostureEvent = { [weak self] postureEvent in
+            self?.handlePostureEvent(postureEvent)
+        }
+        return monitor
+    }()
+
+    private lazy var appUsageTracker: PaceAppUsageTracker? = PaceAppUsageTracker(
+        rehydratedJournal: localRetriever.rehydratedAppUsageJournal(),
+        onFlushedDocument: { [weak self] flushedDocument in
+            guard let self else { return }
+            self.localRetriever.recordAppUsageDocument(flushedDocument)
+            self.refreshLocalRetrievalPublishedState()
+        }
+    )
 
     private lazy var calendarRetrievalConnector: PaceCalendarRetrievalConnector = {
         return PaceCalendarRetrievalConnector(eventStore: permissionEventStore)
@@ -322,10 +348,17 @@ final class CompanionManager: ObservableObject {
     /// separately because they are only needed when the user asks for those
     /// local tools.
     var allPermissionsGranted: Bool {
-        hasAccessibilityPermission
+        // Apple Speech permission only gates readiness when the ACTIVE
+        // transcription provider uses the Speech framework. WhisperKit
+        // transcribes without it, and requiring it anyway made the panel
+        // nag for a permission the app never requests.
+        let speechPermissionSatisfied = !buddyDictationManager
+            .transcriptionProvider.requiresSpeechRecognitionPermission
+            || hasSpeechRecognitionPermission
+        return hasAccessibilityPermission
             && hasScreenRecordingPermission
             && hasMicrophonePermission
-            && hasSpeechRecognitionPermission
+            && speechPermissionSatisfied
             && hasScreenContentPermission
     }
 
@@ -408,10 +441,61 @@ final class CompanionManager: ObservableObject {
         }
     }
 
+    // MARK: - Posture watch
+
+    @Published private(set) var isPostureWatchEnabled: Bool = PaceUserPreferencesStore.bool(
+        .isPostureWatchEnabled,
+        default: false
+    )
+    @Published private(set) var latestPostureStatus: String?
+
+    func setPostureWatchEnabled(_ enabled: Bool) {
+        guard enabled != isPostureWatchEnabled else { return }
+        isPostureWatchEnabled = enabled
+        PaceUserPreferencesStore.setBool(enabled, for: .isPostureWatchEnabled)
+        if enabled {
+            latestPostureStatus = "Calibrating — sit how you'd like to sit"
+            postureMonitor.start()
+        } else {
+            postureMonitor.stop()
+            latestPostureStatus = nil
+        }
+    }
+
+    func recalibratePostureWatch() {
+        guard isPostureWatchEnabled else { return }
+        postureMonitor.recalibrate()
+        latestPostureStatus = "Calibrating — sit how you'd like to sit"
+    }
+
+    private func handlePostureEvent(_ postureEvent: PacePostureEvent) {
+        switch postureEvent {
+        case .calibrated:
+            latestPostureStatus = "Watching posture"
+            print("📷 Posture watch calibrated")
+        case .alert(let assessment):
+            latestPostureStatus = "Nudged: \(assessment.displayName)"
+            print("📷 Posture alert: \(assessment.displayName)")
+            // Speak only when no turn is in flight — a posture nudge should
+            // never talk over an answer the user asked for.
+            guard voiceState == .idle else { return }
+            Task {
+                await streamingSentenceTTSPipeline.flushFinal(
+                    finalSpokenText: assessment.spokenNudge
+                )
+            }
+        }
+    }
+
     private func handleWatchModeEvent(_ event: PaceScreenWatchEvent) async {
         let summary = "\(event.category.displayName): \(event.screenLabel)"
         latestWatchModeSummary = summary
         print("👀 Watch mode: \(summary) meanDelta=\(String(format: "%.2f", event.diff.meanPixelDelta)) changedRatio=\(String(format: "%.3f", event.diff.changedPixelRatio))")
+
+        // Journal before the idle guard — that guard only exists to avoid
+        // speaking over an in-flight turn, but history should be captured
+        // regardless of what the voice pipeline is doing.
+        recordWatchModeEventInJournal(event)
 
         guard voiceState == .idle else { return }
 
@@ -427,6 +511,31 @@ final class CompanionManager: ObservableObject {
             responseOverlayManager.finishStreaming()
             voiceState = .idle
         }
+    }
+
+    private func recordWatchModeEventInJournal(_ event: PaceScreenWatchEvent) {
+        // Frontmost app name is a cheap synchronous NSWorkspace read — the
+        // same source the ASR contextual-phrase builder uses.
+        let frontmostApplicationName = NSWorkspace.shared.frontmostApplication?.localizedName
+        // Reuse the per-screen VLM cache only while it is fresh enough to
+        // still describe roughly what the user is looking at. Never run the
+        // VLM from here — journaling must stay free.
+        var freshCachedScreenDescription: String?
+        if let cachedScreenAnalysis = perScreenAnalysisCache[event.screenLabel],
+           event.detectedAt.timeIntervalSince(cachedScreenAnalysis.capturedAt) <= 120 {
+            let cachedDescription = cachedScreenAnalysis.analysis.description
+            if !cachedDescription.isEmpty {
+                freshCachedScreenDescription = cachedDescription
+            }
+        }
+        localRetriever.recordScreenWatchObservation(
+            screenLabel: event.screenLabel,
+            categoryDisplayName: event.category.displayName,
+            frontmostApplicationName: frontmostApplicationName,
+            screenDescription: freshCachedScreenDescription,
+            now: event.detectedAt
+        )
+        refreshLocalRetrievalPublishedState()
     }
 
     private func requestUserApprovalForActionPlan(
@@ -583,7 +692,7 @@ final class CompanionManager: ObservableObject {
         query: String,
         route: PaceIntentRoute,
         isFirstPlannerStep: Bool = true
-    ) -> String {
+    ) async -> String {
         guard isFirstPlannerStep else { return userPrompt }
         guard PaceRetrievalContextPolicy.shouldQueryLocalContext(
             forTranscript: query,
@@ -600,7 +709,11 @@ final class CompanionManager: ObservableObject {
         defer {
             refreshLocalRetrievalPublishedState()
         }
-        guard let localContextBlock = localRetriever.localContextBlock(for: retrievalQuery) else {
+        // Embedding-reranked when the local embeddings endpoint responds in
+        // time; degrades to plain lexical order otherwise.
+        guard let localContextBlock = await localRetriever.rerankedLocalContextBlock(
+            for: retrievalQuery
+        ) else {
             return userPrompt
         }
         return "\(localContextBlock)\n\nUSER REQUEST\n\(userPrompt)"
@@ -681,6 +794,9 @@ final class CompanionManager: ObservableObject {
         localRetriever.setSourceEnabled(isEnabled, for: source)
         refreshLocalRetrievalPublishedState()
 
+        if source == .appUsageHistory, !isEnabled {
+            appUsageTracker?.stop()
+        }
         guard isEnabled else { return }
         switch source {
         case .calendar:
@@ -701,8 +817,59 @@ final class CompanionManager: ObservableObject {
             refreshLocalRetrievalPublishedState()
         case .file:
             refreshFileRetrievalDocumentsIfAllowed(force: true)
-        case .paceHistory:
+        case .paceHistory, .screenWatchHistory:
+            // Both are recorded passively as turns/watch events happen —
+            // nothing to refresh on re-enable.
             break
+        case .appUsageHistory:
+            appUsageTracker?.start()
+        case .screenTime:
+            refreshScreenTimeRetrievalDocumentsIfAllowed(force: true)
+        }
+    }
+
+    /// Reads macOS's own Screen Time database into the retrieval index.
+    /// No prompt is ever shown: without Full Disk Access the read fails and
+    /// the source row shows the repair hint instead.
+    private func refreshScreenTimeRetrievalDocumentsIfAllowed(force: Bool = false) {
+        guard localRetriever.isSourceEnabled(.screenTime) else {
+            refreshLocalRetrievalPublishedState()
+            return
+        }
+        let connector = screenTimeRetrievalConnector
+        Task.detached(priority: .utility) { [weak self] in
+            let outcome: Result<[PaceRetrievalDocument], Error> = Result {
+                try connector.loadScreenTimeDocuments()
+            }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                switch outcome {
+                case .success(let documents):
+                    self.localRetriever.replaceDocuments(
+                        documents,
+                        forSource: .screenTime,
+                        status: .enabled(
+                            source: .screenTime,
+                            displayName: PaceRetrievalSource.screenTime.displayName,
+                            documentCount: documents.count
+                        )
+                    )
+                    print("🔎 Screen Time retrieval: \(documents.count) day(s) indexed")
+                case .failure(let error):
+                    self.localRetriever.replaceDocuments(
+                        [],
+                        forSource: .screenTime,
+                        status: .skipped(
+                            source: .screenTime,
+                            displayName: PaceRetrievalSource.screenTime.displayName,
+                            reason: (error as? LocalizedError)?.errorDescription
+                                ?? error.localizedDescription
+                        )
+                    )
+                    print("🔎 Screen Time retrieval skipped: \(error.localizedDescription)")
+                }
+                self.refreshLocalRetrievalPublishedState()
+            }
         }
     }
 
@@ -1049,6 +1216,60 @@ final class CompanionManager: ObservableObject {
         globalPushToTalkShortcutMonitor.simulateShortcutReleased()
     }
 
+    /// Entry point for the pace://listen deeplink. Folds into the same
+    /// PTT pipeline as an avatar tap, including the transcription-model
+    /// readiness rejection and overlay anchoring. Start-only — a deeplink
+    /// must never stop or interrupt an in-flight turn.
+    func beginListeningFromDeepLink() {
+        guard voiceState == .idle else {
+            print("🔗 Deeplink listen ignored — turn in flight (\(voiceState))")
+            return
+        }
+        currentDictationTrigger = .keyboard
+        globalPushToTalkShortcutMonitor.simulateShortcutPressed()
+    }
+
+    /// Entry point for the pace://chat deeplink. The transcript is treated
+    /// exactly like a spoken turn: same intent classification, fast paths,
+    /// retrieval injection, and — critically — the same action-approval
+    /// policy, so a deeplink can do nothing the user's own voice couldn't.
+    func submitChatTranscriptFromDeepLink(_ transcript: String) {
+        guard voiceState == .idle else {
+            print("🔗 Deeplink chat ignored — turn in flight (\(voiceState))")
+            return
+        }
+        print("🔗 Deeplink chat transcript: \(transcript)")
+
+        currentResponseTask?.cancel()
+        currentResponseTask = nil
+        ttsClient.stopPlayback()
+        streamingSentenceTTSPipeline.resetForNewTurn()
+        clearDetectedElementLocation()
+
+        // Transient cursor mode: surface the overlay for the duration of
+        // this turn, mirroring the PTT press path.
+        if !isPaceCursorEnabled && !isOverlayVisible {
+            overlayWindowManager.hasShownOverlayBefore = true
+            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
+            isOverlayVisible = true
+        }
+
+        lastTranscript = transcript
+        _ = PaceAPIAuditLog.shared.beginTurn()
+        PaceAnalytics.trackUserMessageSent(transcript: transcript)
+        currentTurnHUDState = .understanding("classifying intent")
+        responseOverlayManager.setAnchor(.belowRightOfCursor)
+        responseOverlayManager.showOverlayAndBeginStreaming()
+        responseOverlayManager.updateStreamingText(transcript)
+
+        // Stamp intent-commit now so TTFSW latency logging stays meaningful
+        // for deeplink turns (there is no PTT release to stamp it).
+        streamingSentenceTTSPipeline.markIntentCommitted()
+        startScreenContextPrewarmIfEnabled()
+        voiceState = .processing
+        sendTranscriptToPlannerWithScreenshot(transcript: transcript)
+    }
+
     func start() {
         refreshAllPermissions()
         print("🔑 Pace start — accessibility: \(hasAccessibilityPermission), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), screenContent: \(hasScreenContentPermission), onboarded: \(hasCompletedOnboarding)")
@@ -1080,6 +1301,23 @@ final class CompanionManager: ObservableObject {
             overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
             isOverlayVisible = true
         }
+
+        // Foreground app-usage journaling: permission-free NSWorkspace
+        // observation that powers "how did I spend my time?" answers.
+        // Honors the per-source retrieval toggle like every other source.
+        if localRetriever.isSourceEnabled(.appUsageHistory) {
+            appUsageTracker?.start()
+        }
+
+        // Posture watch resumes across launches when the user left it on.
+        if isPostureWatchEnabled {
+            latestPostureStatus = "Calibrating — sit how you'd like to sit"
+            postureMonitor.start()
+        }
+
+        // Screen Time indexes at launch — the read either works (Full Disk
+        // Access granted) or reports a skipped status; never a prompt.
+        refreshScreenTimeRetrievalDocumentsIfAllowed()
     }
 
     func clearDetectedElementLocation() {
@@ -1089,6 +1327,10 @@ final class CompanionManager: ObservableObject {
     }
 
     func stop() {
+        appUsageTracker?.stop()
+        if isPostureWatchEnabled {
+            postureMonitor.stop()
+        }
         globalPushToTalkShortcutMonitor.stop()
         buddyDictationManager.cancelCurrentDictation()
         overlayWindowManager.hideOverlay()
@@ -1129,7 +1371,17 @@ final class CompanionManager: ObservableObject {
 
         let micAuthStatus = AVCaptureDevice.authorizationStatus(for: .audio)
         hasMicrophonePermission = micAuthStatus == .authorized
-        hasSpeechRecognitionPermission = SFSpeechRecognizer.authorizationStatus() == .authorized
+        // SFSpeechRecognizer.authorizationStatus() is a TCC-gated call; even
+        // reading it crashes any process without NSSpeechRecognitionUsage-
+        // Description in Info.plist. Skip it entirely when the active
+        // transcription provider does not use Speech (WhisperKit), so the
+        // call site cannot regress past whichever usage-description is in
+        // the bundle today.
+        if buddyDictationManager.transcriptionProvider.requiresSpeechRecognitionPermission {
+            hasSpeechRecognitionPermission = SFSpeechRecognizer.authorizationStatus() == .authorized
+        } else {
+            hasSpeechRecognitionPermission = true
+        }
 
         let calendarAuthorizationStatus = EKEventStore.authorizationStatus(for: .event)
         let reminderAuthorizationStatus = EKEventStore.authorizationStatus(for: .reminder)
@@ -1501,6 +1753,7 @@ final class CompanionManager: ObservableObject {
                         let trimmedPartial = partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !trimmedPartial.isEmpty else { return }
                         Task { @MainActor [weak self] in
+                            self?.lastPartialTranscriptFromActiveDictation = trimmedPartial
                             self?.responseOverlayManager.updateStreamingText(trimmedPartial)
                         }
                     },
@@ -1511,6 +1764,7 @@ final class CompanionManager: ObservableObject {
                             // safety timer skips its cleanup pass.
                             self.transcriptArrivedSinceRelease = true
                             self.lastTranscript = finalTranscript
+                            _ = PaceAPIAuditLog.shared.beginTurn()
                             print("🗣️ Companion received transcript: \(finalTranscript)")
                             PaceAnalytics.trackUserMessageSent(transcript: finalTranscript)
                             self.currentTurnHUDState = .understanding("classifying intent")
@@ -1545,18 +1799,43 @@ final class CompanionManager: ObservableObject {
             transcriptArrivedSinceRelease = false
             transcriptSafetyTask?.cancel()
             transcriptSafetyTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                // 12s, not 5s — WhisperKit's first finalize after launch
+                // takes 5-10s on its own, and the previous timeout dropped
+                // the user's words too aggressively. The fallback below
+                // also rescues turns that have a partial but no final.
+                try? await Task.sleep(nanoseconds: 12_000_000_000)
                 await MainActor.run {
                     guard let self else { return }
                     guard !self.transcriptArrivedSinceRelease else { return }
-                    print("⚠️ Transcript didn't arrive within 5s — resetting state")
+                    // If WhisperKit gave us a partial but never finalized,
+                    // use the partial as the transcript — better than
+                    // dropping the whole turn as "no audio detected".
+                    if let rescuedPartial = self.lastPartialTranscriptFromActiveDictation,
+                       !rescuedPartial.isEmpty {
+                        print("🗣️ Final transcript timed out — rescuing partial: \(rescuedPartial)")
+                        self.transcriptArrivedSinceRelease = true
+                        self.lastTranscript = rescuedPartial
+                        self.lastPartialTranscriptFromActiveDictation = nil
+                        _ = PaceAPIAuditLog.shared.beginTurn()
+                        PaceAnalytics.trackUserMessageSent(transcript: rescuedPartial)
+                        self.currentTurnHUDState = .understanding("classifying intent")
+                        self.responseOverlayManager.updateStreamingText(rescuedPartial)
+                        self.sendTranscriptToPlannerWithScreenshot(transcript: rescuedPartial)
+                        return
+                    }
+                    print("⚠️ Transcript didn't arrive within 12s — resetting state")
+                    PaceAPIAuditLog.shared.record(
+                        subsystem: "dictation",
+                        operation: "finalize_timeout",
+                        target: self.buddyDictationManager.transcriptionProvider.displayName,
+                        durationMilliseconds: 12000,
+                        outcome: "no_transcript",
+                        detail: "no partial captured"
+                    )
                     self.responseOverlayManager.updateStreamingText("no audio detected")
                     self.responseOverlayManager.finishStreaming()
                     self.voiceState = .idle
                     self.currentTurnHUDState = .failed("No audio detected")
-                    // Mirror the normal turn-end cleanup: bring back the
-                    // walking avatar if the user has it on, and reset the
-                    // trigger so the next press defaults to keyboard.
                     if self.isWalkingAvatarEnabled {
                         self.avatarOverlayManager?.show()
                     }
@@ -1570,65 +1849,14 @@ final class CompanionManager: ObservableObject {
 
     // MARK: - AI Response Pipeline (plan-act-observe loop)
 
-    /// Picks a canned reply for chitchat turns the intent classifier
-    /// confidently identified. Hardcoded responses are intentionally
-    /// short and varied so back-to-back greetings don't feel scripted.
-    /// Returns a single utterance string ready for TTS — no further
-    /// processing needed.
-    private func cannedChitchatResponse(for transcript: String) -> String {
-        let lowercased = transcript.lowercased()
-        if lowercased.contains("thank") || lowercased.contains("appreciate") {
-            return ["you got it", "anytime", "happy to help", "no problem"].randomElement() ?? "you got it"
-        }
-        if lowercased.contains("bye") || lowercased.contains("later") || lowercased.contains("see you") {
-            return ["catch you later", "see you", "talk soon"].randomElement() ?? "see you"
-        }
-        if lowercased.contains("how are you") || lowercased.contains("how's it going") || lowercased.contains("what's up") {
-            return ["doing great, what's up?", "all good — what can I do?", "i'm good, you?"].randomElement() ?? "doing great"
-        }
-        if lowercased.contains("good morning") {
-            return "morning! what's the plan?"
-        }
-        if lowercased.contains("good evening") {
-            return "evening! what's up?"
-        }
-        if lowercased.contains("hi") || lowercased.contains("hello") || lowercased.contains("hey") {
-            return ["hey", "hey there", "hi! what's on your mind?"].randomElement() ?? "hey"
-        }
-        // Generic acknowledgement for "ok cool", "got it", "perfect", "nice", etc.
-        return ["got it", "okay", "sounds good"].randomElement() ?? "okay"
-    }
-
-    /// Short-circuit turn handler for the chitchat intent. Skips VLM,
-    /// planner, and the agent loop entirely. Dispatches a canned
-    /// response straight to TTS and the overlay bubble. Used by the
-    /// intent-classifier fast-path in `sendTranscriptToPlannerWithScreenshot`.
+    /// Chitchat short-circuit: skips screen capture and the VLM, but lets
+    /// the on-device LLM write the actual reply. The classifier still
+    /// decides "this is small talk" cheaply; reply generation goes through
+    /// the model so the answer fits the turn ("yes, i can hear you" for a
+    /// mic check; "morning, what's the plan" for a greeting; etc.) instead
+    /// of falling out of a hand-rolled if/contains chain.
     private func handleChitchatFastPath(transcript: String) {
-        let cannedReply = cannedChitchatResponse(for: transcript)
-        currentTurnHUDState = .done("quick reply")
-
-        // Append to conversation history so multi-turn context still sees
-        // the exchange — important so a follow-up question after a
-        // greeting still reads naturally to the planner.
-        recordConversationTurn(userTranscript: transcript, assistantResponse: cannedReply)
-
-        responseOverlayManager.showOverlayAndBeginStreaming()
-        responseOverlayManager.updateStreamingText(cannedReply)
-
-        currentResponseTask = Task {
-            voiceState = .responding
-            await streamingSentenceTTSPipeline.flushFinal(finalSpokenText: cannedReply)
-            // Wait for TTS to drain before returning to idle so the
-            // walking avatar's mouth animation matches.
-            while ttsClient.isPlaying {
-                try? await Task.sleep(nanoseconds: 80_000_000)
-            }
-            responseOverlayManager.finishStreaming()
-            voiceState = .idle
-            if isWalkingAvatarEnabled {
-                avatarOverlayManager?.show()
-            }
-        }
+        handleTextOnlyPlannerFastPath(transcript: transcript)
     }
 
     private func handleClarificationTurn(
@@ -1748,7 +1976,7 @@ final class CompanionManager: ObservableObject {
                     (userPlaceholder: entry.userTranscript, assistantResponse: entry.assistantResponse)
                 }
 
-                let userPromptForPlanner = appendLocalRetrievalContext(
+                let userPromptForPlanner = await appendLocalRetrievalContext(
                     to: transcript,
                     query: transcript,
                     route: .answerDirectly
@@ -1756,7 +1984,7 @@ final class CompanionManager: ObservableObject {
 
                 let (fullResponseText, _) = try await plannerForTextOnlyTurn.generateResponseStreaming(
                     images: [],
-                    systemPrompt: CompanionSystemPrompt.build(includeAgentMode: false),
+                    systemPrompt: CompanionSystemPrompt.buildTextOnly(),
                     conversationHistory: historyForPlanner,
                     userPrompt: userPromptForPlanner,
                     onTextChunk: { [weak self] accumulatedPlannerText in
@@ -1938,6 +2166,12 @@ final class CompanionManager: ObservableObject {
     /// planner re-anchors on the conversation history rather than a
     /// repeated user statement.
     private func sendTranscriptToPlannerWithScreenshot(transcript: String) {
+        Task { @MainActor in
+            await sendTranscriptToPlannerWithScreenshotAsync(transcript: transcript)
+        }
+    }
+
+    private func sendTranscriptToPlannerWithScreenshotAsync(transcript: String) async {
         currentResponseTask?.cancel()
         ttsClient.stopPlayback()
         pendingIntentClarification = nil
@@ -1966,7 +2200,7 @@ final class CompanionManager: ObservableObject {
         // Conservative: only fires when the classifier is confident
         // enough to return .chitchat (not .unknown). Anything ambiguous
         // falls through to the full pipeline.
-        let intentPrediction = intentClassifier.classify(transcript)
+        let intentPrediction = await intentClassifier.classify(transcript)
         currentTurnHUDState = .understanding(routeHUDDetail(for: intentPrediction))
         if let clarification = PaceIntentClarifier.clarification(for: transcript) {
             print("❔ Intent clarification: \(clarification.question)")
@@ -2070,7 +2304,7 @@ final class CompanionManager: ObservableObject {
                         screenCaptures: screenCaptures,
                         prewarmedContext: prewarmedContextForStep
                     )
-                    let userPromptForPlanner = appendLocalRetrievalContext(
+                    let userPromptForPlanner = await appendLocalRetrievalContext(
                         to: appendConfiguredMCPContext(to: screenContextPrompt),
                         query: transcript,
                         route: intentPrediction.route,
@@ -2979,14 +3213,20 @@ final class CompanionManager: ObservableObject {
         }
     }
 
-    /// Speaks a hardcoded error message via the system NSSpeechSynthesizer
-    /// when the main planner/TTS path fails — independent of LM Studio and
-    /// the main TTS pipeline so the user always hears something.
+    /// Surfaces a planner/TTS failure silently — visible in the response
+    /// overlay (already updated by the caller) and the audit log, but
+    /// never spoken through NSSpeechSynthesizer. The previous Apple-voice
+    /// "Something went wrong" line was rated worse than no audio.
     private func speakCreditsErrorFallback() {
-        let utterance = "Something went wrong on my end. Check the console for details."
-        let synthesizer = NSSpeechSynthesizer()
-        synthesizer.startSpeaking(utterance)
-        voiceState = .responding
+        currentTurnHUDState = .failed("response error")
+        PaceAPIAuditLog.shared.record(
+            subsystem: "pipeline",
+            operation: "error",
+            target: "companion-manager",
+            durationMilliseconds: 0,
+            outcome: "error",
+            detail: "main planner/TTS path failed"
+        )
     }
 
 }

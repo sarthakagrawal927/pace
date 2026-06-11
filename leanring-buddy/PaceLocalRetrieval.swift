@@ -17,6 +17,9 @@ enum PaceRetrievalSource: String, CaseIterable, Codable, Equatable {
     case contacts
     case competitiveResearch
     case paceHistory
+    case screenWatchHistory
+    case appUsageHistory
+    case screenTime
     case localPreference
 
     var displayName: String {
@@ -37,6 +40,12 @@ enum PaceRetrievalSource: String, CaseIterable, Codable, Equatable {
             return "Competitive research"
         case .paceHistory:
             return "Pace history"
+        case .screenWatchHistory:
+            return "Screen watch journal"
+        case .appUsageHistory:
+            return "App usage journal"
+        case .screenTime:
+            return "Screen Time (system)"
         case .localPreference:
             return "Preference"
         }
@@ -137,6 +146,7 @@ struct PaceRetrievalSourceStatus: Equatable {
 protocol PaceRetrievalStore: AnyObject {
     func reset()
     func upsertDocuments(_ documents: [PaceRetrievalDocument])
+    func documents(withSource source: PaceRetrievalSource) -> [PaceRetrievalDocument]
     func removeDocuments(withSource source: PaceRetrievalSource)
     func updateSourceStatus(_ status: PaceRetrievalSourceStatus)
     func setSourceEnabled(_ isEnabled: Bool, for source: PaceRetrievalSource)
@@ -313,8 +323,9 @@ enum PaceRetrievalContextPolicy {
         "from that", "from the latest", "from yesterday", "i edited",
         "i was editing", "latest", "last email", "last message", "last note",
         "previous", "recent", "said about", "that email", "that note",
-        "this morning", "we discussed", "what did", "what was", "where is",
-        "yesterday"
+        "did i use", "earlier today", "my time", "this morning", "using my",
+        "we discussed", "what apps", "what did", "what have i been",
+        "what was", "where is", "which apps", "yesterday"
     ]
 
     private static let localPreferencePhrases: [String] = [
@@ -424,6 +435,10 @@ final class PaceInMemoryRetrievalStore: PaceRetrievalStore {
 
         refreshSourceStatuses()
         persistDocuments()
+    }
+
+    func documents(withSource source: PaceRetrievalSource) -> [PaceRetrievalDocument] {
+        documentsById.values.filter { $0.source == source }
     }
 
     func removeDocuments(withSource source: PaceRetrievalSource) {
@@ -808,17 +823,24 @@ final class PaceInMemoryRetrievalStore: PaceRetrievalStore {
 final class PaceLocalRetriever: PaceRetriever {
     private let store: PaceRetrievalStore
     private let maximumContextCharacters: Int
+    private let embeddingClient: PaceTextEmbedding
     private(set) var lastQueryDurationMilliseconds: Int?
+    private var screenWatchJournal: PaceScreenWatchJournal?
 
     init(
         store: PaceRetrievalStore? = nil,
         maximumContextCharacters: Int = 900,
-        appliesPersistedSourcePreferences: Bool = true
+        appliesPersistedSourcePreferences: Bool = true,
+        embeddingClient: PaceTextEmbedding? = nil
     ) {
         self.store = store ?? PaceInMemoryRetrievalStore(
             persistenceURL: Self.defaultPersistenceURL()
         )
         self.maximumContextCharacters = maximumContextCharacters
+        // Short timeout: re-ranking sits on the turn path, so a cold or
+        // missing embedding model must degrade to lexical order quickly.
+        self.embeddingClient = embeddingClient
+            ?? LMStudioEmbeddingClient(requestTimeoutInSeconds: 2)
         if appliesPersistedSourcePreferences {
             applyPersistedSourcePreferences()
         }
@@ -880,6 +902,61 @@ final class PaceLocalRetriever: PaceRetriever {
         store.upsertDocuments(PaceCompetitiveResearchSeeds.documents)
     }
 
+    /// Journals a watch-mode screen event so "what did I do today?" style
+    /// questions can be answered from local history. Recording is free of
+    /// model calls — the screen description, when present, comes from the
+    /// caller's already-cached analysis.
+    func recordScreenWatchObservation(
+        screenLabel: String,
+        categoryDisplayName: String,
+        frontmostApplicationName: String?,
+        screenDescription: String?,
+        now: Date = Date()
+    ) {
+        guard isSourceEnabled(.screenWatchHistory) else { return }
+        var journal = screenWatchJournal ?? rehydratedScreenWatchJournal(now: now)
+        let changedDocument = journal.record(PaceScreenWatchJournalEntry(
+            recordedAt: now,
+            screenLabel: screenLabel,
+            categoryDisplayName: categoryDisplayName,
+            frontmostApplicationName: frontmostApplicationName,
+            screenDescription: screenDescription
+        ))
+        screenWatchJournal = journal
+        if let changedDocument {
+            store.upsertDocuments([changedDocument])
+        }
+    }
+
+    /// Rebuilds the in-memory journal from persisted documents on the first
+    /// event after launch — without this, the first post-restart event would
+    /// upsert a same-id day bucket and clobber the earlier history. Also the
+    /// single point where the retention window is enforced.
+    private func rehydratedScreenWatchJournal(now: Date) -> PaceScreenWatchJournal {
+        var journal = PaceScreenWatchJournal(
+            rehydratingFrom: store.documents(withSource: .screenWatchHistory),
+            now: now
+        )
+        replaceDocuments(journal.allDocuments(now: now), forSource: .screenWatchHistory)
+        return journal
+    }
+
+    /// Rebuilds the app-usage journal from persisted documents and enforces
+    /// its retention window. Called once when the tracker starts.
+    func rehydratedAppUsageJournal(now: Date = Date()) -> PaceAppUsageJournal {
+        var journal = PaceAppUsageJournal(
+            rehydratingFrom: store.documents(withSource: .appUsageHistory),
+            now: now
+        )
+        replaceDocuments(journal.allDocuments(now: now), forSource: .appUsageHistory)
+        return journal
+    }
+
+    func recordAppUsageDocument(_ document: PaceRetrievalDocument) {
+        guard isSourceEnabled(.appUsageHistory) else { return }
+        store.upsertDocuments([document])
+    }
+
     func recordPaceHistory(
         userTranscript: String,
         assistantResponse: String,
@@ -902,7 +979,110 @@ final class PaceLocalRetriever: PaceRetriever {
 
     func localContextBlock(for query: PaceRetrievalQuery) -> String? {
         let retrievalStartedAt = Date()
-        let matches = store.search(query)
+        let matches = selectMatches(
+            from: lexicalCandidateMatches(for: query),
+            limit: query.maximumResultCount
+        )
+        return composeContextBlock(from: matches, startedAt: retrievalStartedAt)
+    }
+
+    /// Async variant that re-ranks the lexical candidate pool by embedding
+    /// similarity (local /v1/embeddings) before source-diverse selection.
+    /// Best-effort: endpoint down, model missing, or timeout falls back to
+    /// the plain lexical order — never worse than `localContextBlock`.
+    func rerankedLocalContextBlock(for query: PaceRetrievalQuery) async -> String? {
+        let retrievalStartedAt = Date()
+        let candidateMatches = lexicalCandidateMatches(for: query)
+        guard !candidateMatches.isEmpty else {
+            return composeContextBlock(from: [], startedAt: retrievalStartedAt)
+        }
+        let rerankedMatches = await PaceEmbeddingReranker.rerank(
+            queryText: query.text,
+            matches: candidateMatches,
+            embedder: embeddingClient
+        )
+        let matches = selectMatches(from: rerankedMatches, limit: query.maximumResultCount)
+        return composeContextBlock(from: matches, startedAt: retrievalStartedAt)
+    }
+
+    /// Wider-than-requested lexical candidate pool so re-ranking and source
+    /// diversity have something to work with.
+    private func lexicalCandidateMatches(for query: PaceRetrievalQuery) -> [PaceRetrievalMatch] {
+        let candidatePoolQuery = PaceRetrievalQuery(
+            text: query.text,
+            maximumResultCount: query.maximumResultCount * 3,
+            maximumSnippetCharacters: query.maximumSnippetCharacters
+        )
+        return filterSelfEchoMatches(store.search(candidatePoolQuery), queryText: query.text)
+    }
+
+    /// Drops past Pace turns whose QUESTION was the same as the current
+    /// query. They match near-perfectly (lexically AND semantically), crowd
+    /// the context block, and teach the model to parrot its own previous
+    /// answer — including previous WRONG answers. A repeat of the question
+    /// means the prior answer didn't satisfy, so it is never useful context.
+    /// Only the past turn's "User:" segment is compared (for equality, not
+    /// containment), so history that merely mentions the topic stays.
+    private func filterSelfEchoMatches(
+        _ matches: [PaceRetrievalMatch],
+        queryText: String
+    ) -> [PaceRetrievalMatch] {
+        let normalizedQuery = Self.normalizedForEchoComparison(queryText)
+        guard !normalizedQuery.isEmpty else { return matches }
+        return matches.filter { match in
+            guard match.source == .paceHistory,
+                  let pastQuestion = Self.pastQuestionSegment(ofPaceHistoryExcerpt: match.excerpt) else {
+                return true
+            }
+            return Self.normalizedForEchoComparison(pastQuestion) != normalizedQuery
+        }
+    }
+
+    /// Extracts the transcript between the "User:" and "Pace:" markers that
+    /// `recordPaceHistory` writes. Nil when the excerpt has no marker (the
+    /// snippet started mid-document, or the doc isn't turn-shaped).
+    private static func pastQuestionSegment(ofPaceHistoryExcerpt excerpt: String) -> String? {
+        let lowercasedExcerpt = excerpt.lowercased()
+        guard let userMarkerRange = lowercasedExcerpt.range(of: "user:") else { return nil }
+        let afterUserMarker = lowercasedExcerpt[userMarkerRange.upperBound...]
+        guard let paceMarkerRange = afterUserMarker.range(of: "pace:") else {
+            return String(afterUserMarker)
+        }
+        return String(afterUserMarker[..<paceMarkerRange.lowerBound])
+    }
+
+    private static func normalizedForEchoComparison(_ text: String) -> String {
+        String(text.lowercased().unicodeScalars.filter {
+            CharacterSet.alphanumerics.contains($0)
+        })
+    }
+
+    /// Source-diverse selection: best match per source first, remaining
+    /// slots filled in order. Without this, one chatty source can
+    /// monopolize the block — e.g. recent Pace turns that echo the user's
+    /// exact question outrank the journal/data documents that actually hold
+    /// the answer, and the planner ends up parroting its own previous reply.
+    private func selectMatches(
+        from candidateMatches: [PaceRetrievalMatch],
+        limit: Int
+    ) -> [PaceRetrievalMatch] {
+        var diverseMatches: [PaceRetrievalMatch] = []
+        var overflowMatches: [PaceRetrievalMatch] = []
+        var seenSources: Set<PaceRetrievalSource> = []
+        for candidateMatch in candidateMatches {
+            if seenSources.insert(candidateMatch.source).inserted {
+                diverseMatches.append(candidateMatch)
+            } else {
+                overflowMatches.append(candidateMatch)
+            }
+        }
+        return Array((diverseMatches + overflowMatches).prefix(limit))
+    }
+
+    private func composeContextBlock(
+        from matches: [PaceRetrievalMatch],
+        startedAt retrievalStartedAt: Date
+    ) -> String? {
         let retrievalDurationMilliseconds = Int(Date().timeIntervalSince(retrievalStartedAt) * 1000)
         lastQueryDurationMilliseconds = retrievalDurationMilliseconds
         let sourceCount = Set(matches.map(\.source)).count
@@ -914,7 +1094,10 @@ final class PaceLocalRetriever: PaceRetriever {
         print("🔎 Local retrieval: \(matches.count) match(es) in \(retrievalDurationMilliseconds)ms")
         guard !matches.isEmpty else { return nil }
 
-        var lines = ["LOCAL CONTEXT"]
+        // The date anchor lets the model relate day-stamped journal/calendar
+        // documents to "today"/"yesterday" questions instead of hedging.
+        let todayKey = PaceAppUsageJournal.dayFormatter.string(from: Date())
+        var lines = ["LOCAL CONTEXT (today is \(todayKey))"]
         var characterCount = lines[0].count
 
         for (index, match) in matches.enumerated() {

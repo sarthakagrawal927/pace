@@ -197,6 +197,24 @@ struct PaceSettingsWindowView: View {
                     set: { companionManager.setWatchModeEnabled($0) }
                 )
             )
+            settingsToggleRow(
+                title: "Posture watch (camera)",
+                subtitle: companionManager.latestPostureStatus
+                    ?? "Gentle spoken nudge when you slouch or lean in. One camera frame every ten seconds, analyzed on-device, never stored.",
+                isOn: Binding(
+                    get: { companionManager.isPostureWatchEnabled },
+                    set: { companionManager.setPostureWatchEnabled($0) }
+                )
+            )
+            if companionManager.isPostureWatchEnabled {
+                HStack {
+                    Spacer()
+                    settingsButton("Recalibrate posture", systemName: "figure.seated.side") {
+                        companionManager.recalibratePostureWatch()
+                    }
+                }
+                .padding(.top, 6)
+            }
         }
     }
 
@@ -237,7 +255,7 @@ struct PaceSettingsWindowView: View {
                     .foregroundColor(DS.Colors.textSecondary)
 
                 if configuredMCPServerNames.isEmpty {
-                    Text("No MCP servers configured yet. Start with Altic MCP or AirMCP, then add its command to the config file.")
+                    Text("No MCP servers configured yet. Create / Open seeds apple-mcp (Contacts, Notes, Messages, Mail, Reminders, Calendar, Maps); add any other MCP server by editing the same config file.")
                         .font(.system(size: 12))
                         .foregroundColor(DS.Colors.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -683,9 +701,5 @@ struct PaceSettingsWindowView: View {
         companionManager.addLocalRetrievalFileRootURLs(openPanel.urls)
     }
 
-    private static let defaultMCPConfigText = """
-    {
-      "mcpServers": {}
-    }
-    """
+    private static let defaultMCPConfigText = PaceMCPServerRegistry.starterConfigurationJSON
 }
