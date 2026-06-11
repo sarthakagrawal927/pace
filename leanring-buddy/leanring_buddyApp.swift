@@ -95,13 +95,11 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
             )
             print("🧪 Pace: runtime smoke-test hooks enabled")
         }
-        // Auto-open the panel ONLY on the first-ever launch (onboarding).
-        // Re-opening it every launch when ANY permission is missing was
-        // perceived as spam — once the user has gone through onboarding
-        // once, they can open the panel themselves from the menu bar.
-        if !companionManager.hasCompletedOnboarding {
-            menuBarPanelManager.showPanelOnLaunch()
-        }
+        // First-launch onboarding: dedicated welcome window walking through
+        // the required permissions, replacing the old "shove the notch
+        // panel in their face" pattern. Future launches go straight to the
+        // menu bar — the user opens the panel themselves.
+        PaceOnboardingWindowManager.shared.showOnboardingIfNeeded()
         registerAsLoginItemIfNeeded()
 
         hasFinishedLaunching = true
