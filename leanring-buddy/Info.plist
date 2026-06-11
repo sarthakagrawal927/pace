@@ -7,7 +7,7 @@
 	<key>AlwaysRunLocalVLMRegardlessOfTranscript</key>
 	<string>false</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.3</string>
+	<string>0.3.4</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -20,7 +20,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>5</string>
+	<string>6</string>
 	<key>EnableActions</key>
 	<string>true</string>
 	<key>LSUIElement</key>
