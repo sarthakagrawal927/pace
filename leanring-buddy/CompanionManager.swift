@@ -1358,7 +1358,15 @@ final class CompanionManager: ObservableObject {
         let previouslyHadSpeechRecognition = hasSpeechRecognitionPermission
         let previouslyHadAll = allPermissionsGranted
 
-        let currentlyHasAccessibility = WindowPositionManager.hasAccessibilityPermission()
+        // PacePermissionService owns the actual probing — including the
+        // live SCShareableContent / AXIsProcessTrustedWithOptions checks
+        // that defeat macOS's stale-status-cache bugs. Reading from it
+        // here means every UI surface and feature gate sees one truth
+        // (used to be 20+ direct calls across 8 files, each with its
+        // own subtle caching quirks).
+        let permissionService = PacePermissionService.shared
+        permissionService.refresh()
+        let currentlyHasAccessibility = permissionService.isGranted(.accessibility)
         hasAccessibilityPermission = currentlyHasAccessibility
 
         if currentlyHasAccessibility {
@@ -1367,10 +1375,8 @@ final class CompanionManager: ObservableObject {
             globalPushToTalkShortcutMonitor.stop()
         }
 
-        hasScreenRecordingPermission = WindowPositionManager.hasScreenRecordingPermission()
-
-        let micAuthStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-        hasMicrophonePermission = micAuthStatus == .authorized
+        hasScreenRecordingPermission = permissionService.isGranted(.screenRecording)
+        hasMicrophonePermission = permissionService.isGranted(.microphone)
         // SFSpeechRecognizer.authorizationStatus() is a TCC-gated call; even
         // reading it crashes any process without NSSpeechRecognitionUsage-
         // Description in Info.plist. Skip it entirely when the active
@@ -1385,8 +1391,8 @@ final class CompanionManager: ObservableObject {
 
         let calendarAuthorizationStatus = EKEventStore.authorizationStatus(for: .event)
         let reminderAuthorizationStatus = EKEventStore.authorizationStatus(for: .reminder)
-        hasCalendarPermission = Self.isEventKitPermissionGranted(calendarAuthorizationStatus)
-        hasRemindersPermission = Self.isEventKitPermissionGranted(reminderAuthorizationStatus)
+        hasCalendarPermission = permissionService.isGranted(.calendar)
+        hasRemindersPermission = permissionService.isGranted(.reminders)
         shouldRequestCalendarPermission = calendarAuthorizationStatus == .notDetermined
         shouldRequestRemindersPermission = reminderAuthorizationStatus == .notDetermined
         refreshCalendarRetrievalDocumentsIfAllowed()
