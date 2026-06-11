@@ -40,6 +40,14 @@ RELEASES_DIR="${PROJECT_DIR}/releases"
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
+# xcodebuild lives in Xcode.app, not the Command Line Tools shim. Many
+# Macs default xcode-select to /Library/Developer/CommandLineTools and
+# xcodebuild fails with "requires Xcode" in that state. Pin DEVELOPER_DIR
+# here so the release works regardless of the user's xcode-select state.
+if [ -z "${DEVELOPER_DIR:-}" ] && [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
+    export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+fi
+
 SPARKLE_BIN=$(find ~/Library/Developer/Xcode/DerivedData -path "*sparkle/Sparkle/bin/sign_update" 2>/dev/null | head -1)
 if [ -z "$SPARKLE_BIN" ]; then
     SPARKLE_BIN=$(find /tmp/pace-test-derived-data -path "*sparkle/Sparkle/bin/sign_update" 2>/dev/null | head -1)
