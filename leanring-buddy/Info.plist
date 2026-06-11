@@ -7,7 +7,7 @@
 	<key>AlwaysRunLocalVLMRegardlessOfTranscript</key>
 	<string>false</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.5</string>
+	<string>0.3.8</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -20,7 +20,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>7</string>
+	<string>8</string>
 	<key>EnableActions</key>
 	<string>true</string>
 	<key>LSUIElement</key>
@@ -81,9 +81,9 @@
 	<string>controlOption</string>
 	<key>RetrievalEmbeddingModel</key>
 	<string>text-embedding-nomic-embed-text-v1.5</string>
-	<key>SUEnableAutomaticChecks</key>
-	<true/>
 	<key>SUAutomaticallyUpdate</key>
+	<true/>
+	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>
 	<string>https://raw.githubusercontent.com/sarthakagrawal927/pace/main/appcast.xml</string>

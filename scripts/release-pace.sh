@@ -110,48 +110,66 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR" "$RELEASES_DIR"
 
 echo "📦 Building Pace.app (Release)..."
-# Prefer a real Apple Developer cert if one is in the keychain. Ad-hoc
-# signing makes every rebuild a NEW app to TCC (cdhash-based identity),
-# which is why granting permissions never persisted across versions. A
-# stable Authority (Apple Development / Developer ID) makes TCC match
-# on the signing identity instead, preserving grants across releases.
-# Falls back to ad-hoc if no Apple cert is available.
-CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-}"
-if [ -z "$CODE_SIGN_IDENTITY" ]; then
-    # find-identity -p codesigning -v lists only valid code-signing identities.
-    # Prefer Developer ID (proper distribution) over Apple Development.
-    CODE_SIGN_IDENTITY=$(security find-identity -p codesigning -v \
-        | grep -E 'Developer ID Application:' \
+# Pick a signing strategy. The project uses automatic signing, so the
+# correct override is DEVELOPMENT_TEAM (the team ID of an Apple cert in
+# the keychain) — NOT CODE_SIGN_IDENTITY, which conflicts with automatic
+# signing AND doesn't propagate to Swift Package dependencies like
+# WhisperKit.
+#
+# With a team ID set, every embedded SPM target gets the same Apple
+# identity, releases get a stable Authority, and TCC preserves grants
+# across versions.
+DEVELOPMENT_TEAM_ID="${DEVELOPMENT_TEAM:-}"
+if [ -z "$DEVELOPMENT_TEAM_ID" ]; then
+    # Pull the team ID out of the first Apple cert in the keychain.
+    # The team ID is the (XXXXXXXXXX) suffix in 'Apple Development: Name (XXXXXXXXXX)'.
+    DEVELOPMENT_TEAM_ID=$(security find-identity -p codesigning -v \
+        | grep -E 'Apple Development:|Developer ID Application:' \
         | head -1 \
-        | sed -E 's/.*"(.*)"/\1/')
-    if [ -z "$CODE_SIGN_IDENTITY" ]; then
-        CODE_SIGN_IDENTITY=$(security find-identity -p codesigning -v \
-            | grep -E 'Apple Development:' \
-            | head -1 \
-            | sed -E 's/.*"(.*)"/\1/')
+        | sed -E 's/.*\(([A-Z0-9]+)\).*/\1/')
+fi
+# Try team-based automatic signing first when a cert is available.
+# Xcode wants a platform-specific cert ('Mac Development' or 'Developer
+# ID Application') — a generic 'Apple Development' cert in the keychain
+# isn't enough on its own. If automatic signing errors out, fall back
+# silently to ad-hoc so we always produce a release.
+build_succeeded="no"
+if [ -n "$DEVELOPMENT_TEAM_ID" ]; then
+    echo "🔏 Attempting team-signed build with team: $DEVELOPMENT_TEAM_ID"
+    if xcodebuild \
+        -project "${PROJECT_DIR}/leanring-buddy.xcodeproj" \
+        -scheme "$SCHEME" \
+        -configuration Release \
+        -destination 'platform=macOS,arch=arm64' \
+        -derivedDataPath "$BUILD_DIR" \
+        DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM_ID" \
+        MARKETING_VERSION="$next_version" \
+        CURRENT_PROJECT_VERSION="$next_build" \
+        > "$BUILD_DIR/build.log" 2>&1; then
+        build_succeeded="yes"
+    else
+        echo "⚠️  Team-signed build failed (likely missing platform-specific cert) — retrying with ad-hoc."
+        # Wipe the half-built derived data so the retry starts clean.
+        rm -rf "$BUILD_DIR"
+        mkdir -p "$BUILD_DIR"
     fi
 fi
-if [ -z "$CODE_SIGN_IDENTITY" ]; then
-    CODE_SIGN_IDENTITY="-"
-    code_signing_required="NO"
-    echo "ℹ️  No Apple cert found — falling back to ad-hoc signing (TCC grants will reset on each release)."
-else
-    code_signing_required="YES"
-    echo "🔏 Signing with: $CODE_SIGN_IDENTITY"
+if [ "$build_succeeded" != "yes" ]; then
+    DEVELOPMENT_TEAM_ID=""
+    echo "🔏 Building ad-hoc (TCC grants reset per release until a platform-matched Apple cert is added)."
+    xcodebuild \
+        -project "${PROJECT_DIR}/leanring-buddy.xcodeproj" \
+        -scheme "$SCHEME" \
+        -configuration Release \
+        -destination 'platform=macOS,arch=arm64' \
+        -derivedDataPath "$BUILD_DIR" \
+        CODE_SIGN_IDENTITY="-" \
+        CODE_SIGNING_REQUIRED=NO \
+        CODE_SIGNING_ALLOWED=YES \
+        MARKETING_VERSION="$next_version" \
+        CURRENT_PROJECT_VERSION="$next_build" \
+        > "$BUILD_DIR/build.log" 2>&1
 fi
-
-xcodebuild \
-    -project "${PROJECT_DIR}/leanring-buddy.xcodeproj" \
-    -scheme "$SCHEME" \
-    -configuration Release \
-    -destination 'platform=macOS,arch=arm64' \
-    -derivedDataPath "$BUILD_DIR" \
-    CODE_SIGN_IDENTITY="$CODE_SIGN_IDENTITY" \
-    CODE_SIGNING_REQUIRED="$code_signing_required" \
-    CODE_SIGNING_ALLOWED=YES \
-    MARKETING_VERSION="$next_version" \
-    CURRENT_PROJECT_VERSION="$next_build" \
-    > "$BUILD_DIR/build.log" 2>&1
 
 APP_PATH="$BUILD_DIR/Build/Products/Release/${APP_NAME}.app"
 if [ ! -d "$APP_PATH" ]; then
@@ -175,11 +193,22 @@ echo "✅ Bundled start-tts-server.sh into Resources/"
 # Developer Team ID. Without this, dyld refuses to load Sparkle.framework
 # because its prebuilt code signature has a different Team ID than the
 # ad-hoc-signed Pace binary — the exact crash that hit v0.3.0's first install.
-echo "🔐 Resigning embedded frameworks with $CODE_SIGN_IDENTITY..."
+# Resign frameworks — Xcode already signed them with the team identity
+# when DEVELOPMENT_TEAM was set; this is a no-op in that case. Only
+# meaningful when we fell back to ad-hoc.
+codesign_identity_for_resign="-"
+if [ -n "$DEVELOPMENT_TEAM_ID" ]; then
+    codesign_identity_for_resign=$(security find-identity -p codesigning -v \
+        | grep -E "\($DEVELOPMENT_TEAM_ID\)" \
+        | head -1 \
+        | sed -E 's/.*"(.*)"/\1/')
+    codesign_identity_for_resign="${codesign_identity_for_resign:--}"
+fi
+echo "🔐 Resigning embedded frameworks with $codesign_identity_for_resign..."
 find "${APP_PATH}/Contents/Frameworks" -maxdepth 2 -name "*.framework" -type d 2>/dev/null | while read framework_path; do
-    codesign --force --deep --sign "$CODE_SIGN_IDENTITY" "${framework_path}" 2>&1 | tail -1
+    codesign --force --deep --sign "$codesign_identity_for_resign" "${framework_path}" 2>&1 | tail -1
 done
-codesign --force --deep --sign "$CODE_SIGN_IDENTITY" "${APP_PATH}" 2>&1 | tail -1
+codesign --force --deep --sign "$codesign_identity_for_resign" "${APP_PATH}" 2>&1 | tail -1
 codesign --verify --deep "${APP_PATH}" && echo "✅ Codesign verify passed"
 # Show the signing Authority so the user can confirm TCC will preserve
 # grants — same Authority on every release = same TCC identity = grants
