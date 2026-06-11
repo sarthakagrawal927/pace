@@ -25,6 +25,12 @@
 	<string>true</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>CloudBridgeBaseURL</key>
+	<string>http://localhost:3456</string>
+	<key>CloudBridgeDefaultModel</key>
+	<string>sonnet</string>
+	<key>CloudBridgeDefaultUpstream</key>
+	<string>claude</string>
 	<key>LocalPlannerBaseURL</key>
 	<string>http://localhost:1234/v1</string>
 	<key>LocalPlannerModelIdentifier</key>

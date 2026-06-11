@@ -88,6 +88,24 @@ enum PaceLocalEndpointGuard {
         }
     }
 
+    /// Separate validator for the cloud-bridge endpoint. Lives behind its own
+    /// function so that future tightening of the planner guard (e.g. adding
+    /// allowed-port restrictions) does not accidentally affect the bridge entry
+    /// point, which has different operational assumptions. Delegates to the
+    /// existing loopback validator under the hood.
+    ///
+    /// The fact that the bridge then fans out to Anthropic/OpenAI/Google is the
+    /// user's consented choice; Pace's guard only cares that *Pace* is speaking
+    /// to a loopback address, not a remote host.
+    static func validatedCloudBridgeURL(from configuredURLString: String?) -> URL {
+        let defaultCloudBridgeURL = URL(string: "http://localhost:3456")!
+        return resolvedLocalOpenAICompatibleBaseURL(
+            configuredURLString: configuredURLString,
+            defaultURL: defaultCloudBridgeURL,
+            settingName: "CloudBridgeBaseURL"
+        )
+    }
+
     nonisolated static func isLoopbackHost(_ normalizedHost: String) -> Bool {
         if normalizedHost == "localhost" || normalizedHost == "::1" {
             return true

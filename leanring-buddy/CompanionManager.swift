@@ -424,6 +424,86 @@ final class CompanionManager: ObservableObject {
         PaceUserPreferencesStore.setBool(enabled, for: .requiresActionApproval)
     }
 
+    // MARK: - Cloud bridge published state
+
+    /// The user's chosen bridge routing mode. Persisted via `PaceCloudBridgeConsent`.
+    @Published private(set) var cloudBridgeMode: PaceCloudBridgeMode = {
+        PaceCloudBridgeConsent.loadConfiguration().mode
+    }()
+
+    /// Which CLI upstream the bridge should use (Claude Code / Codex / Gemini).
+    @Published private(set) var cloudBridgeUpstream: PaceCloudBridgeUpstream = {
+        PaceCloudBridgeConsent.loadConfiguration().upstream
+    }()
+
+    /// Model identifier string forwarded to the bridge (e.g. "sonnet").
+    @Published private(set) var cloudBridgeModel: String = {
+        PaceCloudBridgeConsent.loadConfiguration().model
+    }()
+
+    /// Set to true when a cloud-bridge SSE stream is actively in progress.
+    /// Observed by `PaceMenuBarOverlay` to tint the right-icon slot amber.
+    @Published private(set) var isCloudBridgeCallActive: Bool = false
+
+    func setCloudBridgeMode(_ mode: PaceCloudBridgeMode) {
+        cloudBridgeMode = mode
+        PaceCloudBridgeConsent.saveMode(mode)
+        // Rebuild the planner so the new mode takes effect on the next turn
+        // without requiring an app restart.
+        plannerClient = BuddyPlannerClientFactory.makeDefault()
+    }
+
+    func setCloudBridgeUpstream(_ upstream: PaceCloudBridgeUpstream) {
+        cloudBridgeUpstream = upstream
+        PaceCloudBridgeConsent.saveUpstream(upstream)
+        plannerClient = BuddyPlannerClientFactory.makeDefault()
+    }
+
+    func setCloudBridgeModel(_ model: String) {
+        cloudBridgeModel = model
+        PaceCloudBridgeConsent.saveModel(model)
+        plannerClient = BuddyPlannerClientFactory.makeDefault()
+    }
+
+    /// Shows the one-time cloud-bridge consent NSAlert.
+    /// Returns true if the user tapped "Use the bridge", false if they cancelled.
+    /// Persists acceptance via `PaceCloudBridgeConsent.acceptConsent()` on approval.
+    func requestCloudBridgeConsentIfNeeded() -> Bool {
+        let currentConfiguration = PaceCloudBridgeConsent.loadConfiguration()
+        guard !currentConfiguration.hasUserAcceptedConsent else {
+            // Already accepted — no dialog needed.
+            return true
+        }
+
+        let consentAlert = NSAlert()
+        consentAlert.alertStyle = .warning
+        consentAlert.messageText = "Send data outside Pace?"
+        consentAlert.informativeText = """
+The cloud bridge sends your transcript and the planner system \
+prompt to the upstream CLI you choose (Claude Code, Codex, or \
+Gemini CLI), which in turn calls Anthropic, OpenAI, or Google \
+servers respectively. Their data-handling policies apply.
+
+Pace will show an indicator in the menu-bar capsule whenever a \
+bridge call is in flight. Push-to-talk text-only turns still \
+default to your local planner; the bridge is used only for \
+turns Pace would otherwise refuse as "too hard locally."
+
+You can turn this off at any time in Settings → Cloud bridge.
+"""
+        consentAlert.addButton(withTitle: "Use the bridge")
+        consentAlert.addButton(withTitle: "Keep local only")
+
+        NSApp.activate(ignoringOtherApps: true)
+        let userResponse = consentAlert.runModal()
+        let userAccepted = userResponse == .alertFirstButtonReturn
+
+        if userAccepted {
+            PaceCloudBridgeConsent.acceptConsent()
+        }
+        return userAccepted
+    }
+
     @Published var isAlwaysListeningEnabled: Bool = PaceUserPreferencesStore
         .bool(.isAlwaysListeningEnabled, default: false)
 
@@ -2330,7 +2410,43 @@ final class CompanionManager: ObservableObject {
             handleClarificationTurn(transcript: transcript, clarification: clarification)
             return
         }
-        if let unsupportedResponse = PaceIntentUnsupportedDetector.unsupportedResponse(
+        // When the intent is phoneLargeModel and the user has set up the cloud bridge,
+        // route the turn through the bridge instead of refusing it with a local-only message.
+        // This is the one intentional break of the no-cloud-LLM principle — consent-gated.
+        if intentPrediction.route == .phoneLargeModel {
+            let currentBridgeConfiguration = PaceCloudBridgeConsent.loadConfiguration()
+            let bridgeIsActiveForThisTurn = currentBridgeConfiguration.hasUserAcceptedConsent
+                && (currentBridgeConfiguration.mode == .hybrid
+                    || currentBridgeConfiguration.mode == .alwaysBridge)
+
+            if bridgeIsActiveForThisTurn {
+                // Signal HybridPlannerClient (or CloudBridgePlannerClient directly in
+                // alwaysBridge mode) to use the large-model path for this turn.
+                if let hybridPlanner = plannerClient as? HybridPlannerClient {
+                    hybridPlanner.routingHintForNextCall = .preferLarge
+                }
+                // Record first-use so the 24-hour soak timer starts ticking.
+                PaceCloudBridgeConsent.markFirstUsedIfUnset(now: Date())
+                isCloudBridgeCallActive = true
+
+                let upstreamDisplayName = currentBridgeConfiguration.upstream.displayLabel
+                let bridgeRoutingHUDDetail = "thinking with \(upstreamDisplayName.lowercased())…"
+                currentTurnHUDState = .understanding(bridgeRoutingHUDDetail)
+                print("📡 Routing phoneLargeModel turn to cloud bridge (\(upstreamDisplayName))")
+                // Fall through to the normal planner pipeline — the routing hint
+                // will cause the planner to call the bridge.
+            } else {
+                // Bridge is off or consent not given — keep the existing local-only message.
+                if let unsupportedResponse = PaceIntentUnsupportedDetector.unsupportedResponse(
+                    for: transcript,
+                    prediction: intentPrediction
+                ) {
+                    print("🚫 Unsupported intent: \(unsupportedResponse.reason)")
+                    handleUnsupportedTurn(transcript: transcript, unsupportedResponse: unsupportedResponse)
+                    return
+                }
+            }
+        } else if let unsupportedResponse = PaceIntentUnsupportedDetector.unsupportedResponse(
             for: transcript,
             prediction: intentPrediction
         ) {
@@ -2506,6 +2622,11 @@ final class CompanionManager: ObservableObject {
                         }
                     )
                     guard !Task.isCancelled else { return }
+
+                    // Clear the amber bridge indicator now that the stream has finished.
+                    // Do this regardless of whether it was a bridge call or a local call —
+                    // clearing when already false is a safe no-op.
+                    isCloudBridgeCallActive = false
 
                     // 6. Parse: action tags → [DONE] flag → pointing tag.
                     //    Each pass strips its own tag class so the final
@@ -2746,10 +2867,12 @@ final class CompanionManager: ObservableObject {
                 // User spoke again — response was interrupted. Hide the
                 // overlay immediately so it doesn't linger over the next
                 // turn's "listening…" state.
+                isCloudBridgeCallActive = false
                 responseOverlayManager.hideOverlay()
             } catch {
                 PaceAnalytics.trackResponseError(error: error.localizedDescription)
                 print("⚠️ Companion response error: \(error)")
+                isCloudBridgeCallActive = false
                 responseOverlayManager.updateStreamingText("error: \(error.localizedDescription)")
                 responseOverlayManager.finishStreaming()
                 currentTurnHUDState = .failed(error.localizedDescription)
