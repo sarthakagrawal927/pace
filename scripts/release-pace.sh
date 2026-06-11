@@ -110,14 +110,44 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR" "$RELEASES_DIR"
 
 echo "📦 Building Pace.app (Release)..."
+# Prefer a real Apple Developer cert if one is in the keychain. Ad-hoc
+# signing makes every rebuild a NEW app to TCC (cdhash-based identity),
+# which is why granting permissions never persisted across versions. A
+# stable Authority (Apple Development / Developer ID) makes TCC match
+# on the signing identity instead, preserving grants across releases.
+# Falls back to ad-hoc if no Apple cert is available.
+CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-}"
+if [ -z "$CODE_SIGN_IDENTITY" ]; then
+    # find-identity -p codesigning -v lists only valid code-signing identities.
+    # Prefer Developer ID (proper distribution) over Apple Development.
+    CODE_SIGN_IDENTITY=$(security find-identity -p codesigning -v \
+        | grep -E 'Developer ID Application:' \
+        | head -1 \
+        | sed -E 's/.*"(.*)"/\1/')
+    if [ -z "$CODE_SIGN_IDENTITY" ]; then
+        CODE_SIGN_IDENTITY=$(security find-identity -p codesigning -v \
+            | grep -E 'Apple Development:' \
+            | head -1 \
+            | sed -E 's/.*"(.*)"/\1/')
+    fi
+fi
+if [ -z "$CODE_SIGN_IDENTITY" ]; then
+    CODE_SIGN_IDENTITY="-"
+    code_signing_required="NO"
+    echo "ℹ️  No Apple cert found — falling back to ad-hoc signing (TCC grants will reset on each release)."
+else
+    code_signing_required="YES"
+    echo "🔏 Signing with: $CODE_SIGN_IDENTITY"
+fi
+
 xcodebuild \
     -project "${PROJECT_DIR}/leanring-buddy.xcodeproj" \
     -scheme "$SCHEME" \
     -configuration Release \
     -destination 'platform=macOS,arch=arm64' \
     -derivedDataPath "$BUILD_DIR" \
-    CODE_SIGN_IDENTITY="-" \
-    CODE_SIGNING_REQUIRED=NO \
+    CODE_SIGN_IDENTITY="$CODE_SIGN_IDENTITY" \
+    CODE_SIGNING_REQUIRED="$code_signing_required" \
     CODE_SIGNING_ALLOWED=YES \
     MARKETING_VERSION="$next_version" \
     CURRENT_PROJECT_VERSION="$next_build" \
@@ -145,12 +175,16 @@ echo "✅ Bundled start-tts-server.sh into Resources/"
 # Developer Team ID. Without this, dyld refuses to load Sparkle.framework
 # because its prebuilt code signature has a different Team ID than the
 # ad-hoc-signed Pace binary — the exact crash that hit v0.3.0's first install.
-echo "🔐 Resigning embedded frameworks ad-hoc..."
+echo "🔐 Resigning embedded frameworks with $CODE_SIGN_IDENTITY..."
 find "${APP_PATH}/Contents/Frameworks" -maxdepth 2 -name "*.framework" -type d 2>/dev/null | while read framework_path; do
-    codesign --force --deep --sign - "${framework_path}" 2>&1 | tail -1
+    codesign --force --deep --sign "$CODE_SIGN_IDENTITY" "${framework_path}" 2>&1 | tail -1
 done
-codesign --force --deep --sign - "${APP_PATH}" 2>&1 | tail -1
+codesign --force --deep --sign "$CODE_SIGN_IDENTITY" "${APP_PATH}" 2>&1 | tail -1
 codesign --verify --deep "${APP_PATH}" && echo "✅ Codesign verify passed"
+# Show the signing Authority so the user can confirm TCC will preserve
+# grants — same Authority on every release = same TCC identity = grants
+# kept.
+codesign -dvv "${APP_PATH}" 2>&1 | grep -E "Authority|Identifier" | head -3
 
 # ── Zip + Sparkle-sign ─────────────────────────────────────────────────────
 
