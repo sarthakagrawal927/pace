@@ -95,9 +95,11 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
             )
             print("🧪 Pace: runtime smoke-test hooks enabled")
         }
-        // Auto-open the panel if the user still needs to do something:
-        // either they haven't onboarded yet, or permissions were revoked.
-        if !companionManager.hasCompletedOnboarding || !companionManager.allPermissionsGranted {
+        // Auto-open the panel ONLY on the first-ever launch (onboarding).
+        // Re-opening it every launch when ANY permission is missing was
+        // perceived as spam — once the user has gone through onboarding
+        // once, they can open the panel themselves from the menu bar.
+        if !companionManager.hasCompletedOnboarding {
             menuBarPanelManager.showPanelOnLaunch()
         }
         registerAsLoginItemIfNeeded()

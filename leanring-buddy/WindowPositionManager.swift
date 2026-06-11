@@ -18,8 +18,22 @@ enum PermissionRequestPresentationDestination: Equatable {
 
 @MainActor
 class WindowPositionManager {
-    private static var hasAttemptedAccessibilitySystemPromptDuringCurrentLaunch = false
-    private static var hasAttemptedScreenRecordingSystemPromptDuringCurrentLaunch = false
+    /// Persistent across launches — once Pace has triggered the macOS
+    /// permission prompt for a TCC entitlement, future Grant taps open
+    /// System Settings directly instead of re-firing the prompt. macOS
+    /// only ever shows the modal prompt once per bundle identity
+    /// anyway, so re-attempts were the "spam" — they did nothing
+    /// useful and made the user click around. Persisted so this
+    /// survives quit/relaunch (matching macOS's actual behavior).
+    private static let promptedKeyPrefix = "PaceHasPromptedSystem."
+
+    private static func hasPromptedSystemFor(_ permissionKey: String) -> Bool {
+        UserDefaults.standard.bool(forKey: promptedKeyPrefix + permissionKey)
+    }
+
+    private static func markSystemPromptedFor(_ permissionKey: String) {
+        UserDefaults.standard.set(true, forKey: promptedKeyPrefix + permissionKey)
+    }
 
     // MARK: - Accessibility Permission
 
@@ -35,14 +49,14 @@ class WindowPositionManager {
     static func requestAccessibilityPermission() -> PermissionRequestPresentationDestination {
         let presentationDestination = permissionRequestPresentationDestination(
             hasPermissionNow: hasAccessibilityPermission(),
-            hasAttemptedSystemPrompt: hasAttemptedAccessibilitySystemPromptDuringCurrentLaunch
+            hasAttemptedSystemPrompt: hasPromptedSystemFor("accessibility")
         )
 
         switch presentationDestination {
         case .alreadyGranted:
             return .alreadyGranted
         case .systemPrompt:
-            hasAttemptedAccessibilitySystemPromptDuringCurrentLaunch = true
+            markSystemPromptedFor("accessibility")
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(options)
         case .systemSettings:
@@ -141,14 +155,14 @@ class WindowPositionManager {
     static func requestScreenRecordingPermission() -> PermissionRequestPresentationDestination {
         let presentationDestination = permissionRequestPresentationDestination(
             hasPermissionNow: hasScreenRecordingPermission(),
-            hasAttemptedSystemPrompt: hasAttemptedScreenRecordingSystemPromptDuringCurrentLaunch
+            hasAttemptedSystemPrompt: hasPromptedSystemFor("screenRecording")
         )
 
         switch presentationDestination {
         case .alreadyGranted:
             return .alreadyGranted
         case .systemPrompt:
-            hasAttemptedScreenRecordingSystemPromptDuringCurrentLaunch = true
+            markSystemPromptedFor("screenRecording")
             _ = CGRequestScreenCaptureAccess()
         case .systemSettings:
             openScreenRecordingSettings()

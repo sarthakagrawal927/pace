@@ -83,12 +83,14 @@
 	<string>text-embedding-nomic-embed-text-v1.5</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
 	<key>SUFeedURL</key>
 	<string>https://raw.githubusercontent.com/sarthakagrawal927/pace/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>UGbOz43wfHeH3fwSu45Z0dNFIlomd1Tra+B9mjOFdSI=</string>
 	<key>SUScheduledCheckInterval</key>
-	<integer>3600</integer>
+	<integer>86400</integer>
 	<key>ScreenAnalysisProvider</key>
 	<string>lmStudio</string>
 	<key>TTSProvider</key>
