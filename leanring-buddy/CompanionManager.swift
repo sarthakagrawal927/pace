@@ -1414,11 +1414,14 @@ final class CompanionManager: ObservableObject {
         if !previouslyHadSpeechRecognition && hasSpeechRecognitionPermission {
             PaceAnalytics.trackPermissionGranted(permission: "speech_recognition")
         }
-        // Screen content permission is persisted — once the user has approved the
-        // SCShareableContent picker, we don't need to re-check it.
-        if !hasScreenContentPermission {
-            hasScreenContentPermission = UserDefaults.standard.bool(forKey: "hasScreenContentPermission")
-        }
+        // Screen content permission: we used to trust a sticky UserDefaults
+        // cache, which lied when TCC was reset (post-install or tccutil reset).
+        // Trust the same flag macOS does — Screen Recording — as the source of
+        // truth, since SCShareableContent silently fails the same way when
+        // that grant is missing. The persisted "we picked once" bit only
+        // gates the onboarding picker prompt, not the permission state.
+        let cachedScreenContentPick = UserDefaults.standard.bool(forKey: "hasScreenContentPermission")
+        hasScreenContentPermission = hasScreenRecordingPermission && cachedScreenContentPick
 
         if !previouslyHadAll && allPermissionsGranted {
             PaceAnalytics.trackAllPermissionsGranted()

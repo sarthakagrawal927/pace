@@ -83,6 +83,17 @@ if gh release view "$tag" --repo "$GITHUB_REPO" &>/dev/null; then
     exit 1
 fi
 
+# Dirty-tree check moved here so we fail BEFORE bumping Info.plist /
+# building / publishing. If the tree is dirty, fix it (commit or stash)
+# and re-run. release-pace.sh itself is the only file allowed to be in
+# the dirty set since the script may be self-modifying across releases.
+working_tree_status=$(git status --porcelain | grep -v "^.. scripts/release-pace.sh\$" || true)
+if [ -n "$working_tree_status" ]; then
+    echo "❌ Working tree has uncommitted changes. Commit or stash first:" >&2
+    echo "$working_tree_status" >&2
+    exit 1
+fi
+
 read -p "Proceed? (y/N) " -n 1 -r
 echo
 [[ "$REPLY" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
@@ -214,16 +225,13 @@ echo "✅ appcast.xml updated"
 cd "$PROJECT_DIR"
 release_branch="release/${tag}"
 
-# Make sure we're starting from a clean main so the branch only contains
-# the appcast + Info.plist diff.
-if ! git diff --quiet || ! git diff --cached --quiet; then
-    echo "❌ Working tree is dirty besides the release files — refusing to publish." >&2
-    git status --short
-    exit 1
-fi
 current_branch=$(git rev-parse --abbrev-ref HEAD)
 git checkout -B "$release_branch"
-git add "$APPCAST_PATH" "$INFO_PLIST"
+# Include scripts/release-pace.sh in the release commit if the script
+# itself was edited as part of this release (e.g. shipping a fix to the
+# release pipeline alongside the bump). The pre-flight dirty-tree check
+# at the top of the script already cleared every OTHER file.
+git add "$APPCAST_PATH" "$INFO_PLIST" "$0"
 git commit -m "Release Pace ${next_version} (build ${next_build}): appcast entry + version bump"
 git push -u origin "$release_branch"
 
