@@ -13,15 +13,26 @@
 //  scheduling code on our side.
 //
 
+import Combine
 import Foundation
 
 @MainActor
-final class StreamingSentenceTTSPipeline {
+final class StreamingSentenceTTSPipeline: ObservableObject {
     private let ttsClient: any BuddyTTSClient
     /// Tag-stripped, sentence-bounded text that's already been queued
     /// to the TTS client. We diff against this on each new chunk so
     /// only the new completed sentence(s) get spoken.
     private var alreadyDispatchedSafeText: String = ""
+
+    /// Live UI mirror of the speakable text accumulated for the current
+    /// turn. Updated on every chunk so SwiftUI surfaces (the chat
+    /// transcript in particular) can render a streaming "assistant is
+    /// typing" row without subscribing to the planner stream directly.
+    /// Cleared by `resetForNewTurn()`. Holds the tag-stripped,
+    /// sentence-bounded prefix — identical to what gets spoken — so the
+    /// rendered text never includes `<think>` blocks, tool calls, or
+    /// `[POINT:…]` tags.
+    @Published private(set) var inFlightStreamedText: String = ""
 
     /// Minimum length of a "completed" prefix before we submit it to
     /// the TTS. Avoids speaking tiny fragments like "Sure," in
@@ -38,6 +49,14 @@ final class StreamingSentenceTTSPipeline {
     private var intentCommittedAt: Date?
     private var hasLoggedTimeToFirstSpokenWord: Bool = false
 
+    /// Per-turn mute switch. When set, the pipeline still computes the
+    /// speakable prefix and publishes it through `inFlightStreamedText`
+    /// (so the chat UI keeps streaming) but skips the `ttsClient.speakText`
+    /// dispatch — chat-mode mute. Reset on every turn boundary so the
+    /// flag is ephemeral by construction and cannot leak into the next
+    /// voice turn.
+    private var isMutedForCurrentTurn: Bool = false
+
     init(ttsClient: any BuddyTTSClient) {
         self.ttsClient = ttsClient
     }
@@ -48,6 +67,15 @@ final class StreamingSentenceTTSPipeline {
         alreadyDispatchedSafeText = ""
         intentCommittedAt = nil
         hasLoggedTimeToFirstSpokenWord = false
+        isMutedForCurrentTurn = false
+        inFlightStreamedText = ""
+    }
+
+    /// Sets the per-turn mute flag. Called by `CompanionManager` right
+    /// before a chat-mode turn dispatches into the planner so the
+    /// session's `isChatTTSMuted` value gates audio for THIS turn only.
+    func setMutedForCurrentTurn(_ isMutedForCurrentTurn: Bool) {
+        self.isMutedForCurrentTurn = isMutedForCurrentTurn
     }
 
     /// Mark the moment the user finished expressing intent (PTT
@@ -80,6 +108,14 @@ final class StreamingSentenceTTSPipeline {
         speakableSafePrefix: String,
         allowShortFinalChunk: Bool = false
     ) async {
+        // Always mirror the current speakable prefix to the chat-stream
+        // publisher, even when the delta is whitespace-only or below the
+        // TTS dispatch threshold. The chat UI wants to render every
+        // intermediate character; the TTS just wants meaningful chunks.
+        if speakableSafePrefix != inFlightStreamedText {
+            inFlightStreamedText = speakableSafePrefix
+        }
+
         guard speakableSafePrefix.count > alreadyDispatchedSafeText.count else { return }
 
         let newPortion = String(speakableSafePrefix.dropFirst(alreadyDispatchedSafeText.count))
@@ -95,6 +131,15 @@ final class StreamingSentenceTTSPipeline {
         // "I" then "think" then "you" as separate utterances. The
         // final flush bypasses this gate so the tail always plays.
         if !allowShortFinalChunk && trimmedNewPortion.count < minimumChunkCharacterCount {
+            return
+        }
+
+        // Chat-mode mute: still advance the dispatch cursor so we don't
+        // re-evaluate the same prefix on every tick, but skip the audio
+        // call. The streamed text remains visible to the UI through
+        // `inFlightStreamedText` above.
+        guard !isMutedForCurrentTurn else {
+            alreadyDispatchedSafeText = speakableSafePrefix
             return
         }
 

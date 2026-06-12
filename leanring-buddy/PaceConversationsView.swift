@@ -2,172 +2,245 @@
 //  PaceConversationsView.swift
 //  leanring-buddy
 //
-//  Past turns view. Reads paceHistory documents from the local
-//  retrieval index — every voice turn was already persisted there for
-//  RAG; this surface just renders them for the user. No new data path.
+//  Chat surface for the Conversations tab of the main window. Renders
+//  the live, ordered transcript backed by `PaceChatSession` — which in
+//  turn reads/writes through the same `paceHistory` retrieval index
+//  that voice turns already persist to, so voice and chat always share
+//  one canonical conversation. Below the transcript is a sticky text
+//  input: Enter dispatches through the same `submitChatTranscriptFrom…`
+//  pipeline a `pace://chat` deeplink uses. The notch panel stays
+//  voice-first; THIS surface is the text-fallback PRD deliverable.
+//
+//  The search field from the prior read-only list view is preserved as
+//  an in-line filter so an existing user habit ("open Pace, search for
+//  what we talked about last week") still works.
 //
 
 import Foundation
 import SwiftUI
 
-struct PaceConversationTurnRow: Identifiable, Equatable {
-    let id: String
-    let userText: String
-    let paceText: String
-    let recordedAt: Date?
-}
-
 struct PaceConversationsView: View {
-    @State private var conversationTurns: [PaceConversationTurnRow] = []
+    @ObservedObject var companionManager: CompanionManager
+
     @State private var searchQuery: String = ""
+    @State private var draftMessageText: String = ""
+    @FocusState private var isInputFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Conversations")
-                    .font(.system(size: 22, weight: .semibold))
-                Spacer()
-                Button(action: refresh) {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.plain)
-                .help("Refresh from the local retrieval index")
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 24)
-
-            TextField("Search past turns…", text: $searchQuery)
-                .textFieldStyle(.roundedBorder)
-                .padding(.horizontal, 24)
-                .padding(.top, 12)
-
-            if filteredTurns.isEmpty {
-                VStack {
-                    Spacer()
-                    Text(conversationTurns.isEmpty
-                         ? "No conversations yet. Use push-to-talk or pace://chat to start one."
-                         : "No turns match '\(searchQuery)'.")
-                        .foregroundColor(.secondary)
-                        .font(.system(size: 13))
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ForEach(filteredTurns) { turn in
-                            turnCard(turn)
-                        }
-                    }
-                    .padding(24)
-                }
-            }
+            chatHeader
+            searchField
+            transcriptScrollView
+            footerHint
+            chatInputRow
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear(perform: refresh)
-    }
-
-    private var filteredTurns: [PaceConversationTurnRow] {
-        let trimmedQuery = searchQuery
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        guard !trimmedQuery.isEmpty else { return conversationTurns }
-        return conversationTurns.filter { turn in
-            turn.userText.lowercased().contains(trimmedQuery)
-                || turn.paceText.lowercased().contains(trimmedQuery)
+        .onAppear {
+            companionManager.chatSession.loadHistory()
+            isInputFocused = true
         }
     }
 
-    private func turnCard(_ turn: PaceConversationTurnRow) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let recordedAt = turn.recordedAt {
-                Text(recordedAt.formatted(date: .abbreviated, time: .shortened))
+    // MARK: - Header
+
+    private var chatHeader: some View {
+        HStack {
+            Text("Conversations")
+                .font(.system(size: 22, weight: .semibold))
+            Spacer()
+            muteToggleButton
+            Button(action: { companionManager.chatSession.loadHistory() }) {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.plain)
+            .help("Refresh from the local retrieval index")
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 24)
+    }
+
+    private var muteToggleButton: some View {
+        // Read the published flag through the chat session so any other
+        // surface that flips it (currently none, but the property is
+        // public on the session) stays in sync with this view.
+        let isMuted = companionManager.chatSession.isChatTTSMuted
+        return Button {
+            companionManager.chatSession.isChatTTSMuted.toggle()
+        } label: {
+            Image(systemName: isMuted ? "speaker.slash" : "speaker.wave.2")
+                .foregroundColor(isMuted ? .secondary : .primary)
+        }
+        .buttonStyle(.plain)
+        .help(isMuted
+              ? "Pace replies silently this session. Click to unmute."
+              : "Pace speaks replies. Click to mute for this session.")
+    }
+
+    // MARK: - Search
+
+    private var searchField: some View {
+        TextField("Search past turns…", text: $searchQuery)
+            .textFieldStyle(.roundedBorder)
+            .padding(.horizontal, 24)
+            .padding(.top, 12)
+    }
+
+    // MARK: - Transcript
+
+    private var transcriptScrollView: some View {
+        ScrollViewReader { scrollViewProxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if filteredMessages.isEmpty {
+                        emptyStateText
+                            .padding(.top, 60)
+                    } else {
+                        ForEach(filteredMessages) { message in
+                            messageRow(message)
+                                .id(message.id)
+                        }
+                    }
+                    streamingAssistantRowIfActive
+                        .id(PaceConversationsView.streamingRowAnchorId)
+                }
+                .padding(24)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onChange(of: companionManager.chatSession.messages.count) { _ in
+                scrollToBottom(scrollViewProxy: scrollViewProxy)
+            }
+            .onChange(of: companionManager.streamingSentenceTTSPipeline.inFlightStreamedText) { _ in
+                scrollToBottom(scrollViewProxy: scrollViewProxy)
+            }
+            .onAppear {
+                scrollToBottom(scrollViewProxy: scrollViewProxy, animated: false)
+            }
+        }
+    }
+
+    private static let streamingRowAnchorId = "streaming-assistant-row-anchor"
+
+    private func scrollToBottom(scrollViewProxy: ScrollViewProxy, animated: Bool = true) {
+        let targetId: String = {
+            if companionManager.streamingSentenceTTSPipeline.inFlightStreamedText.isEmpty == false {
+                return PaceConversationsView.streamingRowAnchorId
+            }
+            return companionManager.chatSession.messages.last?.id
+                ?? PaceConversationsView.streamingRowAnchorId
+        }()
+        if animated {
+            withAnimation(.easeOut(duration: 0.18)) {
+                scrollViewProxy.scrollTo(targetId, anchor: .bottom)
+            }
+        } else {
+            scrollViewProxy.scrollTo(targetId, anchor: .bottom)
+        }
+    }
+
+    private var emptyStateText: some View {
+        VStack(spacing: 4) {
+            Text("No conversations yet.")
+                .foregroundColor(.secondary)
+                .font(.system(size: 13))
+            Text("Type below or press ctrl+option anywhere to talk.")
+                .foregroundColor(.secondary)
+                .font(.system(size: 12))
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var filteredMessages: [PaceChatMessage] {
+        companionManager.chatSession.filteredMessages(matching: searchQuery)
+    }
+
+    private func messageRow(_ message: PaceChatMessage) -> some View {
+        let isFromUser = message.role == .user
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(isFromUser ? "You" : "Pace")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+                Text(message.createdAt.formatted(date: .omitted, time: .shortened))
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
-            HStack(alignment: .top, spacing: 8) {
-                Text("You").bold().frame(width: 48, alignment: .leading)
-                Text(turn.userText).textSelection(.enabled)
-            }
-            HStack(alignment: .top, spacing: 8) {
-                Text("Pace").bold().frame(width: 48, alignment: .leading)
-                Text(turn.paceText).textSelection(.enabled)
-            }
+            Text(message.body)
+                .font(.system(size: 13))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .font(.system(size: 13))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(Color(NSColor.controlBackgroundColor))
+        .padding(12)
+        .background(isFromUser
+                    ? Color(NSColor.controlBackgroundColor)
+                    : Color(NSColor.controlBackgroundColor).opacity(0.6))
         .cornerRadius(8)
     }
 
-    private func refresh() {
-        conversationTurns = Self.loadTurnsFromRetrievalIndex()
+    @ViewBuilder
+    private var streamingAssistantRowIfActive: some View {
+        let streamingText = companionManager.streamingSentenceTTSPipeline.inFlightStreamedText
+        if !streamingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text("Pace")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    Text("typing…")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                Text(streamingText)
+                    .font(.system(size: 13))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(12)
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+            .cornerRadius(8)
+        } else {
+            // Empty spacer keeps the ScrollViewReader anchor present so
+            // initial scroll-to-bottom never targets a missing id.
+            Color.clear.frame(height: 0)
+        }
     }
 
-    /// Reads paceHistory docs straight off disk. Avoids adding a new
-    /// dependency on PaceLocalRetriever for read-only display.
-    private static func loadTurnsFromRetrievalIndex() -> [PaceConversationTurnRow] {
-        let indexURL = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first?
-            .appendingPathComponent("Pace/retrieval-index.json")
-        guard let indexURL,
-              let indexData = try? Data(contentsOf: indexURL),
-              let indexJSON = try? JSONSerialization.jsonObject(with: indexData) as? [String: Any],
-              let rawDocuments = indexJSON["documents"] as? [[String: Any]] else {
-            return []
-        }
+    // MARK: - Footer + input
 
-        let isoDateFormatter = ISO8601DateFormatter()
-        isoDateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let isoDateFormatterNoFractional = ISO8601DateFormatter()
+    private var footerHint: some View {
+        Text("Tip: you can also press ctrl+option anywhere to talk.")
+            .font(.system(size: 11))
+            .foregroundColor(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.top, 4)
+    }
 
-        let turnRows: [PaceConversationTurnRow] = rawDocuments.compactMap { documentRaw in
-            guard let source = documentRaw["source"] as? String, source == "paceHistory",
-                  let id = documentRaw["id"] as? String,
-                  let bodyText = documentRaw["text"] as? String else {
-                return nil
-            }
-            let (userText, paceText) = splitUserAndPace(bodyText)
-            let recordedAt: Date?
-            if let modifiedAt = documentRaw["modifiedAt"] as? Double {
-                recordedAt = Date(timeIntervalSinceReferenceDate: modifiedAt)
-            } else if let modifiedAtString = documentRaw["modifiedAt"] as? String {
-                recordedAt = isoDateFormatter.date(from: modifiedAtString)
-                    ?? isoDateFormatterNoFractional.date(from: modifiedAtString)
-            } else {
-                recordedAt = nil
-            }
-            return PaceConversationTurnRow(
-                id: id,
-                userText: userText,
-                paceText: paceText,
-                recordedAt: recordedAt
+    private var chatInputRow: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            TextField(
+                "Type a message — Enter to send, Shift+Enter for newline",
+                text: $draftMessageText,
+                axis: .vertical
             )
+            .lineLimit(1...6)
+            .textFieldStyle(.roundedBorder)
+            .focused($isInputFocused)
+            .onSubmit(submitDraftMessage)
+            .help("Pace replies inline and speaks aloud unless muted.")
+
+            Button("Send", action: submitDraftMessage)
+                .keyboardShortcut(.return, modifiers: [.command])
+                .disabled(draftMessageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
-        // Newest first.
-        return turnRows.sorted { ($0.recordedAt ?? .distantPast) > ($1.recordedAt ?? .distantPast) }
+        .padding(.horizontal, 24)
+        .padding(.top, 8)
+        .padding(.bottom, 16)
     }
 
-    /// Pace history docs are stored as "User: …\nPace: …". Pull each
-    /// half out so the view can render them with proper attribution.
-    private static func splitUserAndPace(_ documentText: String) -> (String, String) {
-        let lowercased = documentText.lowercased()
-        guard let userRange = lowercased.range(of: "user:") else {
-            return (documentText, "")
-        }
-        let afterUser = documentText[userRange.upperBound...]
-        if let paceMarkerRange = afterUser.range(of: "Pace:") {
-            let userText = afterUser[..<paceMarkerRange.lowerBound]
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let paceText = afterUser[paceMarkerRange.upperBound...]
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return (userText, paceText)
-        }
-        return (
-            afterUser.trimmingCharacters(in: .whitespacesAndNewlines),
-            ""
-        )
+    private func submitDraftMessage() {
+        let trimmedDraftMessage = draftMessageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedDraftMessage.isEmpty else { return }
+        companionManager.chatSession.submitUserMessage(trimmedDraftMessage)
+        draftMessageText = ""
+        isInputFocused = true
     }
 }

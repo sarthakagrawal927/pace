@@ -42,7 +42,7 @@ struct PaceMainView: View {
         } detail: {
             switch selectedSection ?? .conversations {
             case .conversations:
-                PaceConversationsView()
+                PaceConversationsView(companionManager: companionManager)
             case .usage:
                 PaceUsageAnalyticsView()
             case .permissions:

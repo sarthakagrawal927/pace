@@ -129,9 +129,41 @@ final class CompanionManager: ObservableObject {
     /// reply, completed sentences get queued to AVSpeechSynthesizer
     /// before the response is finished generating — cuts perceived
     /// time-to-first-spoken-word from ~3s to ~500ms.
-    private lazy var streamingSentenceTTSPipeline: StreamingSentenceTTSPipeline = {
+    ///
+    /// `internal` access so the in-window chat surface can observe its
+    /// `@Published inFlightStreamedText` for live streaming display
+    /// without us routing the planner stream through a second publisher
+    /// in `CompanionManager`. The pipeline owns the per-turn lifecycle
+    /// already; reusing its publisher keeps the streaming wire-up DRY.
+    lazy var streamingSentenceTTSPipeline: StreamingSentenceTTSPipeline = {
         return StreamingSentenceTTSPipeline(ttsClient: ttsClient)
     }()
+
+    /// Backing store for the in-window chat transcript. Lazy so it
+    /// only builds the local history reader on first use (the main
+    /// window opens on demand, not at launch). Persistence runs
+    /// through `paceHistory` retrieval — there is no parallel chat
+    /// storage layer. See `PaceChatSession.swift`.
+    lazy var chatSession: PaceChatSession = {
+        return PaceChatSession(
+            historySource: PaceLocalChatHistoryReader(),
+            transcriptSubmitter: companionManagerChatSubmitterAdapter
+        )
+    }()
+
+    /// Adapter that lets `PaceChatSession` call back into the manager
+    /// without holding a strong reference. Forwards to
+    /// `submitChatTranscriptFromChatSession(_:)`, which is the chat-mode
+    /// twin of the deeplink submit path.
+    private lazy var companionManagerChatSubmitterAdapter: PaceChatSessionSubmitterAdapter = {
+        return PaceChatSessionSubmitterAdapter(owner: self)
+    }()
+
+    /// Per-turn flag set by `submitChatTranscriptFromChatSession` to the
+    /// session's `isChatTTSMuted` snapshot at submission time. The
+    /// streaming pipeline reads it through `setMutedForCurrentTurn`
+    /// every turn boundary; we don't store this anywhere persistent.
+    private var isChatModeMutedForCurrentTurn: Bool = false
 
     /// Classifies the user's transcript into pureKnowledge /
     /// screenDescription / screenAction / chitchat so the pipeline
@@ -1023,6 +1055,16 @@ You can turn this off at any time in Settings → Cloud bridge.
             userTranscript: userTranscript,
             assistantResponse: assistantResponse
         )
+        // Mirror the same turn into the in-window chat surface so the
+        // Conversations tab stays aligned with the canonical
+        // `paceHistory` write — voice turns appear in chat history,
+        // and chat turns dedupe against the optimistic user row that
+        // PaceChatSession.submitUserMessage already inserted.
+        chatSession.appendCompletedTurn(
+            userTranscript: userTranscript,
+            assistantResponse: assistantResponse,
+            recordedAt: recordedAt
+        )
         let extractedFacts = episodicFactExtractor.extractFacts(
             from: userTranscript,
             assistantText: assistantResponse,
@@ -1781,6 +1823,22 @@ You can turn this off at any time in Settings → Cloud bridge.
         globalPushToTalkShortcutMonitor.simulateShortcutPressed()
     }
 
+    /// Entry point for the in-window chat surface. Snapshots the chat
+    /// session's mute flag for THIS turn, then forwards to the same
+    /// pipeline as the `pace://chat` deeplink so chat and voice share
+    /// one planning + execution path. Doing the snapshot here (not
+    /// inside the pipeline) keeps the mute decision tied to the moment
+    /// of submission — toggling mute mid-stream affects the NEXT turn.
+    func submitChatTranscriptFromChatSession(_ transcript: String) {
+        isChatModeMutedForCurrentTurn = chatSession.isChatTTSMuted
+        if isChatModeMutedForCurrentTurn {
+            // Stop any audio that was already in flight from a prior
+            // turn so flipping mute on feels instant.
+            ttsClient.stopPlayback()
+        }
+        submitChatTranscriptFromDeepLink(transcript)
+    }
+
     /// Entry point for the pace://chat deeplink. The transcript is treated
     /// exactly like a spoken turn: same intent classification, fast paths,
     /// retrieval injection, and — critically — the same action-approval
@@ -1796,6 +1854,13 @@ You can turn this off at any time in Settings → Cloud bridge.
         currentResponseTask = nil
         ttsClient.stopPlayback()
         streamingSentenceTTSPipeline.resetForNewTurn()
+        // Apply the chat-mode mute snapshot for this turn AFTER reset
+        // (reset clears the pipeline's flag). When the deeplink path
+        // is hit directly the snapshot is false, matching voice-turn
+        // behaviour. Clear the manager-side flag immediately after so
+        // subsequent voice turns can never inherit a stale mute.
+        streamingSentenceTTSPipeline.setMutedForCurrentTurn(isChatModeMutedForCurrentTurn)
+        isChatModeMutedForCurrentTurn = false
         clearDetectedElementLocation()
 
         // Transient cursor mode: surface the overlay for the duration of
@@ -3915,4 +3980,22 @@ You can turn this off at any time in Settings → Cloud bridge.
         )
     }
 
+}
+
+/// Weak-back-reference shim that lets `PaceChatSession` forward typed
+/// chat submissions into `CompanionManager.submitChatTranscriptFromChatSession`
+/// without owning the manager. Kept outside the class body so it can
+/// hold the `weak var` without inheriting `@MainActor`-isolation friction
+/// inside `CompanionManager`'s own initializer chain.
+@MainActor
+final class PaceChatSessionSubmitterAdapter: PaceChatTranscriptSubmitting {
+    private weak var owner: CompanionManager?
+
+    init(owner: CompanionManager) {
+        self.owner = owner
+    }
+
+    func submitChatTranscript(_ transcript: String) {
+        owner?.submitChatTranscriptFromChatSession(transcript)
+    }
 }
