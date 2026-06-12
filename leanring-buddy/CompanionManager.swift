@@ -1626,6 +1626,66 @@ You can turn this off at any time in Settings → Cloud bridge.
         handleImmediateLocalModeResponse(transcript: transcript, spokenText: spokenText)
     }
 
+    private func handleRecipeCommand(_ command: PaceRecipeCommand, transcript: String) {
+        let flowStore = PaceFlowStore()
+        let bundledRecipes = PaceRecipeLibrary.loadBundledRecipes()
+        let spokenText: String
+
+        switch command {
+        case .install(let displayName):
+            guard let matchedRecipe = matchBundledRecipe(displayName: displayName, in: bundledRecipes) else {
+                spokenText = "i don't have a recipe called \(displayName)."
+                break
+            }
+            do {
+                try PaceRecipeLibrary.install(matchedRecipe, into: flowStore)
+                spokenText = "installed \(matchedRecipe.name)."
+            } catch PaceRecipeInstallError.missingRequiredPreference(let requiredPreferenceKey) {
+                spokenText = "i need \(requiredPreferenceKey) set first."
+            } catch PaceRecipeInstallError.alreadyInstalled {
+                spokenText = "\(matchedRecipe.name) is already installed."
+            } catch {
+                spokenText = "i couldn't install that recipe."
+            }
+        case .uninstall(let displayName):
+            guard let matchedRecipe = matchBundledRecipe(displayName: displayName, in: bundledRecipes) else {
+                spokenText = "i don't have a recipe called \(displayName)."
+                break
+            }
+            if !PaceRecipeLibrary.isInstalled(matchedRecipe, in: flowStore) {
+                spokenText = "\(matchedRecipe.name) isn't installed."
+                break
+            }
+            PaceRecipeLibrary.uninstall(slug: matchedRecipe.slug, from: flowStore)
+            spokenText = "removed \(matchedRecipe.name)."
+        case .list:
+            if bundledRecipes.isEmpty {
+                spokenText = "i don't have any recipes bundled."
+            } else {
+                let displayNames = bundledRecipes.map { $0.name }.joined(separator: ", ")
+                spokenText = "available recipes: \(displayNames)."
+            }
+        }
+
+        handleImmediateLocalModeResponse(transcript: transcript, spokenText: spokenText)
+    }
+
+    /// Case-insensitive lookup of a bundled recipe by display name OR
+    /// slug. Lets the user say "morning standup setup" or
+    /// "morning-standup-setup" and get the same recipe.
+    private func matchBundledRecipe(
+        displayName: String,
+        in bundledRecipes: [PaceBundledRecipe]
+    ) -> PaceBundledRecipe? {
+        let normalizedDisplayName = displayName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return bundledRecipes.first(where: { recipe in
+            recipe.name.lowercased() == normalizedDisplayName
+                || recipe.slug.lowercased() == normalizedDisplayName
+        })
+    }
+
     private func handleImmediateLocalModeResponse(transcript: String, spokenText: String) {
         currentTurnHUDState = .done(spokenText)
         recordConversationTurn(userTranscript: transcript, assistantResponse: spokenText)
@@ -2742,6 +2802,12 @@ You can turn this off at any time in Settings → Cloud bridge.
         if let localMemoryCommand = PaceLocalMemoryCommandParser.parse(transcript) {
             print("🧠 Local memory command: \(localMemoryCommand)")
             handleLocalMemoryCommand(localMemoryCommand)
+            return
+        }
+
+        if let recipeCommand = PaceRecipeCommandParser.parse(transcript) {
+            print("📦 Recipe voice command: \(recipeCommand)")
+            handleRecipeCommand(recipeCommand, transcript: transcript)
             return
         }
 

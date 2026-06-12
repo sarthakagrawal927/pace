@@ -391,8 +391,15 @@ enum PaceToolRegistry {
                 bundle: .main,
                 allowSourceTreeFallback: false
             )
-        guard validationIssues.isEmpty else {
-            let formattedIssues = validationIssues
+        // Recipe library validation runs alongside the tool registry
+        // validation so malformed recipe JSON fails the app at launch
+        // — same fail-fast contract the registry uses.
+        let recipeValidationIssues = PaceRecipeLibrary
+            .validateBundledRecipes(bundle: .main, allowSourceTreeFallback: false)
+            .map { PaceToolRegistryValidationIssue(message: "bundled recipe: \($0.message)") }
+        let allValidationIssues = validationIssues + recipeValidationIssues
+        guard allValidationIssues.isEmpty else {
+            let formattedIssues = allValidationIssues
                 .map { "- \($0.description)" }
                 .joined(separator: "\n")
             fatalError("Pace local tool registry is invalid:\n\(formattedIssues)")

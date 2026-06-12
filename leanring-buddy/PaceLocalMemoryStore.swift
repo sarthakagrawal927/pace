@@ -13,6 +13,11 @@ enum PaceLocalMemoryKey: String, Equatable {
     case preferredBrowser
     case preferredNotesApp
     case defaultReminderList
+    /// Music playlist name the user wants Pace to start during a
+    /// "focus mode on" recipe. Optional in v1; the focus-mode recipe
+    /// declares it via `requiredPreferences` so install refuses until
+    /// the user sets a value.
+    case preferredFocusPlaylist
 }
 
 enum PaceLocalMemoryStore {
