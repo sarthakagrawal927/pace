@@ -90,7 +90,7 @@ final class AppleFoundationModelsPlannerClient: BuddyPlannerClient {
             instructions: { "respond with a single short word." }
         )
         let warmUpGenerationOptions = GenerationOptions(
-            sampling: .greedy,
+            samplingMode: .greedy,
             temperature: 0,
             maximumResponseTokens: 8
         )
@@ -130,7 +130,7 @@ final class AppleFoundationModelsPlannerClient: BuddyPlannerClient {
 
         // Greedy sampling + temperature 0 = fully deterministic.
         let deterministicGenerationOptions = GenerationOptions(
-            sampling: .greedy,
+            samplingMode: .greedy,
             temperature: 0,
             maximumResponseTokens: 400
         )

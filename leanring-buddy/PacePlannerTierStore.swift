@@ -21,7 +21,7 @@ import FoundationModels
 /// The four user-selectable backend tiers for Pace's main planner.
 /// Each tier maps to exactly one BuddyPlannerClient conformer at request
 /// time. Persona/system-prompt/tool-dialect are identical across tiers.
-enum PacePlannerTier: String, Equatable, Codable, CaseIterable {
+nonisolated enum PacePlannerTier: String, Equatable, Codable, CaseIterable {
     /// LM Studio at localhost:1234 — current default. Free, on-device.
     case local
     /// CloudBridgePlannerClient via the sibling local-ai Node bridge.
@@ -40,7 +40,7 @@ enum PacePlannerTier: String, Equatable, Codable, CaseIterable {
 /// hard-codes the OpenAI-compatible chat-completions endpoint URL and a
 /// reasonable default model identifier. `.custom` lets the user paste
 /// their own endpoint URL.
-enum PaceDirectAPIProvider: String, Equatable, Codable, CaseIterable {
+nonisolated enum PaceDirectAPIProvider: String, Equatable, Codable, CaseIterable {
     case anthropic
     case openai
     case openrouter
@@ -94,7 +94,7 @@ enum PaceDirectAPIProvider: String, Equatable, Codable, CaseIterable {
 // MARK: - PacePlannerTierConfiguration
 
 /// Immutable snapshot of the tier picker preferences at one point in time.
-struct PacePlannerTierConfiguration: Equatable {
+nonisolated struct PacePlannerTierConfiguration: Equatable {
     let tier: PacePlannerTier
     let directAPIProvider: PaceDirectAPIProvider
     let directAPIModelIdentifier: String

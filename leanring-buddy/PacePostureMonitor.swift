@@ -14,14 +14,21 @@
 //  TTS/status surfaces, never a new one.
 //
 
-import AVFoundation
+// @preconcurrency silences the Sendable-related warnings AVFoundation emits
+// for types like AVCaptureSession that predate Swift concurrency annotations;
+// the session is only touched on its own serial capture queue here.
+@preconcurrency import AVFoundation
 import Foundation
 import Vision
 
 /// Lock-protected throttle state shared between the main actor (start/stop)
 /// and the capture queue (per-frame gating). Keeps the per-frame fast path
 /// off the main actor entirely.
-private final class PacePostureFrameGate: @unchecked Sendable {
+///
+/// Marked `nonisolated` so its lock-guarded methods stay callable from the
+/// nonisolated capture-output callback; the project default actor isolation
+/// would otherwise infer these as MainActor-isolated.
+private nonisolated final class PacePostureFrameGate: @unchecked Sendable {
     private let lock = NSLock()
     private var isActive = false
     private var lastProcessedFrameAt = Date.distantPast

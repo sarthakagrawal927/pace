@@ -23,7 +23,7 @@ import Foundation
 
 // MARK: - Configuration
 
-struct PaceThreadMemoryConfiguration: Equatable {
+nonisolated struct PaceThreadMemoryConfiguration: Equatable {
     /// Number of recent turn pairs the planner sees verbatim. Anything
     /// older has already been folded into the rolling summary. Clamp
     /// at the Settings layer enforces 1...8 — wider windows defeat the

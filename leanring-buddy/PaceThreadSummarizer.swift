@@ -97,7 +97,7 @@ final class PaceThreadFoundationModelSummarizer: PaceThreadSummarizerClient {
         )
         let renderedUserPrompt = PaceThreadSummarizerPrompt.renderUserPrompt(for: input)
         let deterministicGenerationOptions = GenerationOptions(
-            sampling: .greedy,
+            samplingMode: .greedy,
             temperature: 0,
             maximumResponseTokens: 400
         )

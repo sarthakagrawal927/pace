@@ -287,7 +287,7 @@ final class CompanionResponseOverlayManager {
             context.duration = 0.4
             overlayPanel.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.hideOverlay()
             }
         })

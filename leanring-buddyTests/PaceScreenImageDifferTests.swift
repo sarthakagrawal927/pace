@@ -10,6 +10,7 @@ import AppKit
 import Testing
 @testable import Pace
 
+@MainActor
 struct PaceScreenImageDifferTests {
 
     @Test func identicalImagesHaveNoMeaningfulDiff() async throws {

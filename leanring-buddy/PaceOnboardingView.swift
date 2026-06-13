@@ -55,7 +55,7 @@ struct PaceOnboardingView: View {
                 .padding(.bottom, 28)
         }
         .frame(width: 560, height: 460)
-        .onChange(of: permissionService.grants) { _ in autoAdvanceIfGranted() }
+        .onChange(of: permissionService.grants) { autoAdvanceIfGranted() }
     }
 
     // MARK: - Pages

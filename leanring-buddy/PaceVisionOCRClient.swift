@@ -18,7 +18,7 @@ import Vision
 /// pixel coordinates (top-left origin, x-right / y-down — matches the
 /// coordinate space the VLM uses, so the merge step doesn't need to
 /// flip axes).
-struct RecognizedTextBox: Hashable {
+nonisolated struct RecognizedTextBox: Hashable {
     let text: String
     /// `[x, y, width, height]` in screenshot pixels.
     let pixelBoundingBox: [Int]
@@ -108,7 +108,9 @@ enum PaceScreenContextMerger {
     /// fall inside it (or overlap > 50%) and replace the element's
     /// `text` field with the concatenated OCR text. Falls back to the
     /// VLM's own text when no OCR box overlaps (e.g. icons, images).
-    static func enrich(
+    // Pure value-type transform with no actor-bound state, so it stays
+    // nonisolated and can be called from background task groups and tests.
+    nonisolated static func enrich(
         vlmAnalysis: LocalVLMScreenAnalysis,
         with ocrBoxes: [RecognizedTextBox]
     ) -> LocalVLMScreenAnalysis {
@@ -201,7 +203,7 @@ enum PaceScreenContextMerger {
     /// as the matching threshold so a tiny OCR box inside a large
     /// element counts as "this text belongs to that element" while a
     /// partial overlap doesn't.
-    private static func overlapFraction(of inner: CGRect, within container: CGRect) -> CGFloat {
+    nonisolated private static func overlapFraction(of inner: CGRect, within container: CGRect) -> CGFloat {
         let intersection = inner.intersection(container)
         guard !intersection.isNull, inner.width > 0, inner.height > 0 else { return 0 }
         let innerArea = inner.width * inner.height

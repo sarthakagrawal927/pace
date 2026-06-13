@@ -11,6 +11,7 @@ import Foundation
 import Testing
 @testable import Pace
 
+@MainActor
 struct PaceActionTagParserTests {
 
     @Test func plainTextWithNoTagsPassesThroughUnchanged() async throws {

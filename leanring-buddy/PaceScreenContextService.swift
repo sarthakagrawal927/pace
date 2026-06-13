@@ -216,8 +216,13 @@ final class PaceScreenContextService {
                 // dimensions so the planner sees coordinates in the
                 // same pixel space the executor uses for clicks
                 // (downsampled to maxDimension=1280, not Retina-native).
-                async let axElementsFuture: [LocalVLMScreenElement] = MainActor.run { [weak self] in
-                    self?.axScreenReader.readFocusedWindow(scalingToScreenshot: cursorScreenCapture) ?? []
+                // Capture the AX reader into a local before the concurrent
+                // async-let so the closure doesn't re-capture the Task's weak
+                // `self` (which Swift 6 flags as a captured-var reference in
+                // concurrently-executing code).
+                let axScreenReaderForPrewarm = await MainActor.run { [weak self] in self?.axScreenReader }
+                async let axElementsFuture: [LocalVLMScreenElement] = MainActor.run {
+                    axScreenReaderForPrewarm?.readFocusedWindow(scalingToScreenshot: cursorScreenCapture) ?? []
                 }
                 async let earlyOCRBoxesFuture = ocrClient.recognizeText(
                     in: cursorScreenCapture.imageData,

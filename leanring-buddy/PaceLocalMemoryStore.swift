@@ -9,7 +9,7 @@
 
 import Foundation
 
-enum PaceLocalMemoryKey: String, Equatable {
+nonisolated enum PaceLocalMemoryKey: String, Equatable {
     case preferredBrowser
     case preferredNotesApp
     case defaultReminderList
@@ -20,7 +20,7 @@ enum PaceLocalMemoryKey: String, Equatable {
     case preferredFocusPlaylist
 }
 
-enum PaceLocalMemoryStore {
+nonisolated enum PaceLocalMemoryStore {
     static func string(for key: PaceLocalMemoryKey) -> String? {
         let rawValue = UserDefaults.standard.string(forKey: userDefaultsKey(for: key))?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -54,12 +54,12 @@ enum PaceLocalMemoryStore {
     }
 }
 
-enum PaceLocalMemoryCommand: Equatable {
+nonisolated enum PaceLocalMemoryCommand: Equatable {
     case set(PaceLocalMemoryKey, String)
     case forget(PaceLocalMemoryKey)
 }
 
-enum PaceLocalMemoryCommandParser {
+nonisolated enum PaceLocalMemoryCommandParser {
     static func parse(_ transcript: String) -> PaceLocalMemoryCommand? {
         let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         let lowercaseTranscript = trimmedTranscript.lowercased()

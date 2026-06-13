@@ -24,7 +24,7 @@
 
 import Foundation
 
-struct PaceScheduledTimer: Codable, Equatable {
+nonisolated struct PaceScheduledTimer: Codable, Equatable {
     let identifier: String
     let label: String
     let fireDate: Date
@@ -43,7 +43,7 @@ struct PaceScheduledTimer: Codable, Equatable {
 /// caller-provided file URL — no global state, no TTS. The scheduler
 /// owns one instance pointing at the default Application Support path
 /// and tests can point at a temp file.
-struct PaceTimerStore {
+nonisolated struct PaceTimerStore {
     static var defaultFileURL: URL {
         let appSupportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
@@ -184,7 +184,7 @@ final class PaceTimerScheduler {
 /// Accepts simple shapes: "3 minutes", "30s", "2 hours", "90 seconds".
 /// Returns nil for anything ambiguous so the executor can surface a
 /// validation error instead of guessing.
-enum PaceTimerDurationParser {
+nonisolated enum PaceTimerDurationParser {
     static func seconds(from rawDurationText: String) -> TimeInterval? {
         let trimmedText = rawDurationText
             .trimmingCharacters(in: .whitespacesAndNewlines)

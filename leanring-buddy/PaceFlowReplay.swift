@@ -21,7 +21,7 @@
 
 import Foundation
 
-struct PaceRecordedFlow: Codable, Equatable, Identifiable {
+nonisolated struct PaceRecordedFlow: Codable, Equatable, Identifiable {
     let name: String
     let createdAt: Date
     var steps: [PaceRecordedStep]
@@ -29,7 +29,7 @@ struct PaceRecordedFlow: Codable, Equatable, Identifiable {
     var id: String { name }
 }
 
-enum PaceRecordedStep: Codable, Equatable {
+nonisolated enum PaceRecordedStep: Codable, Equatable {
     case activateApp(bundleIdentifier: String)
     case axPress(rolePath: [String], label: String)
     case typeText(text: String, secure: Bool)

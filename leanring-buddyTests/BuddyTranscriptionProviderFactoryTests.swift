@@ -7,6 +7,7 @@ import Testing
 
 @testable import Pace
 
+@MainActor
 struct BuddyTranscriptionProviderFactoryTests {
     @Test func defaultProviderUsesAppleSpeech() async throws {
         let provider = BuddyTranscriptionProviderFactory.makeProvider(

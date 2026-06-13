@@ -16,13 +16,13 @@
 
 import Foundation
 
-enum PaceRecipeCommand: Equatable {
+nonisolated enum PaceRecipeCommand: Equatable {
     case install(displayName: String)
     case uninstall(displayName: String)
     case list
 }
 
-enum PaceRecipeCommandParser {
+nonisolated enum PaceRecipeCommandParser {
     /// Parse a transcript into a recipe command if one matches.
     /// Returns nil for anything that doesn't look like an explicit
     /// install/uninstall/list request, so the rest of the

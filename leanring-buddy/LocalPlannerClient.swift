@@ -213,7 +213,7 @@ final class LocalPlannerClient: BuddyPlannerClient {
                     // preview (and the final `text` return) are both clean.
                     let strippedSoFar = LocalPlannerClient.stripThinkingBlocks(from: accumulatedResponseText)
                     let snapshotOfStrippedText = strippedSoFar
-                    await onTextChunk(snapshotOfStrippedText)
+                    onTextChunk(snapshotOfStrippedText)
                 }
             }
 
@@ -294,7 +294,7 @@ final class LocalPlannerClient: BuddyPlannerClient {
         let duration = Date().timeIntervalSince(startTime)
         let fallbackLatencyMs = Int(duration * 1000)
         print("⚡ Planner fallback response: \(fallbackLatencyMs)ms (model=\(modelIdentifier), \(messageCount) msgs)")
-        await onTextChunk(strippedContent)
+        onTextChunk(strippedContent)
         return (text: strippedContent, duration: duration)
     }
 

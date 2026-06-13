@@ -112,7 +112,7 @@ final class PaceStreamingMailDraftDetector {
         }
     }
 
-    private static func splitRecipientString(_ rawRecipientString: String) -> [String] {
+    nonisolated private static func splitRecipientString(_ rawRecipientString: String) -> [String] {
         rawRecipientString
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

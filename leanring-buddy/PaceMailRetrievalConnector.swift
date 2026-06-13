@@ -95,7 +95,7 @@ struct PaceMailRetrievalConnector {
         )
     }
 
-    static func document(from mailSnapshot: PaceMailRetrievalSnapshot) -> PaceRetrievalDocument {
+    nonisolated static func document(from mailSnapshot: PaceMailRetrievalSnapshot) -> PaceRetrievalDocument {
         var lines = ["Subject: \(mailSnapshot.subject)"]
 
         if let sender = compactText(mailSnapshot.sender, maximumCharacters: 240) {
@@ -189,7 +189,7 @@ struct PaceMailRetrievalConnector {
     private static let fieldSeparator = Character(UnicodeScalar(31)!)
     private static let recordSeparator = Character(UnicodeScalar(30)!)
 
-    private static func compactText(_ text: String?, maximumCharacters: Int) -> String? {
+    nonisolated private static func compactText(_ text: String?, maximumCharacters: Int) -> String? {
         guard let text else { return nil }
         let compactedText = text
             .components(separatedBy: .whitespacesAndNewlines)

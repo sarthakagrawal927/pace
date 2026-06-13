@@ -76,7 +76,7 @@ struct PaceNotesRetrievalConnector {
         )
     }
 
-    static func document(from noteSnapshot: PaceNoteRetrievalSnapshot) -> PaceRetrievalDocument {
+    nonisolated static func document(from noteSnapshot: PaceNoteRetrievalSnapshot) -> PaceRetrievalDocument {
         let compactBody = compactText(
             plainText(fromNotesBody: noteSnapshot.body),
             maximumCharacters: 2_000
@@ -162,7 +162,7 @@ struct PaceNotesRetrievalConnector {
     private static let fieldSeparator = Character(UnicodeScalar(31)!)
     private static let recordSeparator = Character(UnicodeScalar(30)!)
 
-    private static func plainText(fromNotesBody body: String) -> String {
+    nonisolated private static func plainText(fromNotesBody body: String) -> String {
         let withoutTags = body.replacingOccurrences(
             of: "<[^>]+>",
             with: " ",
@@ -176,7 +176,7 @@ struct PaceNotesRetrievalConnector {
             .replacingOccurrences(of: "&quot;", with: "\"")
     }
 
-    private static func compactText(_ text: String, maximumCharacters: Int) -> String? {
+    nonisolated private static func compactText(_ text: String, maximumCharacters: Int) -> String? {
         let compactedText = text
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }

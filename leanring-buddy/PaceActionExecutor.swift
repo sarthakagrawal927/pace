@@ -23,14 +23,14 @@ import Foundation
 /// executor converts to display-points and CG global coords internally
 /// using the same screen-capture metadata the pointing layer uses, so
 /// callers never need to think about coordinate spaces.
-struct ScreenshotPixelLocation {
+nonisolated struct ScreenshotPixelLocation {
     let xInScreenshotPixels: Int
     let yInScreenshotPixels: Int
     /// 1-based screen index from the screenshot label. nil = cursor screen.
     let screenNumber: Int?
 }
 
-struct PaceClickCandidate {
+nonisolated struct PaceClickCandidate {
     let location: ScreenshotPixelLocation?
     let label: String?
     let confidence: Double
@@ -73,7 +73,7 @@ struct PaceClickCandidate {
     }
 }
 
-struct PaceClickCandidateRecency {
+nonisolated struct PaceClickCandidateRecency {
     let rank: Int?
     let lastSeenMillisecondsAgo: Double?
 
@@ -89,7 +89,7 @@ struct PaceClickCandidateRecency {
     }
 }
 
-struct PaceClickCandidateSet {
+nonisolated struct PaceClickCandidateSet {
     let candidates: [PaceClickCandidate]
     let clickCount: Int
 
@@ -2694,10 +2694,10 @@ final class PaceActionExecutor {
 
     private static func isEventKitAccessAlreadyGranted(for entityType: EKEntityType) -> Bool {
         let authorizationStatus = EKEventStore.authorizationStatus(for: entityType)
-        if #available(macOS 14.0, *) {
-            return authorizationStatus == .fullAccess
-        }
-        return authorizationStatus == .authorized
+        // The app targets macOS 26+, where `.fullAccess` is the only status
+        // that grants both read and write to EventKit entities. The legacy
+        // `.authorized` case was retired on macOS 14.
+        return authorizationStatus == .fullAccess
     }
 
     private func runAppleScript(source: String) -> (output: String?, errorDescription: String?) {

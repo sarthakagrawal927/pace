@@ -1958,7 +1958,7 @@ You can turn this off at any time in Settings → Cloud bridge.
                 let updatedSummaryText = try await summarizerForThisCall.updatedSummary(
                     for: summarizerInput
                 )
-                await MainActor.run {
+                await MainActor.run { [weak self] in
                     self?.threadMemory.applySummaryUpdate(
                         summary: updatedSummaryText,
                         summaryVersion: reservedSummaryVersion,
@@ -2041,7 +2041,7 @@ You can turn this off at any time in Settings → Cloud bridge.
                 turnId: turnId
             )
             guard !extractedFacts.isEmpty else { return }
-            await MainActor.run {
+            await MainActor.run { [weak self] in
                 self?.recordExtractedEpisodicFacts(extractedFacts, turnId: turnId)
                 self?.refreshLocalRetrievalPublishedState()
             }
@@ -3252,13 +3252,13 @@ You can turn this off at any time in Settings → Cloud bridge.
 
         if #available(macOS 14.0, *) {
             permissionEventStore.requestFullAccessToEvents { [weak self] _, _ in
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
                     self?.refreshAllPermissions()
                 }
             }
         } else {
             permissionEventStore.requestAccess(to: .event) { [weak self] _, _ in
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
                     self?.refreshAllPermissions()
                 }
             }
@@ -3274,13 +3274,13 @@ You can turn this off at any time in Settings → Cloud bridge.
 
         if #available(macOS 14.0, *) {
             permissionEventStore.requestFullAccessToReminders { [weak self] _, _ in
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
                     self?.refreshAllPermissions()
                 }
             }
         } else {
             permissionEventStore.requestAccess(to: .reminder) { [weak self] _, _ in
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
                     self?.refreshAllPermissions()
                 }
             }
@@ -3756,8 +3756,12 @@ You can turn this off at any time in Settings → Cloud bridge.
                 }))
             }
             pendingKeyboardShortcutStartTask?.cancel()
-            pendingKeyboardShortcutStartTask = Task {
-                await buddyDictationManager.startPushToTalkFromKeyboardShortcut(
+            // Capture self weakly in the outer task so it matches the weak
+            // captures in the escaping draft/submit closures below — the task
+            // must not extend this manager's lifetime past app teardown.
+            pendingKeyboardShortcutStartTask = Task { [weak self] in
+                guard let self else { return }
+                await self.buddyDictationManager.startPushToTalkFromKeyboardShortcut(
                     currentDraftText: "",
                     updateDraftText: { [weak self] partialTranscript in
                         // The transcription provider may call us off-main;
@@ -4129,7 +4133,10 @@ You can turn this off at any time in Settings → Cloud bridge.
         currentTurnHUDState = .understanding("answering without screen")
         responseOverlayManager.showOverlayAndBeginStreaming()
 
-        currentResponseTask = Task {
+        // Capture self weakly so this matches the weak capture in the nested
+        // eager-filler task below and never extends the manager's lifetime.
+        currentResponseTask = Task { [weak self] in
+            guard let self else { return }
             voiceState = .processing
 
             do {

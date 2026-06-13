@@ -7,6 +7,7 @@ import Testing
 
 @testable import Pace
 
+@MainActor
 struct PaceTranscriptionContextualPhraseBuilderTests {
     @Test func includesFrontmostApplicationAndToolNames() async throws {
         let phrases = PaceTranscriptionContextualPhraseBuilder.phrasesForCurrentTurn(

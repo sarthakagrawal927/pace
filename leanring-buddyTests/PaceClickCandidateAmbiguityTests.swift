@@ -158,7 +158,7 @@ struct PaceClickCandidateAmbiguityTests {
             clickCount: 1
         )
 
-        let offeredCandidates = try? #require(PaceClickCandidateAmbiguity.isAmbiguous(candidateSet))
+        let offeredCandidates = PaceClickCandidateAmbiguity.isAmbiguous(candidateSet)
         // Only the two near-tied targets are offered…
         #expect(offeredCandidates?.count == 2)
 

@@ -23,7 +23,7 @@ import Foundation
 /// One bundled, installable recipe. Decoded directly from
 /// `Resources/recipes/<slug>.json`. Codable so the same JSON the test
 /// suite asserts against is the JSON the runtime parses.
-struct PaceBundledRecipe: Equatable, Codable {
+nonisolated struct PaceBundledRecipe: Equatable, Codable {
     /// Human-readable name. Used as the saved `PaceRecordedFlow.name`
     /// after install, so the `run_flow` tool can match it.
     let name: String
@@ -87,7 +87,7 @@ struct PaceBundledRecipe: Equatable, Codable {
 /// One specific problem the validator surfaced. Mirrors the shape of
 /// `PaceToolRegistryValidationIssue` so the startup-validation site can
 /// treat both validator outputs uniformly.
-struct PaceRecipeValidationIssue: Equatable, CustomStringConvertible {
+nonisolated struct PaceRecipeValidationIssue: Equatable, CustomStringConvertible {
     let message: String
 
     var description: String {
@@ -118,7 +118,7 @@ enum PaceRecipeInstallError: Error, Equatable {
 
 // MARK: - Library
 
-enum PaceRecipeLibrary {
+nonisolated enum PaceRecipeLibrary {
     /// Subdirectory inside the bundle where recipe JSON files live.
     /// Mirrors the `Resources/v10-actions` convention used by the tool
     /// registry artifact lookups.
@@ -399,7 +399,7 @@ enum PaceRecipeLibrary {
 /// Minimal surface of `PaceLocalMemoryStore` that the recipe installer
 /// needs. Lets unit tests inject a stub store without depending on
 /// `UserDefaults.standard` state.
-protocol PaceLocalMemoryStoreReadable {
+nonisolated protocol PaceLocalMemoryStoreReadable {
     static func string(for key: PaceLocalMemoryKey) -> String?
 }
 

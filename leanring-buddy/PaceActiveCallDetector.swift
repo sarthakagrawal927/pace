@@ -121,7 +121,7 @@ final class PaceActiveCallDetector: ObservableObject {
     /// Default live provider. Snapshots `NSWorkspace.runningApplications`
     /// into a `Set<String>` of bundle identifiers; nil identifiers (rare
     /// — typically agents without an Info.plist) are skipped.
-    static func liveRunningApplicationBundleIdentifiers() -> Set<String> {
+    nonisolated static func liveRunningApplicationBundleIdentifiers() -> Set<String> {
         var collectedBundleIdentifiers: Set<String> = []
         for runningApplication in NSWorkspace.shared.runningApplications {
             if let bundleIdentifier = runningApplication.bundleIdentifier {

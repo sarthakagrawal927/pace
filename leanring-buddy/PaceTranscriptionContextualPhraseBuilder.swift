@@ -53,7 +53,7 @@ enum PaceTranscriptionContextualPhraseBuilder {
         return Array(uniquePhrases(candidatePhrases).prefix(maximumPhraseCount))
     }
 
-    static func spokenPhrase(fromToolName toolName: String) -> String {
+    nonisolated static func spokenPhrase(fromToolName toolName: String) -> String {
         toolName
             .replacingOccurrences(of: "_", with: " ")
             .replacingOccurrences(of: "-", with: " ")

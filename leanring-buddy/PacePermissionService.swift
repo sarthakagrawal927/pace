@@ -146,15 +146,11 @@ final class PacePermissionService: ObservableObject {
     // MARK: - EventKit version drift
 
     /// EKAuthorizationStatus added .fullAccess on macOS 14 (Sonoma) and
-    /// kept .authorized for backwards compat — but only one of them is
-    /// the right granted status depending on which platform we're on.
-    /// One helper covers both.
+    /// retired the legacy .authorized case. The app targets macOS 26+, so
+    /// .fullAccess is the only status that means "read + write granted".
     private func isEventKitGranted(for entityType: EKEntityType) -> Bool {
         let status = EKEventStore.authorizationStatus(for: entityType)
-        if #available(macOS 14.0, *) {
-            return status == .fullAccess
-        }
-        return status == .authorized
+        return status == .fullAccess
     }
 
     // MARK: - Polling + lifecycle

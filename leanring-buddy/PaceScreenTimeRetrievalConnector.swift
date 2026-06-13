@@ -27,7 +27,7 @@ struct PaceScreenTimeReadError: LocalizedError {
     }
 }
 
-final class PaceScreenTimeRetrievalConnector {
+nonisolated final class PaceScreenTimeRetrievalConnector {
     /// Core Data timestamps count seconds from 2001-01-01 UTC.
     static let coreDataEpochOffset: TimeInterval = 978_307_200
     static let maximumAppsPerDay = 15

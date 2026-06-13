@@ -10,7 +10,7 @@
 
 import Foundation
 
-enum PaceActionTagParser {
+nonisolated enum PaceActionTagParser {
     private struct ToolCallBlockParseResult {
         let range: Range<String.Index>
         let steps: [PaceActionExecutionStep]

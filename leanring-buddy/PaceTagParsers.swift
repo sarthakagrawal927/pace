@@ -81,7 +81,7 @@ enum PaceTagParsers {
     /// Lower-cased tokens that suggest the user is referring to
     /// something on screen or asking for an action. Substring matching
     /// so plurals / tense variants ("clicking", "scrolled") catch.
-    private static let screenReferentialKeywords: Set<String> = [
+    nonisolated private static let screenReferentialKeywords: Set<String> = [
         // Action verbs the assistant might execute
         "click", "tap", "press", "open", "close", "save", "delete",
         "type", "write", "enter", "fill", "paste", "copy",
@@ -113,7 +113,7 @@ enum PaceTagParsers {
     /// Parses a `[POINT:x,y:label:screenN]` or `[POINT:none]` tag from
     /// the end of the planner's response. Returns the spoken text (tag
     /// removed) plus the optional coordinate / label / screen number.
-    static func parsePointingCoordinates(from responseText: String) -> PointingParseResult {
+    nonisolated static func parsePointingCoordinates(from responseText: String) -> PointingParseResult {
         // Match [POINT:none] or [POINT:123,456:label] or [POINT:123,456:label:screen2]
         let pattern = #"\[POINT:(?:none|(\d+)\s*,\s*(\d+)(?::([^\]:\s][^\]:]*?))?(?::screen(\d+))?)\]\s*$"#
 

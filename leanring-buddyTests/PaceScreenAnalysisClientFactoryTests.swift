@@ -7,6 +7,7 @@ import Testing
 
 @testable import Pace
 
+@MainActor
 struct PaceScreenAnalysisClientFactoryTests {
     @Test func defaultProviderUsesLMStudioHTTP() async throws {
         let client = PaceScreenAnalysisClientFactory.makeClient(

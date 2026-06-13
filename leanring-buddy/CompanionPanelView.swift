@@ -459,7 +459,7 @@ struct CompanionPanelView: View {
             // FocusState so the global shortcut can re-focus an
             // already-visible field (FocusState only changes when its
             // boolean transitions, so we coalesce both directions).
-            .onChange(of: companionManager.isNotchChatInputFocused) { newValue in
+            .onChange(of: companionManager.isNotchChatInputFocused) { _, newValue in
                 isNotchChatInputFocused = newValue
             }
         }

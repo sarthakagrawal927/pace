@@ -10,7 +10,7 @@
 
 import Foundation
 
-enum PaceToolRiskLevel: String {
+nonisolated enum PaceToolRiskLevel: String {
     case readOnly
     case appOrSystemMutation
     case inputInjection
@@ -33,7 +33,7 @@ enum PaceToolRiskLevel: String {
     }
 }
 
-enum PaceLocalToolKind: String, CaseIterable {
+nonisolated enum PaceLocalToolKind: String, CaseIterable {
     case click
     case doubleClick
     case type
@@ -63,7 +63,7 @@ enum PaceLocalToolKind: String, CaseIterable {
     case runFlow
 }
 
-struct PaceLocalToolDefinition {
+nonisolated struct PaceLocalToolDefinition {
     let kind: PaceLocalToolKind
     let canonicalName: String
     let aliases: [String]
@@ -87,7 +87,7 @@ struct PaceLocalToolDefinition {
     }
 }
 
-struct PaceToolRegistryValidationIssue: Equatable, CustomStringConvertible {
+nonisolated struct PaceToolRegistryValidationIssue: Equatable, CustomStringConvertible {
     let message: String
 
     var description: String {
@@ -95,7 +95,7 @@ struct PaceToolRegistryValidationIssue: Equatable, CustomStringConvertible {
     }
 }
 
-enum PaceToolRegistry {
+nonisolated enum PaceToolRegistry {
     static let localTools: [PaceLocalToolDefinition] = [
         PaceLocalToolDefinition(
             kind: .click,
@@ -584,7 +584,7 @@ enum PaceToolRegistry {
         }
     }
 
-    private static func normalizeToolName(_ rawToolName: String) -> String {
+    nonisolated private static func normalizeToolName(_ rawToolName: String) -> String {
         rawToolName
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()

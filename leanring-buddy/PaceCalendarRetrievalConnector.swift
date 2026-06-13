@@ -8,7 +8,7 @@
 import EventKit
 import Foundation
 
-struct PaceCalendarRetrievalEventSnapshot: Equatable {
+nonisolated struct PaceCalendarRetrievalEventSnapshot: Equatable {
     let stableIdentifier: String
     let title: String
     let startDate: Date
@@ -143,7 +143,7 @@ struct PaceCalendarRetrievalConnector {
             .map(PaceCalendarRetrievalEventSnapshot.init(event:))
     }
 
-    static func document(from eventSnapshot: PaceCalendarRetrievalEventSnapshot) -> PaceRetrievalDocument {
+    nonisolated static func document(from eventSnapshot: PaceCalendarRetrievalEventSnapshot) -> PaceRetrievalDocument {
         var lines = [
             "Title: \(eventSnapshot.title)",
             "When: \(formattedDateRange(for: eventSnapshot))",
@@ -204,7 +204,7 @@ struct PaceCalendarRetrievalConnector {
         }
     }
 
-    private static func formattedDateRange(for eventSnapshot: PaceCalendarRetrievalEventSnapshot) -> String {
+    nonisolated private static func formattedDateRange(for eventSnapshot: PaceCalendarRetrievalEventSnapshot) -> String {
         if eventSnapshot.isAllDay {
             let dateFormatter = DateFormatter()
             dateFormatter.dateStyle = .medium
@@ -225,7 +225,7 @@ struct PaceCalendarRetrievalConnector {
         return "\(startFormatter.string(from: eventSnapshot.startDate)) - \(endFormatter.string(from: eventSnapshot.endDate))"
     }
 
-    private static func compactText(_ text: String?, maximumCharacters: Int) -> String? {
+    nonisolated private static func compactText(_ text: String?, maximumCharacters: Int) -> String? {
         guard let text else { return nil }
         let compactedText = text
             .components(separatedBy: .whitespacesAndNewlines)

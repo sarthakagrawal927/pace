@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct PaceLocalEndpointGuardError: LocalizedError, Equatable {
+nonisolated struct PaceLocalEndpointGuardError: LocalizedError, Equatable {
     let settingName: String
     let rejectedValue: String
     let reason: String
@@ -17,7 +17,7 @@ struct PaceLocalEndpointGuardError: LocalizedError, Equatable {
     }
 }
 
-enum PaceLocalEndpointGuard {
+nonisolated enum PaceLocalEndpointGuard {
     static let defaultOpenAICompatibleBaseURL = URL(string: "http://localhost:1234/v1")!
 
     static func resolvedLocalOpenAICompatibleBaseURL(

@@ -119,7 +119,7 @@ struct PaceContactsRetrievalConnector {
         )
     }
 
-    static func document(from contactSnapshot: PaceContactRetrievalSnapshot) -> PaceRetrievalDocument {
+    nonisolated static func document(from contactSnapshot: PaceContactRetrievalSnapshot) -> PaceRetrievalDocument {
         var lines = ["Name: \(contactSnapshot.displayName)"]
 
         if let nickname = compactText(contactSnapshot.nickname, maximumCharacters: 120) {
@@ -178,7 +178,7 @@ struct PaceContactsRetrievalConnector {
         }
     }
 
-    private static func compactText(_ text: String?, maximumCharacters: Int) -> String? {
+    nonisolated private static func compactText(_ text: String?, maximumCharacters: Int) -> String? {
         guard let text else { return nil }
         let compactedText = text
             .components(separatedBy: .whitespacesAndNewlines)

@@ -141,7 +141,9 @@ struct CloudBridgePlannerClientTests {
         defer { fixtureProcess.terminate() }
 
         let bridgeBaseURL = URL(string: "http://127.0.0.1:\(port)")!
-        let bridgeClient = CloudBridgePlannerClient(
+        // Constructed only to confirm the initializer accepts this config; the
+        // error-path assertion below builds the expected error type directly.
+        _ = CloudBridgePlannerClient(
             bridgeBaseURL: bridgeBaseURL,
             upstreamProvider: .claude,
             modelIdentifier: "sonnet"

@@ -8,7 +8,7 @@
 import Foundation
 
 enum AppBundleConfiguration {
-    static func stringValue(forKey key: String) -> String? {
+    nonisolated static func stringValue(forKey key: String) -> String? {
         if let value = Bundle.main.object(forInfoDictionaryKey: key) as? String {
             let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmedValue.isEmpty {

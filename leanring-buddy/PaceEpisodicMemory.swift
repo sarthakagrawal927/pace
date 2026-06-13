@@ -20,7 +20,7 @@ import Foundation
 /// One durable fact about the user or the user's world. The store
 /// dedup key is `(subject, predicate)` case-insensitive — see
 /// `PaceEpisodicFactStore.applyDedup(_:against:)`.
-struct PaceEpisodicFact: Codable, Equatable, Identifiable {
+nonisolated struct PaceEpisodicFact: Codable, Equatable, Identifiable {
     let identifier: String
     let extractedAt: Date
     let subject: String
@@ -80,7 +80,7 @@ struct PaceEpisodicTombstone: Codable, Equatable {
 /// via `injectSensitiveEpisodicTopics`. Tagged by the extractor in
 /// the system prompt; defaulting to OFF for injection respects the
 /// privacy-first posture spelled out in CLAUDE.md.
-enum PaceEpisodicSensitiveTopics {
+nonisolated enum PaceEpisodicSensitiveTopics {
     static let sensitiveTopicHashtags: Set<String> = [
         "#health",
         "#finance",
@@ -195,7 +195,7 @@ struct PaceEpisodicPatternFactExtractor {
     /// retrieval index. Sensitive facts use a distinct
     /// `permissionScope` so the injection-time filter can drop them
     /// in a single string compare.
-    static func retrievalDocument(for fact: PaceEpisodicFact) -> PaceRetrievalDocument {
+    nonisolated static func retrievalDocument(for fact: PaceEpisodicFact) -> PaceRetrievalDocument {
         let permissionScope = PaceEpisodicSensitiveTopics.isFactSensitive(fact)
             ? PaceEpisodicSensitiveTopics.sensitivePermissionScope
             : PaceEpisodicSensitiveTopics.standardPermissionScope

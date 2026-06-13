@@ -17,7 +17,12 @@
 
 import AVFoundation
 import Foundation
-import WhisperKit
+// `@preconcurrency` silences Sendable-conformance warnings for WhisperKit's
+// own types (the module predates strict concurrency). The runtime behavior is
+// unchanged — the provider still fails fast to Apple Speech when the model is
+// missing, and the `WhisperKit` value is only ever touched inside the actor
+// that loads it.
+@preconcurrency import WhisperKit
 
 struct WhisperKitTranscriptionProviderError: LocalizedError {
     let message: String
@@ -34,8 +39,8 @@ final class WhisperKitTranscriptionProvider: BuddyTranscriptionProvider {
     /// Model placed by the WhisperKit qualification spike. `download: false`
     /// keeps Pace zero-network even on a misconfigured machine — a missing
     /// model is a thrown error, never a silent download.
-    static let modelName = "openai_whisper-large-v3-v20240930_turbo"
-    static var modelFolderURL: URL {
+    nonisolated static let modelName = "openai_whisper-large-v3-v20240930_turbo"
+    nonisolated static var modelFolderURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents/huggingface/models/argmaxinc/whisperkit-coreml")
             .appendingPathComponent(modelName)
@@ -73,35 +78,63 @@ final class WhisperKitTranscriptionProvider: BuddyTranscriptionProvider {
     }
 }
 
+/// Transfer box for the non-Sendable `WhisperKit` pipeline. WhisperKit predates
+/// strict concurrency and isn't `Sendable`, but Pace constructs exactly one
+/// instance, hands it to a single streaming session, and never mutates it from
+/// two threads at once — so transferring the constructed value across an
+/// isolation boundary is safe in practice. The `@unchecked Sendable` box makes
+/// that contract explicit and lets the load `Task` carry a Sendable Success
+/// type so no raw non-Sendable value crosses the boundary.
+private struct WhisperKitBox: @unchecked Sendable {
+    let pipeline: WhisperKit
+}
+
 /// Serializes WhisperKit construction so the 1.5 GB model loads exactly once.
-private actor WhisperKitRuntimeCache {
-    private var loadTask: Task<WhisperKit, Error>?
+///
+/// Intentionally a `nonisolated` class rather than an `actor`: keeping the
+/// cache nonisolated and boxing the result means the `WhisperKit` value never
+/// crosses an isolation boundary unboxed. A plain `NSLock` guards the single
+/// shared load `Task`, which is what serialized concurrent first-callers before
+/// — same behavior, no boundary crossing.
+private final class WhisperKitRuntimeCache: @unchecked Sendable {
+    private let loadTaskLock = NSLock()
+    private var loadTask: Task<WhisperKitBox, Error>?
 
     func pipeline() async throws -> WhisperKit {
-        if let loadTask {
-            return try await loadTask.value
-        }
-        let task = Task<WhisperKit, Error> {
-            let folder = WhisperKitTranscriptionProvider.modelFolderURL
-            guard FileManager.default.fileExists(atPath: folder.path) else {
-                throw WhisperKitTranscriptionProviderError(
-                    message: "WhisperKit model not found at \(folder.path). Run the model install step (see pace-model-manifest)."
-                )
+        let task = loadTaskLock.withLock { () -> Task<WhisperKitBox, Error> in
+            if let existingLoadTask = loadTask {
+                return existingLoadTask
             }
-            let config = WhisperKitConfig(
-                model: WhisperKitTranscriptionProvider.modelName,
-                modelFolder: folder.path,
-                download: false
-            )
-            return try await WhisperKit(config)
+            let newLoadTask = Task<WhisperKitBox, Error> {
+                let folder = WhisperKitTranscriptionProvider.modelFolderURL
+                guard FileManager.default.fileExists(atPath: folder.path) else {
+                    throw WhisperKitTranscriptionProviderError(
+                        message: "WhisperKit model not found at \(folder.path). Run the model install step (see pace-model-manifest)."
+                    )
+                }
+                let config = WhisperKitConfig(
+                    model: WhisperKitTranscriptionProvider.modelName,
+                    modelFolder: folder.path,
+                    download: false
+                )
+                return WhisperKitBox(pipeline: try await WhisperKit(config))
+            }
+            loadTask = newLoadTask
+            return newLoadTask
         }
-        loadTask = task
+
         do {
-            return try await task.value
+            return try await task.value.pipeline
         } catch {
             // Allow a retry after transient failures (e.g. first-launch
             // CoreML compile interrupted) instead of caching the error.
-            loadTask = nil
+            loadTaskLock.withLock {
+                // Only clear if this failed task is still the cached one, so a
+                // concurrent successful reload isn't accidentally discarded.
+                if loadTask == task {
+                    loadTask = nil
+                }
+            }
             throw error
         }
     }

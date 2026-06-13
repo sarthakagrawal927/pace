@@ -14,7 +14,7 @@ import Foundation
 
 // MARK: - Parsed action types
 
-struct PaceActionExecutionObservation {
+nonisolated struct PaceActionExecutionObservation {
     let toolName: String
     let summary: String
 
@@ -45,7 +45,7 @@ struct PaceActionExecutionObservation {
     }
 }
 
-struct PaceActionExecutionPlan {
+nonisolated struct PaceActionExecutionPlan {
     let steps: [PaceActionExecutionStep]
 
     static func serial(actions: [PaceParsedAction]) -> PaceActionExecutionPlan {
@@ -75,17 +75,17 @@ struct PaceActionExecutionPlan {
     }
 }
 
-struct PaceActionExecutionStep {
+nonisolated struct PaceActionExecutionStep {
     let actions: [PaceParsedAction]
 }
 
-enum PaceActionMutation {
+nonisolated enum PaceActionMutation {
     case axValue(element: AXUIElement, oldValue: String, summary: String)
 }
 
 /// One action Claude wants pace to perform on the user's behalf.
 /// Parsed out of the assistant's response by `PaceActionTagParser`.
-enum PaceParsedAction {
+nonisolated enum PaceParsedAction {
     case click(ScreenshotPixelLocation)
     case doubleClick(ScreenshotPixelLocation)
     case clickCandidates(PaceClickCandidateSet)
@@ -315,21 +315,21 @@ enum PaceParsedAction {
 }
 
 extension ScreenshotPixelLocation {
-    var approvalDescription: String {
+    nonisolated var approvalDescription: String {
         let screenSuffix = screenNumber.map { ", screen \($0)" } ?? ""
         return "\(xInScreenshotPixels), \(yInScreenshotPixels)\(screenSuffix)"
     }
 }
 
-enum PaceKeyboardModifier: String {
+nonisolated enum PaceKeyboardModifier: String {
     case command, option, control, shift
 }
 
-struct PaceWindowSnapRequest {
+nonisolated struct PaceWindowSnapRequest {
     let position: PaceWindowSnapPosition
 }
 
-enum PaceWindowSnapPosition: String {
+nonisolated enum PaceWindowSnapPosition: String {
     case left
     case right
     case top
@@ -399,12 +399,12 @@ enum PaceWindowSnapPosition: String {
     }
 }
 
-struct PaceSetTextValueRequest {
+nonisolated struct PaceSetTextValueRequest {
     let value: String
     let target: PaceSetTextValueTarget
 }
 
-enum PaceSetTextValueTarget: String {
+nonisolated enum PaceSetTextValueTarget: String {
     case focused
     case selection
 
@@ -418,13 +418,13 @@ enum PaceSetTextValueTarget: String {
     }
 }
 
-enum PaceScrollDirection: String, CustomStringConvertible {
+nonisolated enum PaceScrollDirection: String, CustomStringConvertible {
     case up, down
 
     var description: String { rawValue }
 }
 
-struct PaceSystemAdjustment: CustomStringConvertible {
+nonisolated struct PaceSystemAdjustment: CustomStringConvertible {
     let direction: PaceAdjustmentDirection
     let stepCount: Int
 
@@ -433,11 +433,11 @@ struct PaceSystemAdjustment: CustomStringConvertible {
     }
 }
 
-enum PaceAdjustmentDirection: String {
+nonisolated enum PaceAdjustmentDirection: String {
     case up, down
 }
 
-enum PaceMusicCommand: String, Equatable {
+nonisolated enum PaceMusicCommand: String, Equatable {
     case play
     case pause
     case playPause
@@ -445,7 +445,7 @@ enum PaceMusicCommand: String, Equatable {
     case previous
 }
 
-struct PaceCalendarQuery {
+nonisolated struct PaceCalendarQuery {
     let range: PaceCalendarRange
 
     func dateInterval(relativeTo date: Date) -> DateInterval {
@@ -467,7 +467,7 @@ struct PaceCalendarQuery {
     }
 }
 
-struct PaceCalendarEventRequest {
+nonisolated struct PaceCalendarEventRequest {
     let title: String
     let startDate: Date
     let endDate: Date
@@ -492,7 +492,7 @@ struct PaceCalendarEventRequest {
     }
 }
 
-enum PaceCalendarRange: String, Equatable {
+nonisolated enum PaceCalendarRange: String, Equatable {
     case today
     case tomorrow
     case week
@@ -506,42 +506,42 @@ enum PaceCalendarRange: String, Equatable {
     }
 }
 
-struct PaceReminderRequest {
+nonisolated struct PaceReminderRequest {
     let title: String
     let notes: String?
 }
 
-struct PaceTimerRequest {
+nonisolated struct PaceTimerRequest {
     let label: String
     let durationInSeconds: TimeInterval
 }
 
-struct PaceFlowActionRequest {
+nonisolated struct PaceFlowActionRequest {
     let name: String
 }
 
-struct PaceFinderRequest {
+nonisolated struct PaceFinderRequest {
     let path: String
     let action: PaceFinderAction
 }
 
-enum PaceFinderAction: String, Equatable {
+nonisolated enum PaceFinderAction: String, Equatable {
     case open
     case reveal
 }
 
-struct PaceNoteRequest {
+nonisolated struct PaceNoteRequest {
     let title: String
     let body: String
 }
 
-struct PaceMailDraft {
+nonisolated struct PaceMailDraft {
     let recipients: [String]
     let subject: String
     let body: String
 }
 
-struct PaceStreamingMailDraftState {
+nonisolated struct PaceStreamingMailDraftState {
     let lastWrittenSnapshot: PaceStreamingMailDraftSnapshot
     let pendingSnapshot: PaceStreamingMailDraftSnapshot?
     let lastWriteDate: Date
@@ -557,12 +557,12 @@ struct PaceStreamingMailDraftState {
     }
 }
 
-struct PaceThingsToDoRequest {
+nonisolated struct PaceThingsToDoRequest {
     let title: String
     let notes: String?
 }
 
-struct PaceMessageRequest {
+nonisolated struct PaceMessageRequest {
     let recipient: String?
     let text: String?
 }
@@ -570,7 +570,7 @@ struct PaceMessageRequest {
 // MARK: - Action tag parser
 
 /// Result of pulling all action tags out of Claude's response.
-struct PaceActionTagParseResult {
+nonisolated struct PaceActionTagParseResult {
     /// The assistant text with every recognised action tag stripped.
     /// Safe to feed to TTS.
     let spokenText: String
@@ -585,7 +585,7 @@ struct PaceActionTagParseResult {
     let firstClickVisualisationLocation: ScreenshotPixelLocation?
 }
 
-struct PaceFastActionParseResult {
+nonisolated struct PaceFastActionParseResult {
     let spokenText: String
     let executionPlan: PaceActionExecutionPlan
 }
@@ -594,7 +594,7 @@ struct PaceFastActionParseResult {
 /// enough to execute without burning a VLM/planner turn. It intentionally
 /// avoids clicks, typing, scrolling, and open-ended app names; those stay on
 /// the normal planner path where screen context and approval copy are richer.
-enum PaceFastActionCommandParser {
+nonisolated enum PaceFastActionCommandParser {
     private static let knownApplicationAliases: [String: String] = [
         "arc": "Arc",
         "calendar": "Calendar",

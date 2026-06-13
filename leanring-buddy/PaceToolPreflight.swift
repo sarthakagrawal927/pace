@@ -9,7 +9,7 @@
 
 import Foundation
 
-enum PaceToolPreflightSeverity: Equatable {
+nonisolated enum PaceToolPreflightSeverity: Equatable {
     case warning
     case blocking
 
@@ -36,7 +36,7 @@ nonisolated enum PaceToolPreflightBlockingKind: Equatable {
     case mcpServerNotConfigured(name: String)
 }
 
-struct PaceToolPreflightIssue: Equatable {
+nonisolated struct PaceToolPreflightIssue: Equatable {
     let severity: PaceToolPreflightSeverity
     let title: String
     let repairHint: String
@@ -77,7 +77,7 @@ struct PaceToolPreflightIssue: Equatable {
     }
 }
 
-struct PaceToolPreflightEnvironment {
+nonisolated struct PaceToolPreflightEnvironment {
     let actionsAreEnabled: Bool
     let hasAccessibilityPermission: Bool
     let hasCalendarPermission: Bool
@@ -93,7 +93,7 @@ struct PaceToolPreflightEnvironment {
     )
 }
 
-enum PaceToolPreflight {
+nonisolated enum PaceToolPreflight {
     static func evaluate(
         actionExecutionPlan: PaceActionExecutionPlan,
         environment: PaceToolPreflightEnvironment

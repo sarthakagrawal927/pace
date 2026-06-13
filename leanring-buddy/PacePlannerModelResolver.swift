@@ -76,9 +76,12 @@ enum PacePlannerModelResolver {
             print("🧭 Planner resolver: configured '\(configuredIdentifier)' not loaded and no chat-looking fallback found. Keeping configured value.")
         }
 
-        cachedResolvedIdentifierLock.lock()
-        cachedResolvedIdentifier = resolvedIdentifier
-        cachedResolvedIdentifierLock.unlock()
+        // `withLock` is a synchronous scoped critical section — the lock is
+        // never held across an `await`, which is what made the bare
+        // `lock()`/`unlock()` pair illegal in an async context.
+        cachedResolvedIdentifierLock.withLock {
+            cachedResolvedIdentifier = resolvedIdentifier
+        }
 
         logModelSizeAdviceIfWarranted(forResolvedIdentifier: resolvedIdentifier)
 

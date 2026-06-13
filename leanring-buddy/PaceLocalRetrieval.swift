@@ -8,7 +8,7 @@
 
 import Foundation
 
-enum PaceRetrievalSource: String, CaseIterable, Codable, Equatable {
+nonisolated enum PaceRetrievalSource: String, CaseIterable, Codable, Equatable {
     case file
     case mail
     case notes
@@ -55,7 +55,7 @@ enum PaceRetrievalSource: String, CaseIterable, Codable, Equatable {
     }
 }
 
-struct PaceRetrievalDocument: Codable, Equatable {
+nonisolated struct PaceRetrievalDocument: Codable, Equatable {
     let id: String
     let source: PaceRetrievalSource
     let title: String
@@ -99,7 +99,7 @@ struct PaceRetrievalQuery: Equatable {
     }
 }
 
-struct PaceRetrievalMatch: Equatable {
+nonisolated struct PaceRetrievalMatch: Equatable {
     let documentId: String
     let chunkId: String
     let source: PaceRetrievalSource

@@ -34,7 +34,7 @@ enum PaceMCPClientError: Error, CustomStringConvertible {
     }
 }
 
-struct PaceMCPServerConfiguration: Decodable, Equatable {
+nonisolated struct PaceMCPServerConfiguration: Decodable, Equatable {
     let command: String
     let args: [String]
     let workingDirectory: String?
@@ -70,7 +70,7 @@ struct PaceMCPServerConfiguration: Decodable, Equatable {
     }
 }
 
-struct PaceMCPToolCall: Equatable {
+nonisolated struct PaceMCPToolCall: Equatable, Sendable {
     let serverName: String
     let toolName: String
     let arguments: [String: PaceMCPJSONValue]
@@ -84,7 +84,7 @@ struct PaceMCPToolCall: Equatable {
     }
 }
 
-enum PaceMCPJSONValue: Codable, Equatable {
+nonisolated enum PaceMCPJSONValue: Codable, Equatable, Sendable {
     case string(String)
     case number(Double)
     case bool(Bool)
@@ -169,7 +169,7 @@ enum PaceMCPJSONValue: Codable, Equatable {
     }
 }
 
-enum PaceMCPServerRegistry {
+nonisolated enum PaceMCPServerRegistry {
     private struct RootConfiguration: Decodable {
         let servers: [String: PaceMCPServerConfiguration]?
         let mcpServers: [String: PaceMCPServerConfiguration]?
@@ -216,7 +216,7 @@ enum PaceMCPServerRegistry {
     }
 }
 
-struct PaceMCPStdioClient {
+nonisolated struct PaceMCPStdioClient {
     private let serverConfigurationsProvider: () -> [String: PaceMCPServerConfiguration]
     private let requestTimeoutInSeconds: TimeInterval
 

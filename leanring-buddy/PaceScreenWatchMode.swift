@@ -10,7 +10,7 @@
 import Combine
 import Foundation
 
-struct PaceScreenWatchConfiguration {
+nonisolated struct PaceScreenWatchConfiguration {
     let sampleIntervalInSeconds: TimeInterval
     let minimumSecondsBetweenEvents: TimeInterval
 

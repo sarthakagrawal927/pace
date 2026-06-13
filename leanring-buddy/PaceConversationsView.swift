@@ -106,10 +106,10 @@ struct PaceConversationsView: View {
                 .padding(24)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .onChange(of: companionManager.chatSession.messages.count) { _ in
+            .onChange(of: companionManager.chatSession.messages.count) {
                 scrollToBottom(scrollViewProxy: scrollViewProxy)
             }
-            .onChange(of: companionManager.streamingSentenceTTSPipeline.inFlightStreamedText) { _ in
+            .onChange(of: companionManager.streamingSentenceTTSPipeline.inFlightStreamedText) {
                 scrollToBottom(scrollViewProxy: scrollViewProxy)
             }
             .onAppear {

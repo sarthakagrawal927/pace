@@ -30,7 +30,7 @@ import Foundation
 /// Errors the store can surface to callers. Kept small — most file
 /// failures we just let bubble up as `Error` from FileManager so the
 /// caller can decide whether to retry or surface to the user.
-enum PaceFlowStoreError: Error, Equatable {
+nonisolated enum PaceFlowStoreError: Error, Equatable {
     /// `rename(_:to:)` was asked to rename a flow that doesn't exist.
     case sourceFlowNotFound(String)
 
@@ -39,7 +39,7 @@ enum PaceFlowStoreError: Error, Equatable {
     case destinationFlowAlreadyExists(String)
 }
 
-struct PaceFlowStore {
+nonisolated struct PaceFlowStore {
     /// Default on-disk root for saved flows. Lives under the standard
     /// `Application Support/Pace/flows` directory so it gets backed up
     /// by Time Machine and survives app reinstalls.

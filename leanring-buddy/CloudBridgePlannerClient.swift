@@ -207,7 +207,7 @@ final class CloudBridgePlannerClient: BuddyPlannerClient {
                 }
                 accumulatedResponseText += textChunk
                 let accumulatedSnapshot = accumulatedResponseText
-                await onTextChunk(accumulatedSnapshot)
+                onTextChunk(accumulatedSnapshot)
             }
         }
 

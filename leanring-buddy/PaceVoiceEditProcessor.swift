@@ -8,11 +8,11 @@
 
 import Foundation
 
-struct PaceVoiceEditRequest: Equatable {
+nonisolated struct PaceVoiceEditRequest: Equatable {
     let operation: PaceVoiceEditOperation
 }
 
-enum PaceVoiceEditOperation: Equatable {
+nonisolated enum PaceVoiceEditOperation: Equatable {
     case shorten
     case makeDirect
     case fixGrammar
@@ -38,7 +38,7 @@ enum PaceVoiceEditOperation: Equatable {
     }
 }
 
-enum PaceVoiceEditProcessor {
+nonisolated enum PaceVoiceEditProcessor {
     static func process(
         selectedText: String,
         request: PaceVoiceEditRequest

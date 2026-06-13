@@ -92,7 +92,7 @@ final class PaceIntentClassifier {
     /// Below this confidence the prediction is downgraded to .unknown
     /// at the public surface. Picked to match the practical floor where
     /// the classifier's wrong calls outweigh the latency it saves.
-    static let defaultMinimumConfidence: Double = 0.6
+    nonisolated static let defaultMinimumConfidence: Double = 0.6
 
     private let minimumConfidence: Double
 

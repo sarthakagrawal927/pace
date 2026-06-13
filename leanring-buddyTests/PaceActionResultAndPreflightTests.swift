@@ -6,6 +6,7 @@
 import Testing
 @testable import Pace
 
+@MainActor
 struct PaceActionResultAndPreflightTests {
     @Test func preflightReportsMissingPermissionsAndAutomationWarning() async throws {
         let actionPlan = PaceActionExecutionPlan.serial(actions: [

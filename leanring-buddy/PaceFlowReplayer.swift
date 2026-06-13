@@ -38,7 +38,11 @@ import Foundation
 
 /// Terminal outcome of a replay attempt. `Equatable` so tests pin the
 /// exact case + payload after each scenario.
-enum PaceFlowReplayOutcome: Equatable {
+///
+/// `nonisolated` because it is a pure value enum compared from nonisolated
+/// test contexts; the project default actor isolation would otherwise make
+/// the synthesized Equatable conformance MainActor-isolated.
+nonisolated enum PaceFlowReplayOutcome: Equatable {
     /// Every step completed without an AX miss or send-restriction.
     case completed
 

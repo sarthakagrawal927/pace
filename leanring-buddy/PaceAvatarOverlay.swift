@@ -118,7 +118,7 @@ final class PaceAvatarOverlayManager {
         // space; we add the screen origin to get global panel coords.
         positionUpdateTimer?.invalidate()
         positionUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.repositionPanelFromController()
             }
         }
@@ -179,7 +179,7 @@ final class PaceAvatarWalkController: ObservableObject {
         self.horizontalPanelOffset = (screenVisibleFrame.width - panelSize.width) / 2
 
         movementTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.tick()
             }
         }

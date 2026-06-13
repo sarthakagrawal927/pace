@@ -17,7 +17,7 @@ import Foundation
 
 /// Which routing mode the user has chosen for the cloud bridge.
 /// Default is `.off` — no bridge code runs at all.
-enum PaceCloudBridgeMode: String, Equatable, Codable, CaseIterable {
+nonisolated enum PaceCloudBridgeMode: String, Equatable, Codable, CaseIterable {
     /// Current Pace behavior: local planner only, no bridge code runs.
     case off
     /// Local planner handles action/screen turns; bridge handles turns that
@@ -29,7 +29,7 @@ enum PaceCloudBridgeMode: String, Equatable, Codable, CaseIterable {
 }
 
 /// Which CLI tool the bridge should spawn as the upstream.
-enum PaceCloudBridgeUpstream: String, Equatable, Codable, CaseIterable {
+nonisolated enum PaceCloudBridgeUpstream: String, Equatable, Codable, CaseIterable {
     case claude
     case codex
     case gemini
@@ -45,7 +45,7 @@ enum PaceCloudBridgeUpstream: String, Equatable, Codable, CaseIterable {
 }
 
 /// A snapshot of all cloud-bridge preferences at a point in time.
-struct PaceCloudBridgeConfiguration: Equatable {
+nonisolated struct PaceCloudBridgeConfiguration: Equatable {
     let mode: PaceCloudBridgeMode
     let upstream: PaceCloudBridgeUpstream
     let model: String

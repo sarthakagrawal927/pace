@@ -225,7 +225,7 @@ final class DirectAPIPlannerClient: BuddyPlannerClient {
                 // Anthropic-via-OAI-shim proxies surface `<think>…</think>`
                 // blocks inline, and the spoken output must stay clean.
                 let strippedSoFar = LocalPlannerClient.stripThinkingBlocks(from: accumulatedResponseText)
-                await onTextChunk(strippedSoFar)
+                onTextChunk(strippedSoFar)
             }
         }
 

@@ -345,7 +345,7 @@ struct BlueCursorView: View {
         }
         .frame(width: screenFrame.width, height: screenFrame.height)
         .ignoresSafeArea()
-        .onChange(of: companionManager.mostRecentReversibleActionAt) { newTimestamp in
+        .onChange(of: companionManager.mostRecentReversibleActionAt) { _, newTimestamp in
             scheduleUndoBannerVisibilityRefresh(triggeredAt: newTimestamp)
         }
         .onAppear {
@@ -384,7 +384,7 @@ struct BlueCursorView: View {
             timer?.invalidate()
             navigationAnimationTimer?.invalidate()
         }
-        .onChange(of: companionManager.detectedElementScreenLocation) { newLocation in
+        .onChange(of: companionManager.detectedElementScreenLocation) { _, newLocation in
             // When a UI element location is detected, navigate the buddy to
             // that position so it points at the element.
             guard let screenLocation = newLocation,
@@ -470,24 +470,30 @@ struct BlueCursorView: View {
         // position is no longer consulted — the user's pointer can wander
         // anywhere without disturbing pace.
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { _ in
-            // During any active flight or pointing, the bezier animator owns
-            // the cursor position frame-by-frame. Don't fight it.
-            if self.buddyNavigationMode != .followingCursor {
-                return
-            }
+            // The timer is scheduled on the main run loop, so its fire always
+            // lands on the main actor. `assumeIsolated` lets the body touch the
+            // MainActor-isolated view state without spawning a Task hop (which
+            // would jitter the 30 Hz cursor tracking).
+            MainActor.assumeIsolated {
+                // During any active flight or pointing, the bezier animator owns
+                // the cursor position frame-by-frame. Don't fight it.
+                if self.buddyNavigationMode != .followingCursor {
+                    return
+                }
 
-            guard let avatarScreenPoint = self.companionManager.avatarOverlayManager?.currentAvatarAnchorPoint() else {
-                // Avatar isn't visible right now (e.g. user disabled it).
-                // Leave the cursor where it was — opacity is already gated
-                // by voice state so it won't be visible anyway at rest.
-                return
-            }
+                guard let avatarScreenPoint = self.companionManager.avatarOverlayManager?.currentAvatarAnchorPoint() else {
+                    // Avatar isn't visible right now (e.g. user disabled it).
+                    // Leave the cursor where it was — opacity is already gated
+                    // by voice state so it won't be visible anyway at rest.
+                    return
+                }
 
-            self.isCursorOnThisScreen = self.screenFrame.contains(avatarScreenPoint)
-            self.cursorPosition = Self.parkCoordinatesForAvatarScreenPoint(
-                avatarScreenPoint,
-                onScreenWithFrame: self.screenFrame
-            )
+                self.isCursorOnThisScreen = self.screenFrame.contains(avatarScreenPoint)
+                self.cursorPosition = Self.parkCoordinatesForAvatarScreenPoint(
+                    avatarScreenPoint,
+                    onScreenWithFrame: self.screenFrame
+                )
+            }
         }
     }
 

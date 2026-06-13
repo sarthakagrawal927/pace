@@ -7,6 +7,7 @@ import Testing
 
 @testable import Pace
 
+@MainActor
 struct PaceLocalAgreementStabilizerTests {
     @Test func stabilizerEmitsOnlyWordsThatAgreeAcrossConsecutiveHypotheses() async throws {
         var stabilizer = PaceLocalAgreementStabilizer()

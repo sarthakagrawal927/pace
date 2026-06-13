@@ -9,7 +9,7 @@
 
 import Foundation
 
-struct PaceSpotlightRetrievalRequest {
+nonisolated struct PaceSpotlightRetrievalRequest {
     let rootURLs: [URL]
     let allowedPathExtensions: Set<String>
     let maximumCandidateCount: Int
@@ -89,7 +89,7 @@ struct PaceSpotlightRetrievalConnector {
         )
     }
 
-    static func fileNamePredicate(allowedPathExtensions: Set<String>) -> NSPredicate {
+    nonisolated static func fileNamePredicate(allowedPathExtensions: Set<String>) -> NSPredicate {
         let sortedExtensions = allowedPathExtensions
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
             .filter { !$0.isEmpty }
@@ -108,7 +108,7 @@ struct PaceSpotlightRetrievalConnector {
         return NSCompoundPredicate(orPredicateWithSubpredicates: extensionPredicates)
     }
 
-    private static func discoverCandidateURLs(
+    nonisolated private static func discoverCandidateURLs(
         request: PaceSpotlightRetrievalRequest
     ) -> [URL] {
         let query = NSMetadataQuery()
@@ -119,13 +119,16 @@ struct PaceSpotlightRetrievalConnector {
 
         let semaphore = DispatchSemaphore(value: 0)
         var observer: NSObjectProtocol?
+        // The observer only signals the semaphore — it intentionally does
+        // NOT capture `query` so this `@Sendable` notification block stays
+        // free of the non-Sendable NSMetadataQuery. The query is stopped on
+        // the calling thread right after the semaphore wait below, so the
+        // gathering pass is still torn down deterministically.
         observer = NotificationCenter.default.addObserver(
             forName: .NSMetadataQueryDidFinishGathering,
             object: query,
             queue: nil
         ) { _ in
-            query.disableUpdates()
-            query.stop()
             semaphore.signal()
         }
 

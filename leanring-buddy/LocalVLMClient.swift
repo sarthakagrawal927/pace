@@ -17,7 +17,7 @@ import Foundation
 
 /// Describes one interactive element or block of text the local VLM
 /// found on screen. Coordinates and sizes are in screen pixels.
-struct LocalVLMScreenElement: Codable, Hashable {
+nonisolated struct LocalVLMScreenElement: Codable, Hashable {
     /// Short human-readable label, e.g. "Send" or "Email field".
     let label: String
     /// Role taxonomy borrowed from the macOS accessibility tree:
@@ -68,7 +68,7 @@ struct LocalVLMScreenElement: Codable, Hashable {
     }
 }
 
-struct LocalVLMScreenAnalysis: Codable {
+nonisolated struct LocalVLMScreenAnalysis: Codable {
     let elements: [LocalVLMScreenElement]
     /// One-paragraph natural-language description of what's on screen.
     /// Useful as conversational context for the downstream planner LLM.

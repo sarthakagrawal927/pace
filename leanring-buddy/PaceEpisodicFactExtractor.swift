@@ -189,7 +189,7 @@ final class PaceEpisodicFoundationModelFactExtractor: PaceEpisodicFactExtractor,
             turnId: turnId
         )
         let deterministicGenerationOptions = GenerationOptions(
-            sampling: .greedy,
+            samplingMode: .greedy,
             temperature: 0,
             maximumResponseTokens: 600
         )

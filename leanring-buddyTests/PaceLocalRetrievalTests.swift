@@ -9,6 +9,7 @@ import Contacts
 import Testing
 @testable import Pace
 
+@MainActor
 struct PaceLocalRetrievalTests {
     @Test func secretPathExclusionCoversCredentialsAndKeys() async throws {
         #expect(PaceSecretPathExclusionPolicy.shouldExclude(path: "/Users/sarthak/.ssh/id_ed25519"))

@@ -19,6 +19,7 @@ import Testing
 import CoreGraphics
 @testable import Pace
 
+@MainActor
 struct PaceScreenContextScalerTests {
 
     // MARK: - The bug reproduction

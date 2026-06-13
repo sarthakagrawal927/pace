@@ -9,7 +9,7 @@
 
 import Foundation
 
-enum PaceDictationPostProcessor {
+nonisolated enum PaceDictationPostProcessor {
     static func process(rawText: String, mode: String? = nil) -> String {
         let trimmedRawText = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedRawText.isEmpty else { return "" }

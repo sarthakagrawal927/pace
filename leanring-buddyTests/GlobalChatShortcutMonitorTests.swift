@@ -16,6 +16,7 @@ import Testing
 
 @testable import Pace
 
+@MainActor
 struct GlobalChatShortcutMonitorTests {
 
     // MARK: - Shortcut-match helper
