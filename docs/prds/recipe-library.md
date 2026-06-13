@@ -1,5 +1,5 @@
 ---
-status: ready-to-implement
+Status: shipped (v0.3.11)
 owner: delegated to Sonnet agent
 priority: P1 — Poke-style templated automation; multiplier on the just-shipped flow-replay PRD
 ---
@@ -191,3 +191,9 @@ recipes are user-installed, not planner-installed.
 - Don't make recipes mutable from voice (no "edit the standup
   recipe" command) — they're install/uninstall only. User edits
   happen by uninstalling and re-recording.
+
+Where in code: `leanring-buddy/PaceRecipeLibrary.swift` (loader + install/uninstall
++ `requiredPreferences` gating), `leanring-buddy/PaceRecipeCommandParser.swift`
+(install/uninstall/list voice parser). Bundled JSONs under
+`leanring-buddy/Resources/recipes/` (morning-standup-setup, weekly-review-draft,
+email-zero, focus-mode-on, end-of-day-shutdown).

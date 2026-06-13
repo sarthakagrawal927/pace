@@ -1,6 +1,6 @@
 # Pace planner v10 - parameterized actions
 
-Status: partial (2026-06-09). Counterpart to the Pace executor surface PRD and the
+Status: partial (actionable). Counterpart to the Pace executor surface PRD and the
 TinyGPT-side v10 action registry. Pace now documents and parses the typed v10
 envelope, validates the bundled registry artifact at app startup, keeps legacy
 tags working, routes `Mail.draft` plus the broader v1 local action set through
@@ -10,6 +10,13 @@ the typed `{name,args}` path plus `<tool_calls>` path reject malformed local
 actions before execution when required fields or enum-like values are
 missing/invalid. Runtime default switch remains gated on local evals/manual
 smokes.
+
+Remaining v1 scope:
+- Wire the grammar-constrained model-output gate (Outlines or
+  llama.cpp grammar) so the planner cannot emit malformed JSON or unknown
+  action names — the schema reject path is the runtime defence today.
+- Switch the runtime default Info.plist model identifier to the v10 winner
+  once `scripts/eval-planners.py` confirms it.
 
 ## Goal
 

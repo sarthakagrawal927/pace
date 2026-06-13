@@ -1,5 +1,5 @@
 ---
-status: ready-to-implement
+Status: shipped (v0.3.11)
 owner: future Pace-repo agent
 priority: P0 — turns Pace from "feels scary" to "feels reliable"
 ---
@@ -140,3 +140,9 @@ Pure module: takes a `PaceFailureKind` and returns the deterministic spoken stri
 - Don't replay through a different voice or different volume — same as the original turn.
 - Don't make the undo banner appear for non-mutation actions; the user shouldn't see undo offered for an unrecoverable click.
 - Don't speak failures during a Zoom/active-call (the restraint policy already gates this — make sure failure narration also flows through the gate).
+
+Where in code: `leanring-buddy/PaceFailureNarrator.swift` (typed `PaceFailureKind` →
+spoken text + suggestion), `PaceUndoBanner` view inline in
+`leanring-buddy/OverlayWindow.swift` (driven by `mostRecentReversibleActionAt`),
+reply-replay button in `leanring-buddy/CompanionPanelView.swift`.
+Failure speech routes through `PaceRestraintGate.decide(...)`.

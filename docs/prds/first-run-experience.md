@@ -1,5 +1,5 @@
 ---
-status: ready-to-implement
+Status: shipped (v0.3.11)
 owner: future Pace-repo agent
 priority: P0 — biggest blocker between "works for the builder" and "works for anyone"
 ---
@@ -173,3 +173,9 @@ In the Planner tab, restructure the "active tier" surface to show the three plan
 - Don't bundle a model file in v1. The Apple FM path is the right starting point.
 - Don't add telemetry to track starter-prompt usage. Local state only.
 - Don't merge Skills tab into the existing Conversations tab. New sidebar entry.
+
+Where in code: `leanring-buddy/PacePlannerTierStore.swift`
+(`hasAnyPlannerTierUserDefaultsState()` + `defaultTierForFirstLaunch(...)`),
+`leanring-buddy/PaceStarterPromptCatalog.swift` (6-prompt deterministic catalog),
+`leanring-buddy/PaceSkillsView.swift` (PaceMainWindow sidebar tab),
+`exampleUtterance` field validated in `leanring-buddy/PaceToolRegistry.swift`.

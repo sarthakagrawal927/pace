@@ -1,8 +1,9 @@
 ---
 name: Pace planner v8 deployment
-status: superseded — the runtime planner default moved to the off-the-shelf qwen/qwen3-30b-a3b MoE via LM Studio (15/15 on FM fixtures, 925ms mean, per scripts/eval-planners.py); the v8 LoRA deployment is parked on the TinyGPT side and resumes only if a trained specialist beats the MoE on the eval gate
+Status: superseded — the runtime planner default moved to the off-the-shelf qwen/qwen3-30b-a3b MoE via LM Studio (15/15 on FM fixtures, 925ms mean, per scripts/eval-planners.py); the v8 LoRA deployment is parked on the TinyGPT side and resumes only if a trained specialist beats the MoE on the eval gate
 artifact: ~/.cache/tinygpt/runs/pace-planner-v8/baked-hf/  (1.4 GB)
 source-eval: tinygpt/docs/learn/eval-matrix-2026-06-08.md
+Replaced by: the runtime LM Studio default declared in `Info.plist` as `LocalPlannerModelIdentifier=qwen/qwen3-30b-a3b`. The architecture/runtime planner role lives in `leanring-buddy/LocalPlannerClient.swift`; eval evidence in `scripts/eval-planners.py`.
 ---
 
 # Pace planner v8 — deployment

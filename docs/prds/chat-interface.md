@@ -1,5 +1,5 @@
 ---
-status: ready-to-implement
+Status: shipped (v0.3.11)
 owner: delegated to Sonnet agent
 priority: P1 — text fallback for voice; closes the "Del/Poke chat-first" gap
 ---
@@ -170,3 +170,8 @@ the existing code.
   `PaceConversationsView`; restructure around it.
 - Don't introduce slash commands, image upload, or rich text in
   v1.
+
+Where in code: `leanring-buddy/PaceChatSession.swift` (session model + mute flag),
+`leanring-buddy/PaceConversationsView.swift` (chat surface with sticky input),
+`leanring-buddy/StreamingSentenceTTSPipeline.swift` (`inFlightStreamedText`
+publisher), `submitChatTranscriptFromChatSession` in CompanionManager.

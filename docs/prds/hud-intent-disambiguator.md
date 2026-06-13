@@ -1,6 +1,6 @@
 # HUD and intent disambiguator
 
-Status: partial (2026-06-09). Turn HUD state, route feedback,
+Status: partial (actionable). Turn HUD state, route feedback,
 clarification handling, action progress, local-only unsupported routing, and
 panel status are wired. Panel option-click clarification resolution is wired
 for the existing edit/destructive clarification types, the cursor overlay and
@@ -9,6 +9,13 @@ and suppressing decorative bubble/notch animation, and disabled-by-default
 runtime smoke hooks can synthesize and resolve a clarification after an Xcode
 Debug build. Visual target ambiguity resolution and full manual runtime smoke
 remain queued.
+
+Remaining v1 scope:
+- Add a visual target ambiguity clarification path (multi-candidate click
+  scenarios surface a panel option-list, not just the existing edit/destructive
+  clarifications) using the executor's top-K candidate output.
+- Promote the existing runtime smoke hooks into a full manual smoke flow that
+  exercises every HUD state once.
 
 ## Goal
 

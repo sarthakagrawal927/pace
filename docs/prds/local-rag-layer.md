@@ -1,6 +1,6 @@
 # Local RAG layer
 
-Status: partial (2026-06-10). Protocols, in-memory BM25-style lexical retrieval,
+Status: partial (model-blocked). Protocols, in-memory BM25-style lexical retrieval,
 secret-path exclusions, explicit file connector, local preference/history
 documents, explicit-root Spotlight file discovery, Settings file-root picker,
 permission-aware Calendar, Reminders, Contacts, Notes, and Mail indexing,
@@ -9,8 +9,13 @@ screen-watch journal and app-usage journal sources for "what did I do
 today?" / "how did I spend my time?" recall, JSON-backed local persistence,
 planner prompt injection, and panel/settings status are wired. Retrieval prompt
 injection is route-aware so generic Q&A, screen-only reads, and follow-up agent
-steps do not carry unrelated local context. SQLite/vector retrieval remains
-queued.
+steps do not carry unrelated local context. A best-effort embedding re-ranker
+over the lexical store (LM Studio `/v1/embeddings`) is shipped as the first
+vector slice; SQLite-vec persistence and a bundled embedding model remain queued.
+
+Unblocks when: a Qwen3-Embedding-0.6B (or equivalent) CoreML/MLX bundle ships
+in-process and SQLite-vec lands. The lexical BM25 + ad-hoc embedding re-ranker
+remains the active production retrieval until then.
 
 ## Goal
 

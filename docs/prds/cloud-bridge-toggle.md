@@ -1,5 +1,5 @@
 ---
-status: ready-to-implement
+Status: shipped (v0.3.11)
 owner: delegated to Sonnet agent
 priority: P1 — quality unlock via user-owned trapdoor
 ---
@@ -382,3 +382,8 @@ given the file-by-file specifics above.
   stays `local`. The bridge is selected via UserDefaults mode.
 - Do NOT try to make the bridge work without
   `hasUserAcceptedConsent`. The dialog is the gate.
+
+Where in code: `leanring-buddy/CloudBridgePlannerClient.swift` (SSE client),
+`leanring-buddy/PaceCloudBridgeConsent.swift` (consent + mode + 24h soak),
+`leanring-buddy/HybridPlannerClient.swift` routing (in `BuddyPlannerClient.swift`).
+Tier-picker integration lives in `leanring-buddy/PacePlannerTierStore.swift`.

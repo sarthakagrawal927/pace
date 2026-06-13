@@ -1,6 +1,6 @@
 ---
 name: Click executor — accuracy improvements
-status: partial — coordinate/label top-K parser/scorer plus focused-window scoring, focused AX-tree verify/retry, recency hint scoring, and all-fail observations landed in Pace; manual ambiguity evals still queued
+Status: partial (actionable) — coordinate/label top-K parser/scorer plus focused-window scoring, focused AX-tree verify/retry, recency hint scoring, and all-fail observations landed in Pace; manual ambiguity evals still queued
 owner: future Pace-repo agent
 created: 2026-06-08
 source-conversation: tinygpt session 2026-06-08 (planner v5→v6 daily-drive feedback)
@@ -363,3 +363,10 @@ schema additions are:
 
 The executor side here is forward-compatible with these additions, so
 no second wave of clickyLocal work is needed when v7 lands.
+
+Remaining v1 scope:
+- Turn the manual ambiguity eval set into a unit-test fixture suite so
+  regressions in the top-K scorer/recency-hint logic surface in CI.
+- Add a runtime smoke flow (under `scripts/smoke-runtime-hooks.sh`) that
+  drives the all-fail observation path through `PaceActionExecutor` to
+  the planner re-plan/user feedback surfaces.

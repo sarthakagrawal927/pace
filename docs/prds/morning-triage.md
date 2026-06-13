@@ -1,5 +1,5 @@
 ---
-status: ready-to-implement
+Status: shipped (v0.3.11)
 owner: delegated to Sonnet agent
 priority: P0 — closes the biggest gap to Del-style "AI exec assistant" positioning
 ---
@@ -223,4 +223,8 @@ narration. Brief degrades gracefully to whatever data is available.
    morning brief in the architecture-Planner section's proactive
    capabilities list).
 9. Run `bash scripts/test-pace.sh` — must end green.
+
+Where in code: `leanring-buddy/PaceMorningBriefBuilder.swift` (deterministic
+clause composer) and `leanring-buddy/PaceMorningTriageScheduler.swift`
+(@MainActor scheduler with weekday-skip + restraint gating).
 10. Commit with the standard format. **Do not run release-pace.sh.**

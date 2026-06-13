@@ -1,5 +1,5 @@
 ---
-status: queued
+Status: shipped (v0.3.12)
 owner: future Pace-repo agent
 priority: P1 — "she remembers me" — biggest emotional jump
 ---
@@ -150,3 +150,7 @@ struct PaceEpisodicFact: Codable, Equatable {
 
 ~400 lines + the @Generable schema + tests. 2 days of focused work.
 Blocks on no other PRD; can ship before always-listening.
+
+Where in code: `leanring-buddy/PaceEpisodicFactExtractor.swift` (Apple FM `@Generable`
+extractor + LM Studio fallback), `leanring-buddy/PaceEpisodicMemory.swift`
+(dedup, tombstones, retrieval persistence + Settings inspect/delete surface).

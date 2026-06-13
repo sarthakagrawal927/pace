@@ -1,5 +1,5 @@
 ---
-status: queued
+Status: shipped (v0.3.12)
 owner: future Pace-repo agent
 priority: P1 — needs restraint-policy to land first
 ---
@@ -138,3 +138,9 @@ emitting.
 ## Effort estimate
 
 ~600 lines (framework + 3 generators + tests). 2-3 days.
+
+Where in code: `leanring-buddy/PaceProactiveNudgeFramework.swift` (protocol + utterance type),
+`leanring-buddy/PaceFocusFatigueNudgeGenerator.swift`,
+`leanring-buddy/PaceCalendarPreMeetingNudgeGenerator.swift`,
+`leanring-buddy/PaceWatchModeObservationNudgeGenerator.swift`,
+`leanring-buddy/PaceProactiveNudges.swift` (CompanionManager wiring).

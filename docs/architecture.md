@@ -170,23 +170,32 @@ No network egress. Loopback-only HTTP is allowed for local development runtimes 
 
 ## The ordering
 
-Built in this sequence because each baby unblocks the next:
+Built in this sequence because each baby unblocks the next. As of v0.3.12
+items 9-14 (the entire Her-arc) have shipped; items 1-8 are partial (the
+queued slices are either model-blocked or actionable code work — see
+`docs/prds/README.md` for the split).
 
-1. v9 (LoRA path parked; runtime planner is LM Studio qwen3-30b-a3b) — body streaming demo
-2. Executor surface (Pace-side Swift, AX-first dispatcher with first-party fallbacks)
-3. v10 (parameterized actions) — depends on executor surface existing
-4. WhisperKit integration — replace Apple Speech for code-mode + vocab biasing
-5. RAG layer (embedding model + index over Mail/Notes/files/past sessions)
-6. VLM port + ANE chunked
-7. Dictation post-processor + voice-edit specialist
-8. HUD overlay + intent disambiguator carve-out
-9. Restraint policy for every proactive source
-10. Episodic memory
-11. Always-listening mode
-12. Proactive nudges
-13. Barge-in TTS interrupt
-14. Demonstration replay
-15. Polish + ship
+1. v9 (LoRA path parked; runtime planner is LM Studio qwen3-30b-a3b) — body streaming demo [PARTIAL — Pace-side wiring shipped; latency demo queued]
+2. Executor surface (Pace-side Swift, AX-first dispatcher with first-party fallbacks) [PARTIAL — dispatcher shipped; real-app smoke flow queued]
+3. v10 (parameterized actions) — depends on executor surface existing [PARTIAL — parser/validation shipped; grammar gate + runtime-default switch queued]
+4. WhisperKit integration — replace Apple Speech for code-mode + vocab biasing [PARTIAL — model-blocked]
+5. RAG layer (embedding model + index over Mail/Notes/files/past sessions) [PARTIAL — lexical + best-effort re-ranker shipped; bundled embedding + SQLite-vec queued]
+6. VLM port + ANE chunked [PARTIAL — model-blocked]
+7. Dictation post-processor + voice-edit specialist [PARTIAL — model-blocked]
+8. HUD overlay + intent disambiguator carve-out [PARTIAL — visual target ambiguity queued]
+9. Restraint policy for every proactive source [SHIPPED v0.3.12]
+10. Episodic memory [SHIPPED v0.3.12]
+11. Always-listening mode [SHIPPED v0.3.12]
+12. Proactive nudges [SHIPPED v0.3.12]
+13. Barge-in TTS interrupt [SHIPPED v0.3.12]
+14. Demonstration replay [SHIPPED v0.3.12]
+15. Polish + ship — in flight on the v0.3.x release cadence
+
+Plus the v0.3.11 quality-of-life batch, which is not in the original
+ordering but landed before the Her-arc: chat interface, conversational thread
+memory, planner tier picker, first-run experience, morning triage, recipe
+library, trust surfaces, inclusivity surface, cloud-bridge toggle. See
+`docs/prds/README.md` for the full PRD index.
 
 There are no months. There are next-correct-things. Do the next one.
 
@@ -211,5 +220,14 @@ There are no months. There are next-correct-things. Do the next one.
 - Proactive nudges: `pace/docs/prds/proactive-nudges.md`
 - Barge-in TTS interrupt: `pace/docs/prds/barge-in-tts-interrupt.md`
 - Demonstration replay: `pace/docs/prds/demonstration-replay.md`
+- Chat interface (text alongside voice): `pace/docs/prds/chat-interface.md`
+- Cloud bridge toggle (Claude Code / Codex / Gemini CLI): `pace/docs/prds/cloud-bridge-toggle.md`
+- Conversational thread memory: `pace/docs/prds/conversational-thread-memory.md`
+- First-run experience (Apple-FM-first default + skills tab + starter prompts): `pace/docs/prds/first-run-experience.md`
+- Inclusivity surface (notch chat + MCP catalog + privacy dashboard): `pace/docs/prds/inclusivity-surface.md`
+- Morning triage: `pace/docs/prds/morning-triage.md`
+- Planner tier picker (Local / CLI bridge / Direct API BYO / Apple FM): `pace/docs/prds/planner-tier-picker.md`
+- Recipe library (bundled installable flows): `pace/docs/prds/recipe-library.md`
+- Trust & failures (undo banner + reply replay + failure narrator): `pace/docs/prds/trust-and-failures.md`
 
 This file is the canonical map. PRDs are the per-pillar specifications. When in doubt, this doc wins.

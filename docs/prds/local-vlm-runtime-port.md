@@ -1,11 +1,15 @@
 # Local VLM runtime port
 
-Status: partial (2026-06-09). The screen-analysis provider abstraction,
+Status: partial (model-blocked). The screen-analysis provider abstraction,
 configurable runtime selection, in-process placeholder, and LM Studio fallback
 are wired. Screen-context cache entries are invalidated by analyzer identity and
 display geometry. Missing VLM descriptions are synthesized from element labels
 and included in planner prompt sections. The real CoreML/MLX in-process VLM
 runtime remains queued.
+
+Unblocks when: a CoreML- or MLX-bundled UI-Venus / Qwen3-VL artifact passes the
+eval gate and ships with the app bundle. Until then `ScreenAnalysisProvider`
+selections (`inProcess` / `coreML` / `mlx`) all fall back to LM Studio HTTP.
 
 ## Goal
 

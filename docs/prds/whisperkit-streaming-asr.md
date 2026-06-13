@@ -1,11 +1,16 @@
 # WhisperKit streaming ASR
 
-Status: partial (2026-06-09). The selectable provider scaffold, Apple Speech
+Status: partial (model-blocked). The selectable provider scaffold, Apple Speech
 fallback path, contextual phrase handoff, visible ASR status, and a tested
 provider-agnostic LocalAgreement stabilizer are wired. The push-to-talk
 pipeline now feeds provider partial hypotheses through LocalAgreement and
 publishes stable partials before final transcript submission. The real
 WhisperKit streaming runtime bridge remains queued.
+
+Unblocks when: a WhisperKit-Swift streaming bridge ships and the chosen
+Whisper-large-v3-turbo CoreML artifact passes the eval gate. Until then
+`TranscriptionProvider=whisperKit` is honored as a selector but falls back
+to Apple Speech.
 
 ## Goal
 

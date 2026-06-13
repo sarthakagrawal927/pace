@@ -1,6 +1,13 @@
 # Pace executor surface — generic parameterized-action dispatcher
 
-Status: partial (2026-06-09). The Pace-side counterpart of v10 (`tinygpt/docs/prds/pace-v10-parameterized-actions.md`). Typed v10 payload parsing, the bundled registry artifact, startup registry validation, local planner-output envelope/action rejection before execution, the local executor dispatch surface, destructive-only approval policy, `Mail.draft` streaming, `mailto:` first-draft setup, AX-first Mail body writing with local fallbacks, AX set-value mutation/undo, and first-pass local handlers are wired. Real-app AX/performance smokes remain queued.
+Status: partial (actionable). The Pace-side counterpart of v10 (`tinygpt/docs/prds/pace-v10-parameterized-actions.md`). Typed v10 payload parsing, the bundled registry artifact, startup registry validation, local planner-output envelope/action rejection before execution, the local executor dispatch surface, destructive-only approval policy, `Mail.draft` streaming, `mailto:` first-draft setup, AX-first Mail body writing with local fallbacks, AX set-value mutation/undo, and first-pass local handlers are wired. Real-app AX/performance smokes remain queued.
+
+Remaining v1 scope:
+- Real-app AX smoke flow covering Mail, Safari, Notes, Slack, VSCode, Cursor —
+  scripted via `scripts/smoke-runtime-hooks.sh` so regressions surface without
+  manual driving.
+- Performance smoke run capturing AX.press, AX.setValue, and Mail.draft latency
+  targets (telemetry already publishes through `PaceTelemetryLog`).
 
 ## Goal
 

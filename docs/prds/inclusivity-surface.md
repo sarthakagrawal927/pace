@@ -1,5 +1,5 @@
 ---
-status: ready-to-implement
+Status: shipped (v0.3.11)
 owner: future Pace-repo agent
 priority: P1 — broadens audience beyond voice-first early adopters
 ---
@@ -163,3 +163,9 @@ SwiftUI view. Reads `PaceAPIAuditLog.shared` for the audit data. Renders the fou
 - Don't add user-customizable privacy dashboard widgets. Fixed sections.
 - Don't make the notch chat input persistent — it's quick-fire only. Long sessions go to MainWindow.
 - Don't add "delete my audit log" — it's local, ephemeral by design, deleted when the app data is cleared.
+
+Where in code: `leanring-buddy/GlobalChatShortcutMonitor.swift` (cmd+shift+P
+listen-only tap), `leanring-buddy/PaceMCPServerCatalog.swift` (six bundled
+servers + atomic install/uninstall),
+`leanring-buddy/PacePrivacyDashboardView.swift` (read-only `PaceAPIAuditLog`
+view in PaceMainWindow). Notch chat input lives in `CompanionPanelView.swift`.

@@ -1,5 +1,5 @@
 ---
-status: queued
+Status: shipped (v0.3.12)
 owner: future Pace-repo agent
 priority: P0 — gate that every proactive feature lands on
 ---
@@ -148,3 +148,7 @@ memory queue that drains when the gate's conditions clear.
 ~200 lines + tests. 1 day of focused work. This PRD should land BEFORE
 always-listening / nudges / episodic memory ship, because each of those
 needs the gate to be live.
+
+Where in code: `leanring-buddy/PaceRestraintGate.swift` (gate + `PaceRestraintContext`),
+`leanring-buddy/PaceActiveCallDetector.swift` (call detection),
+`leanring-buddy/PaceUserInputActivityMonitor.swift` (CGEventTap-based input timing).

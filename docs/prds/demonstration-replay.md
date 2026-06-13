@@ -1,5 +1,5 @@
 ---
-status: queued
+Status: shipped (v0.3.12)
 owner: future Pace-repo agent
 priority: P2 — high-value but largest surface
 ---
@@ -192,3 +192,9 @@ surface in the PRD set.
 - Replay timing: real-time pacing (record the durations) or
   fastest-possible? V1 = fastest-possible with AX-waits. V2 might
   add "slow mode" for visual review.
+
+Where in code: `leanring-buddy/PaceFlowRecorder.swift` (CGEventTap recorder),
+`leanring-buddy/PaceFlowStore.swift` (per-flow JSON persistence),
+`leanring-buddy/PaceFlowReplayer.swift` (replay engine with adaptive AX waits),
+`leanring-buddy/PaceFlowReplay.swift` (voice-command parser + planner helper).
+Settings → Flows tab lives in `leanring-buddy/PaceSettingsWindow.swift`.

@@ -1,5 +1,5 @@
 ---
-status: queued
+Status: shipped (v0.3.12)
 owner: future Pace-repo agent
 priority: P2 — natural conversation polish
 ---
@@ -107,3 +107,8 @@ deserves a response — silence is still an option.
 
 ~300 lines + tests. 1-2 days. Depends on always-listening landing
 first.
+
+Where in code: `leanring-buddy/PaceBargeInVAD.swift` (VAD gate);
+audio-level publisher wiring lives in
+`leanring-buddy/PacePushToTalkManager.swift` (`audioLevelPublisher`),
+which the VAD subscribes to when TTS is playing.

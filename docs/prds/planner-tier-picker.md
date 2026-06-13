@@ -1,5 +1,5 @@
 ---
-status: ready-to-implement
+Status: shipped (v0.3.11)
 owner: future Pace-repo agent
 priority: P1 — first user-facing escape valve from "must run LM Studio" friction
 ---
@@ -771,3 +771,9 @@ contract available.
   screen into text for the planner).
 - **No `release-pace.sh`.** Commit only. The release pass is the
   user's call.
+
+Where in code: `leanring-buddy/PacePlannerTierStore.swift` (tier enum + persistence),
+`leanring-buddy/DirectAPIPlannerClient.swift` (BYO-key SSE client),
+`leanring-buddy/PaceKeychainStore.swift` (Keychain wrapper),
+`leanring-buddy/PaceLocalEndpointGuard.swift` (`validatedDirectAPIURL(from:)`),
+factory dispatch in `leanring-buddy/BuddyPlannerClient.swift`.

@@ -1,5 +1,5 @@
 ---
-status: queued
+Status: shipped (v0.3.12)
 owner: future Pace-repo agent
 priority: P0 — headline UX shift for the "Her" arc
 ---
@@ -152,3 +152,9 @@ gate decides whether to respond, stay quiet, or queue.
 
 ~400 lines + a model bundle. 2-3 days of focused work assuming
 openWakeWord port and audio-tap multiplexing both go cleanly.
+
+Where in code: `leanring-buddy/PaceAppleSpeechWakeWordSpotter.swift` is the active
+spotter (Apple Speech on-device, ANE). `leanring-buddy/PaceWakeWordSpotter.swift`
+is the protocol/factory surface. Wake-word firing routes through the existing
+`PacePushToTalkManager.openListeningWindow(durationInSeconds:)` path. The
+openWakeWord CoreML bundle is parked — Apple Speech satisfies v1.

@@ -1,9 +1,14 @@
 # Dictation post-processing and voice edit
 
-Status: partial (2026-06-09). A rule-backed dictation post-processing scaffold
+Status: partial (model-blocked). A rule-backed dictation post-processing scaffold
 is wired for `intent:"dictate"` and a deterministic selected-text voice-edit
 scaffold is wired for common edit commands; the trained dictation and
 voice-edit specialists remain queued.
+
+Unblocks when: TinyGPT delivers the trained dictation post-processor and
+voice-edit specialist (Qwen3-0.6B + LoRA or equivalent) that beats the
+rule-backed scaffold on the eval gate. Until then the deterministic scaffold
+ships.
 
 ## Goal
 

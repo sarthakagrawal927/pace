@@ -1,5 +1,5 @@
 ---
-status: ready-to-implement
+Status: shipped (v0.3.11)
 owner: future Pace-repo agent
 priority: P1 — conversational quality bedrock
 ---
@@ -563,3 +563,8 @@ document to consider.
 modifications + tests). Reachable in one Sonnet pass given the
 file-by-file spec above. Blocks on no other PRD; can ship before
 or after episodic memory because the boundary is clean.
+
+Where in code: `leanring-buddy/PaceThreadMemory.swift` (verbatim window + summary
+state, monotonic `summaryVersion` race guard) and
+`leanring-buddy/PaceThreadSummarizer.swift` (Apple FM `@Generable` summarizer
+with LM Studio loopback fallback).
