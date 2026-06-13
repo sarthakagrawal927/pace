@@ -26,16 +26,6 @@ final class PaceRuntimeSmokeTestHooks {
         ProcessInfo.processInfo.environment["PACE_ENABLE_SMOKE_HOOKS"] == "1"
     }()
 
-    private enum DefaultsKey {
-        static let ready = "PaceSmoke.ready"
-        static let lastPanelCommand = "PaceSmoke.lastPanelCommand"
-        static let lastSettingsCommand = "PaceSmoke.lastSettingsCommand"
-        static let lastCursorAnnotationsEnabled = "PaceSmoke.lastCursorAnnotationsEnabled"
-        static let lastApprovalAllowed = "PaceSmoke.lastApprovalAllowed"
-        static let lastClarificationState = "PaceSmoke.lastClarificationState"
-        static let lastClarifiedTranscript = "PaceSmoke.lastClarifiedTranscript"
-    }
-
     private let menuBarPanelManager: MenuBarPanelManager
     private let companionManager: CompanionManager
     private var observers: [NSObjectProtocol] = []
@@ -44,7 +34,7 @@ final class PaceRuntimeSmokeTestHooks {
         self.menuBarPanelManager = menuBarPanelManager
         self.companionManager = companionManager
         installObservers()
-        UserDefaults.standard.set(true, forKey: DefaultsKey.ready)
+        PaceSmokeTestStateStore.markSmokeHooksReady()
     }
 
     deinit {
@@ -57,54 +47,52 @@ final class PaceRuntimeSmokeTestHooks {
     private func installObservers() {
         observe(.paceSmokeShowPanel) { [weak self] in
             self?.menuBarPanelManager.showPanelForSmokeTest()
-            UserDefaults.standard.set("show", forKey: DefaultsKey.lastPanelCommand)
+            PaceSmokeTestStateStore.recordLastPanelCommand("show")
         }
 
         observe(.paceSmokeHidePanel) { [weak self] in
             self?.menuBarPanelManager.hidePanelForSmokeTest()
-            UserDefaults.standard.set("hide", forKey: DefaultsKey.lastPanelCommand)
+            PaceSmokeTestStateStore.recordLastPanelCommand("hide")
         }
 
         observe(.paceSmokeShowSettings) { [weak self] in
             guard let self else { return }
             menuBarPanelManager.hidePanelForSmokeTest()
             PaceSettingsWindowManager.shared.show(companionManager: companionManager)
-            UserDefaults.standard.set("show", forKey: DefaultsKey.lastSettingsCommand)
+            PaceSmokeTestStateStore.recordLastSettingsCommand("show")
         }
 
         observe(.paceSmokeCursorAnnotationsOn) { [weak self] in
             guard let self else { return }
             let isEnabled = companionManager.smokeSetCursorAnnotationsEnabled(true)
-            UserDefaults.standard.set(isEnabled, forKey: DefaultsKey.lastCursorAnnotationsEnabled)
+            PaceSmokeTestStateStore.recordLastCursorAnnotationsEnabled(isEnabled)
         }
 
         observe(.paceSmokeCursorAnnotationsOff) { [weak self] in
             guard let self else { return }
             let isEnabled = companionManager.smokeSetCursorAnnotationsEnabled(false)
-            UserDefaults.standard.set(isEnabled, forKey: DefaultsKey.lastCursorAnnotationsEnabled)
+            PaceSmokeTestStateStore.recordLastCursorAnnotationsEnabled(isEnabled)
         }
 
         observe(.paceSmokeRequestApproval) { [weak self] in
             guard let self else { return }
             let didApprove = companionManager.smokeRequestApprovalForSyntheticActionPlan()
-            UserDefaults.standard.set(didApprove, forKey: DefaultsKey.lastApprovalAllowed)
+            PaceSmokeTestStateStore.recordLastApprovalAllowed(didApprove)
         }
 
         observe(.paceSmokeShowClarification) { [weak self] in
             guard let self else { return }
             let didShowClarification = companionManager.smokeShowSyntheticClarification()
-            UserDefaults.standard.set(
-                didShowClarification ? "shown" : "failed",
-                forKey: DefaultsKey.lastClarificationState
+            PaceSmokeTestStateStore.recordLastClarificationState(
+                didShowClarification ? "shown" : "failed"
             )
         }
 
         observe(.paceSmokeResolveClarification) { [weak self] in
             guard let self else { return }
             let clarifiedTranscript = companionManager.smokeResolveSyntheticClarification()
-            UserDefaults.standard.set(
-                clarifiedTranscript ?? "<failed>",
-                forKey: DefaultsKey.lastClarifiedTranscript
+            PaceSmokeTestStateStore.recordLastClarifiedTranscript(
+                clarifiedTranscript ?? "<failed>"
             )
         }
     }

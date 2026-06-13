@@ -151,3 +151,60 @@ enum PaceUserPreferencesStore {
         UserDefaults.standard.set(profile.rawValue, forKey: PaceUserPreferenceKey.proactivityProfile.rawValue)
     }
 }
+
+/// Storage-layer namespace for the smoke-test output channels written by
+/// `PaceRuntimeSmokeTestHooks` and read out-of-process by
+/// `scripts/smoke-runtime-hooks.sh` via the `defaults` CLI. These are NOT
+/// user-toggleable preferences (no @Published binding, no Settings UI) —
+/// they're a runtime breadcrumb trail for the smoke runner. They live in
+/// `PaceUserPreferencesStore` because this file owns the codebase's only
+/// UserDefaults key strings, so consolidating them here removes the
+/// scattered stringly-typed keys the previous hand-rolled `DefaultsKey`
+/// enum in `PaceRuntimeSmokeTestHooks` was hiding.
+///
+/// The raw key strings are intentionally byte-identical to what the smoke
+/// script reads — changing them would break the external test harness.
+enum PaceSmokeTestStateStore {
+
+    // MARK: Key strings (must match scripts/smoke-runtime-hooks.sh)
+
+    private enum SmokeKey: String {
+        case ready = "PaceSmoke.ready"
+        case lastPanelCommand = "PaceSmoke.lastPanelCommand"
+        case lastSettingsCommand = "PaceSmoke.lastSettingsCommand"
+        case lastCursorAnnotationsEnabled = "PaceSmoke.lastCursorAnnotationsEnabled"
+        case lastApprovalAllowed = "PaceSmoke.lastApprovalAllowed"
+        case lastClarificationState = "PaceSmoke.lastClarificationState"
+        case lastClarifiedTranscript = "PaceSmoke.lastClarifiedTranscript"
+    }
+
+    // MARK: Writers (the smoke hook installer calls these)
+
+    static func markSmokeHooksReady() {
+        UserDefaults.standard.set(true, forKey: SmokeKey.ready.rawValue)
+    }
+
+    static func recordLastPanelCommand(_ commandName: String) {
+        UserDefaults.standard.set(commandName, forKey: SmokeKey.lastPanelCommand.rawValue)
+    }
+
+    static func recordLastSettingsCommand(_ commandName: String) {
+        UserDefaults.standard.set(commandName, forKey: SmokeKey.lastSettingsCommand.rawValue)
+    }
+
+    static func recordLastCursorAnnotationsEnabled(_ isEnabled: Bool) {
+        UserDefaults.standard.set(isEnabled, forKey: SmokeKey.lastCursorAnnotationsEnabled.rawValue)
+    }
+
+    static func recordLastApprovalAllowed(_ didAllow: Bool) {
+        UserDefaults.standard.set(didAllow, forKey: SmokeKey.lastApprovalAllowed.rawValue)
+    }
+
+    static func recordLastClarificationState(_ stateName: String) {
+        UserDefaults.standard.set(stateName, forKey: SmokeKey.lastClarificationState.rawValue)
+    }
+
+    static func recordLastClarifiedTranscript(_ transcript: String) {
+        UserDefaults.standard.set(transcript, forKey: SmokeKey.lastClarifiedTranscript.rawValue)
+    }
+}
