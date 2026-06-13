@@ -7,7 +7,7 @@
 	<key>AlwaysRunLocalVLMRegardlessOfTranscript</key>
 	<string>false</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.11</string>
+	<string>0.3.12</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -20,7 +20,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>11</string>
+	<string>12</string>
 	<key>CloudBridgeBaseURL</key>
 	<string>http://localhost:3456</string>
 	<key>CloudBridgeDefaultModel</key>
