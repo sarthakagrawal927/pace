@@ -21,16 +21,33 @@ final class LocalPlannerClient: BuddyPlannerClient {
     /// element-map text instead.
     let supportsImageInput = false
 
+    /// Surfaces the decode-constraint flag to the agent loop so it can run
+    /// structured turns single-shot (see BuddyPlannerClient).
+    var usesStructuredActionOutput: Bool { requestsStructuredActionOutput }
+
     private let baseURL: URL
     private let modelIdentifier: String
     private let urlSession: URLSession
 
-    init(baseURL: URL, modelIdentifier: String) {
+    /// When true, every request pins `response_format: json_schema` to the
+    /// v10 envelope so the model is DECODE-CONSTRAINED to emit a valid
+    /// `{spokenText,intent,payload}` object — it physically cannot drift to
+    /// plain prose and silently drop the action. Set only on the MAIN
+    /// (action) planner; the text-only/answer planner stays free-form so its
+    /// prose still streams sentence-by-sentence to TTS.
+    private let requestsStructuredActionOutput: Bool
+
+    init(
+        baseURL: URL,
+        modelIdentifier: String,
+        requestsStructuredActionOutput: Bool = false
+    ) {
         self.baseURL = PaceLocalEndpointGuard.resolvedLocalOpenAICompatibleBaseURL(
             configuredURL: baseURL,
             settingName: "LocalPlannerBaseURL"
         )
         self.modelIdentifier = modelIdentifier
+        self.requestsStructuredActionOutput = requestsStructuredActionOutput
         self.displayName = "Local Planner (\(modelIdentifier))"
 
         let urlSessionConfiguration = URLSessionConfiguration.default
@@ -52,7 +69,9 @@ final class LocalPlannerClient: BuddyPlannerClient {
     /// configured one wasn't loaded), every subsequent request uses
     /// the resolved one instead of 404ing.
     @MainActor
-    static func makeFromInfoPlist() -> LocalPlannerClient {
+    static func makeFromInfoPlist(
+        requestsStructuredActionOutput: Bool = false
+    ) -> LocalPlannerClient {
         let configuredBaseURL = AppBundleConfiguration
             .stringValue(forKey: "LocalPlannerBaseURL")
             ?? "http://localhost:1234/v1"
@@ -70,9 +89,39 @@ final class LocalPlannerClient: BuddyPlannerClient {
 
         return LocalPlannerClient(
             baseURL: resolvedBaseURL,
-            modelIdentifier: effectiveModelIdentifier
+            modelIdentifier: effectiveModelIdentifier,
+            requestsStructuredActionOutput: requestsStructuredActionOutput
         )
     }
+
+    /// JSON-schema response format pinning the v10 envelope. Matches the
+    /// shape `PaceActionTagParser.parsePlannerResponseJSON` accepts and
+    /// validates: exactly `spokenText` (required), `intent` (required enum),
+    /// and an optional flexible `payload`. Sending this as `response_format`
+    /// forces LM Studio's decoder to emit a conforming object — no prose.
+    private static let v10ResponseFormat: [String: Any] = [
+        "type": "json_schema",
+        "json_schema": [
+            "name": "pace_planner_v10",
+            "strict": false,
+            "schema": [
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["spokenText", "intent"],
+                "properties": [
+                    "spokenText": ["type": "string"],
+                    "intent": [
+                        "type": "string",
+                        "enum": ["answer", "action", "dictate", "edit", "clarify", "refuse"]
+                    ],
+                    "payload": [
+                        "type": "object",
+                        "additionalProperties": true
+                    ]
+                ]
+            ]
+        ]
+    ]
 
     func generateResponseStreaming(
         images: [(data: Data, label: String)],
@@ -114,7 +163,7 @@ final class LocalPlannerClient: BuddyPlannerClient {
         // The system prompt is a `static let` and the conversation
         // history is appended in order, so the request prefix is
         // byte-stable across turns — exactly what the cache wants.
-        let requestBody: [String: Any] = [
+        var requestBody: [String: Any] = [
             "model": modelIdentifier,
             "messages": messages,
             "max_tokens": 1024,
@@ -122,6 +171,12 @@ final class LocalPlannerClient: BuddyPlannerClient {
             "stream": true,
             "cache_prompt": true
         ]
+        // Decode-constrain the MAIN planner to the v10 envelope so it can't
+        // emit prose-only (the "opening chrome" narration with no action).
+        // The answer planner leaves this off so its prose still streams.
+        if requestsStructuredActionOutput {
+            requestBody["response_format"] = LocalPlannerClient.v10ResponseFormat
+        }
 
         let maximumPlannerAttempts = 3
 

@@ -69,10 +69,19 @@ protocol BuddyPlannerClient: AnyObject {
         userPrompt: String,
         onTextChunk: @MainActor @Sendable (String) -> Void
     ) async throws -> (text: String, duration: TimeInterval)
+
+    /// True when this planner is decode-constrained to the v10 JSON envelope
+    /// (`response_format`). The agent loop treats such turns as SINGLE-SHOT:
+    /// the envelope can't carry a `[DONE]` tag and always contains an action,
+    /// so re-looping would make the constrained model invent spurious
+    /// follow-up actions (it dictated the user's own command on step 8 of an
+    /// 8-step runaway). Multi-action turns use `payload.calls` instead.
+    var usesStructuredActionOutput: Bool { get }
 }
 
 extension BuddyPlannerClient {
     func resetForNewTurn() { /* default no-op for stateless conformers */ }
+    var usesStructuredActionOutput: Bool { false }
 }
 
 // MARK: - HybridPlannerClient
@@ -88,6 +97,9 @@ final class HybridPlannerClient: BuddyPlannerClient {
     /// Images are supported only when the local planner supports them.
     /// The bridge always discards images regardless.
     var supportsImageInput: Bool { localPlannerClient.supportsImageInput }
+
+    /// Mirror the wrapped local planner — the bridge path is free-form.
+    var usesStructuredActionOutput: Bool { localPlannerClient.usesStructuredActionOutput }
 
     private let localPlannerClient: any BuddyPlannerClient
     private let cloudBridgePlannerClient: CloudBridgePlannerClient
@@ -308,8 +320,14 @@ enum BuddyPlannerClientFactory {
 
     // MARK: - Internal factory helpers
 
+    /// `requestsStructuredActionOutput` defaults true because every caller of
+    /// this helper builds the MAIN (action) planner. The text-only answer
+    /// planner is built via `makeFastTextOnlyPlannerOrFallback` which passes
+    /// false so its prose keeps streaming sentence-by-sentence.
     @MainActor
-    private static func makeLocalOrFoundationModelsPlanner() -> any BuddyPlannerClient {
+    private static func makeLocalOrFoundationModelsPlanner(
+        requestsStructuredActionOutput: Bool = true
+    ) -> any BuddyPlannerClient {
         let configuredProviderRawValue = AppBundleConfiguration
             .stringValue(forKey: "PlannerProvider")?
             .lowercased()
@@ -318,16 +336,22 @@ enum BuddyPlannerClientFactory {
 
         switch configuredProvider {
         case .local:
-            let localPlanner = LocalPlannerClient.makeFromInfoPlist()
+            let localPlanner = LocalPlannerClient.makeFromInfoPlist(
+                requestsStructuredActionOutput: requestsStructuredActionOutput
+            )
             print("🧠 Planner: using \(localPlanner.displayName)")
             return localPlanner
         case .appleFoundationModels:
-            return makeFoundationModelsPlannerOrFallback()
+            return makeFoundationModelsPlannerOrFallback(
+                requestsStructuredActionOutput: requestsStructuredActionOutput
+            )
         case .none:
             // No PlannerProvider key — default to LocalPlannerClient
             // since the current shipped default in Info.plist is
             // PlannerProvider=local with Qwen3-30B-A3B.
-            let localPlanner = LocalPlannerClient.makeFromInfoPlist()
+            let localPlanner = LocalPlannerClient.makeFromInfoPlist(
+                requestsStructuredActionOutput: requestsStructuredActionOutput
+            )
             print("🧠 Planner: using \(localPlanner.displayName) (default)")
             return localPlanner
         }
@@ -340,7 +364,11 @@ enum BuddyPlannerClientFactory {
     /// Intelligence is unavailable or its model assets are not ready.
     @MainActor
     static func makeFastTextOnlyPlannerOrFallback() -> any BuddyPlannerClient {
-        return makeFoundationModelsPlannerOrFallback()
+        // Answer planner: NO structured-output constraint — pure-knowledge
+        // turns produce free prose that must stream sentence-by-sentence.
+        return makeFoundationModelsPlannerOrFallback(
+            requestsStructuredActionOutput: false
+        )
     }
 
     /// Construct the Foundation Models planner only if `SystemLanguageModel
@@ -349,7 +377,9 @@ enum BuddyPlannerClientFactory {
     /// stuck staring at "Apple Intelligence is not enabled" errors mid-
     /// voice-turn.
     @MainActor
-    private static func makeFoundationModelsPlannerOrFallback() -> any BuddyPlannerClient {
+    private static func makeFoundationModelsPlannerOrFallback(
+        requestsStructuredActionOutput: Bool = true
+    ) -> any BuddyPlannerClient {
         let systemLanguageModel = SystemLanguageModel.default
         switch systemLanguageModel.availability {
         case .available:
@@ -375,7 +405,9 @@ enum BuddyPlannerClientFactory {
             }
             print("⚠️  Planner: Foundation Models unavailable — \(humanReadableReason).")
             print("    → \(actionableHint)")
-            let localPlanner = LocalPlannerClient.makeFromInfoPlist()
+            let localPlanner = LocalPlannerClient.makeFromInfoPlist(
+                requestsStructuredActionOutput: requestsStructuredActionOutput
+            )
             print("🧠 Planner: using \(localPlanner.displayName)")
             return localPlanner
         }

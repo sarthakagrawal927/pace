@@ -703,7 +703,7 @@ nonisolated enum PaceFastActionCommandParser {
 
         if let urlString = parseURLCommand(from: normalizedTranscript) {
             return PaceFastActionParseResult(
-                spokenText: "opening \(urlString).",
+                spokenText: "opening \(displayNameForOpenedURL(urlString)).",
                 executionPlan: .serial(actions: [.openURL(urlString)])
             )
         }
@@ -942,14 +942,74 @@ nonisolated enum PaceFastActionCommandParser {
         return max(1, min(requestedStepCount, 10))
     }
 
+    /// Popular web destinations addressable by spoken name. Lets
+    /// "open hacker news on chrome" resolve to a URL on the deterministic
+    /// fast path (sub-200ms, no VLM, no planner) instead of a multi-second
+    /// VLM+planner turn. Only unambiguous WEB destinations belong here —
+    /// names that clash with local apps (Music, Maps, Calendar) stay out so
+    /// they route to app-launch instead.
+    private static let knownWebsiteAliases: [String: String] = [
+        "hacker news": "https://news.ycombinator.com",
+        "hackernews": "https://news.ycombinator.com",
+        "hn": "https://news.ycombinator.com",
+        "github": "https://github.com",
+        "youtube": "https://youtube.com",
+        "gmail": "https://mail.google.com",
+        "google": "https://google.com",
+        "reddit": "https://reddit.com",
+        "twitter": "https://x.com",
+        "x": "https://x.com",
+        "linkedin": "https://linkedin.com",
+        "chatgpt": "https://chatgpt.com",
+        "claude": "https://claude.ai",
+        "amazon": "https://amazon.com",
+        "netflix": "https://netflix.com",
+        "wikipedia": "https://wikipedia.org",
+        "stack overflow": "https://stackoverflow.com",
+        "stackoverflow": "https://stackoverflow.com",
+        "product hunt": "https://producthunt.com"
+    ]
+
     private static func parseURLCommand(from normalizedTranscript: String) -> String? {
         for prefix in ["open ", "go to ", "visit ", "navigate to "] {
             guard normalizedTranscript.hasPrefix(prefix) else { continue }
-            let rawURLTarget = String(normalizedTranscript.dropFirst(prefix.count))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return normalizedURLString(from: rawURLTarget)
+            let rawURLTarget = strippingBrowserSuffix(
+                from: String(normalizedTranscript.dropFirst(prefix.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            // 1. A literal URL ("github.com", "https://…").
+            if let directURL = normalizedURLString(from: rawURLTarget) {
+                return directURL
+            }
+            // 2. A spoken site name ("hacker news", "github").
+            if let mappedSiteURL = knownWebsiteAliases[rawURLTarget] {
+                return mappedSiteURL
+            }
+            return nil
         }
         return nil
+    }
+
+    /// Drops a trailing " on/in/using <browser>" so "open hacker news on
+    /// chrome" → "hacker news". Pace opens URLs in the user's preferred
+    /// browser, so the specific browser name is best-effort, not binding.
+    private static func strippingBrowserSuffix(from target: String) -> String {
+        let browserNames: Set<String> = [
+            "chrome", "google chrome", "safari", "arc", "firefox",
+            "edge", "brave", "the browser", "my browser", "browser"
+        ]
+        for connector in [" on ", " in ", " using "] {
+            guard let connectorRange = target.range(of: connector, options: .backwards) else {
+                continue
+            }
+            let suffix = String(target[connectorRange.upperBound...])
+                .trimmingCharacters(in: .whitespaces)
+            if browserNames.contains(suffix) {
+                return String(target[..<connectorRange.lowerBound])
+                    .trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return target
     }
 
     private static func normalizedURLString(from rawURLTarget: String) -> String? {
@@ -959,6 +1019,44 @@ nonisolated enum PaceFastActionCommandParser {
         }
         guard rawURLTarget.contains(".") else { return nil }
         return "https://\(rawURLTarget)"
+    }
+
+    /// Proper-cased product names so Pace says "opening Hacker News" rather
+    /// than reading the raw URL aloud. Keyed by host (sans "www.").
+    private static let websiteDisplayNames: [String: String] = [
+        "news.ycombinator.com": "Hacker News",
+        "github.com": "GitHub",
+        "youtube.com": "YouTube",
+        "mail.google.com": "Gmail",
+        "google.com": "Google",
+        "reddit.com": "Reddit",
+        "x.com": "X",
+        "twitter.com": "X",
+        "linkedin.com": "LinkedIn",
+        "chatgpt.com": "ChatGPT",
+        "claude.ai": "Claude",
+        "amazon.com": "Amazon",
+        "netflix.com": "Netflix",
+        "wikipedia.org": "Wikipedia",
+        "stackoverflow.com": "Stack Overflow",
+        "producthunt.com": "Product Hunt"
+    ]
+
+    /// A speakable name for an opened URL: the curated product name when the
+    /// host is known, otherwise the main domain label capitalized
+    /// ("example.com" → "Example"). Never reads the full URL aloud.
+    private static func displayNameForOpenedURL(_ urlString: String) -> String {
+        guard let host = URL(string: urlString)?.host?.lowercased() else {
+            return urlString
+        }
+        let normalizedHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        if let curatedName = websiteDisplayNames[normalizedHost] {
+            return curatedName
+        }
+        let hostLabels = normalizedHost.split(separator: ".")
+        guard hostLabels.count >= 2 else { return normalizedHost }
+        let mainLabel = String(hostLabels[hostLabels.count - 2])
+        return mainLabel.prefix(1).uppercased() + mainLabel.dropFirst()
     }
 
     private static func parseKnownApplicationCommand(from normalizedTranscript: String) -> String? {

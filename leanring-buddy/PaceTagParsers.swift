@@ -82,16 +82,23 @@ enum PaceTagParsers {
     /// something on screen or asking for an action. Substring matching
     /// so plurals / tense variants ("clicking", "scrolled") catch.
     nonisolated private static let screenReferentialKeywords: Set<String> = [
-        // Action verbs the assistant might execute
-        "click", "tap", "press", "open", "close", "save", "delete",
+        // Screen-MANIPULATION verbs — they act on something currently
+        // visible, so the planner needs the element map.
+        "click", "tap", "press", "save", "delete",
         "type", "write", "enter", "fill", "paste", "copy",
-        "scroll", "navigate", "go to", "select", "choose", "drag",
+        "scroll", "select", "choose", "drag",
         // Visual deictic / pointer terms
         "where", "find", "show", "point", "highlight", "see", "look",
         "this", "that", "here", "there",
         // Names of screen artifacts
         "screen", "window", "page", "menu", "button", "field", "tab",
         "panel", "icon", "toolbar", "sidebar", "dialog", "form"
+        // NOTE: launch/navigate verbs — open, close, go to, navigate — are
+        // deliberately NOT here. "open chrome" / "open hacker news" / "go to
+        // github" are app/site launches that need NO screen context, so
+        // forcing the 2-3s VLM on them was pure wasted latency. When an open
+        // DOES target an on-screen element ("open the file menu"), the
+        // artifact word above ("menu") still trips the VLM.
     ]
 
     /// Cheap heuristic: should we bother spinning up the local VLM for

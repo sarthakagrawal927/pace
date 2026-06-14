@@ -54,6 +54,14 @@ final class CompanionManager: ObservableObject {
     @Published private(set) var shouldRequestCalendarPermission = false
     @Published private(set) var shouldRequestRemindersPermission = false
     @Published private(set) var recentActionResults: [PaceActionRunRecord] = []
+    /// Per-turn tool-call debug captures for Settings → Debug. Surfaces the
+    /// raw planner output + parsed tool calls + dispatch outcome so a turn
+    /// that spoke but did nothing becomes legible. Newest first.
+    @Published private(set) var recentToolCallDebugRecords: [PaceToolCallDebugRecord] = []
+    /// Element-map line count from the most recent planner prompt, stashed by
+    /// `logFirstElementsOfPromptForDiagnostics` so the post-execution debug
+    /// capture can report whether the planner actually saw the screen.
+    private var lastPlannerElementLineCountForDebug: Int?
     @Published private(set) var localMemorySummary: String = PaceLocalMemoryStore.summaryText
     @Published private(set) var localRetrievalSummary: String = "Retrieval: local preferences and Pace history"
     @Published private(set) var localRetrievalSourceStatuses: [PaceRetrievalSourceStatus] = []
@@ -1596,6 +1604,58 @@ You can turn this off at any time in Settings → Cloud bridge.
         }
     }
 
+    /// Append one tool-call debug capture for Settings → Debug. Newest
+    /// first, capped so the buffer never grows unbounded. Purely an
+    /// observability sink — never affects routing, speech, or execution.
+    private func recordToolCallDebug(_ record: PaceToolCallDebugRecord) {
+        var updatedDebugRecords = recentToolCallDebugRecords
+        updatedDebugRecords.insert(record, at: 0)
+        let maximumRetainedDebugRecords = 25
+        if updatedDebugRecords.count > maximumRetainedDebugRecords {
+            updatedDebugRecords.removeLast(updatedDebugRecords.count - maximumRetainedDebugRecords)
+        }
+        recentToolCallDebugRecords = updatedDebugRecords
+        // Persist to the JSONL trace file so the history survives restarts
+        // and can be inspected outside the app (off the main actor).
+        PaceToolCallDebugTrace.append(record)
+    }
+
+    /// Clear the Settings → Debug tool-call capture buffer AND the persisted
+    /// trace file.
+    func clearToolCallDebugRecords() {
+        recentToolCallDebugRecords = []
+        PaceToolCallDebugTrace.clear()
+    }
+
+    /// Seed the in-memory debug list from the persisted trace file so the
+    /// Debug tab shows history from previous sessions, not just this one.
+    private func loadPersistedToolCallDebugRecords() {
+        recentToolCallDebugRecords = PaceToolCallDebugTrace.loadRecent(limit: 25)
+    }
+
+    /// One line per parsed tool call, e.g. "open_url: Open URL:
+    /// https://google.com". "no actions parsed" means the planner produced
+    /// only spoken text — which is exactly the "opening the browser menu did
+    /// nothing" signature.
+    /// True when the streamed planner text is the v10 JSON envelope rather
+    /// than free prose. The main (action) planner is decode-constrained to
+    /// emit `{spokenText,…}`, so its stream must NOT be spoken raw — the
+    /// parsed `spokenText` is flushed at turn end instead. Free prose
+    /// (answers, descriptions, the lite race path) never starts with "{".
+    nonisolated static func streamedPlannerTextIsStructuredEnvelope(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{")
+    }
+
+    private static func toolCallDebugSummary(
+        for executionPlan: PaceActionExecutionPlan
+    ) -> String {
+        let parsedActions = executionPlan.flattenedActions
+        guard !parsedActions.isEmpty else { return "no actions parsed" }
+        return parsedActions
+            .map { "\($0.auditOperationName): \($0.approvalDescription)" }
+            .joined(separator: "\n")
+    }
+
     // MARK: - Trust surfaces (undo banner + reply replay)
 
     /// Returns the first click candidate's text label (if known) from
@@ -2551,6 +2611,47 @@ You can turn this off at any time in Settings → Cloud bridge.
         print("🔎 Local retrieval index reset")
     }
 
+    private func handleRememberSiteCommand(
+        _ command: PaceRememberSiteCommand,
+        transcript: String
+    ) {
+        let spokenText: String
+        switch command {
+        case .forget(let name):
+            let didForget = PaceNamedDestinationStore.shared.forget(displayName: name)
+            spokenText = didForget
+                ? "forgotten."
+                : "i don't have a saved site called \(name)."
+        case .remember(let requestedName):
+            if let captured = PaceBrowserURLReader.currentTab() {
+                let displayName = requestedName
+                    ?? PaceBrowserURLReader.defaultName(forURL: captured.url)
+                PaceNamedDestinationStore.shared.save(
+                    displayName: displayName,
+                    url: captured.url
+                )
+                spokenText = "got it — i'll remember \(displayName)."
+            } else {
+                // Frontmost app isn't a scriptable browser, or the read failed.
+                spokenText = "i couldn't read this page's address — make sure the site is open in your browser and try again."
+            }
+        }
+
+        responseOverlayManager.showOverlayAndBeginStreaming()
+        responseOverlayManager.updateStreamingText(spokenText)
+        recordConversationTurn(userTranscript: transcript, assistantResponse: spokenText)
+        currentResponseTask = Task {
+            voiceState = .responding
+            await streamingSentenceTTSPipeline.flushFinal(finalSpokenText: spokenText)
+            while ttsClient.isPlaying {
+                try? await Task.sleep(nanoseconds: 80_000_000)
+            }
+            responseOverlayManager.finishStreaming()
+            voiceState = .idle
+            currentTurnHUDState = .done("done")
+        }
+    }
+
     private func handleLocalMemoryCommand(_ command: PaceLocalMemoryCommand) {
         let spokenText: String
         switch command {
@@ -2974,6 +3075,7 @@ You can turn this off at any time in Settings → Cloud bridge.
 
     func start() {
         refreshAllPermissions()
+        loadPersistedToolCallDebugRecords()
         print("🔑 Pace start — accessibility: \(hasAccessibilityPermission), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), screenContent: \(hasScreenContentPermission), onboarded: \(hasCompletedOnboarding)")
         // Wire the timer-scheduler speak callback to the active TTS
         // client and rehydrate any persisted timers. Doing this before
@@ -4204,6 +4306,26 @@ You can turn this off at any time in Settings → Cloud bridge.
                 let pointingParseResult = PaceTagParsers.parsePointingCoordinates(from: textAfterDoneStrip)
                 let spokenText = pointingParseResult.spokenText
 
+                // Settings → Debug capture: pure-knowledge turns never run a
+                // screenshot/VLM and never execute actions here — surfaced so
+                // a misrouted action command (answered instead of acted) is
+                // visible as a text-only row.
+                recordToolCallDebug(PaceToolCallDebugRecord(
+                    transcript: transcript,
+                    lane: .textOnly,
+                    routingDetail: "pureKnowledge · text-only planner (no screen)",
+                    plannerPathDetail: plannerForTextOnlyTurn.displayName,
+                    rawPlannerOutput: fullResponseText,
+                    spokenText: spokenText,
+                    parsedActionsSummary: Self.toolCallDebugSummary(
+                        for: actionParseResult.executionPlan
+                    ),
+                    dispatchSummary: "spoken-only — the text-only path does not execute actions",
+                    plannerLatencyMs: Int(Date().timeIntervalSince(plannerStartedAt) * 1000),
+                    totalTurnLatencyMs: Int(Date().timeIntervalSince(plannerStartedAt) * 1000),
+                    userPrompt: userPromptForPlanner
+                ))
+
                 recordConversationTurn(userTranscript: transcript, assistantResponse: spokenText)
 
                 responseOverlayManager.updateStreamingText(spokenText)
@@ -4249,6 +4371,7 @@ You can turn this off at any time in Settings → Cloud bridge.
         responseOverlayManager.updateStreamingText(spokenText)
 
         currentResponseTask = Task {
+            let turnStartedAt = Date()
             voiceState = .responding
             let shouldSpeakInitialFastActionText = !actionExecutor.actionsAreEnabled
                 || !PaceActionApprovalPolicy.suppressesInitialSpokenFeedback(
@@ -4269,6 +4392,7 @@ You can turn this off at any time in Settings → Cloud bridge.
                 preflightIssues: preflightIssues
             ))
 
+            var fastPathDispatchSummaryForDebug = "executed"
             if actionExecutor.actionsAreEnabled {
                 if requestUserApprovalForActionPlan(
                     fastActionParseResult.executionPlan,
@@ -4278,6 +4402,9 @@ You can turn this off at any time in Settings → Cloud bridge.
                         fastActionParseResult.executionPlan,
                         screenCaptures: []
                     )
+                    fastPathDispatchSummaryForDebug = toolObservations.isEmpty
+                        ? "executed — no observations returned"
+                        : PaceActionExecutionObservation.formatForPlanner(toolObservations)
                     if !toolObservations.isEmpty {
                         appendActionResult(.completed(observations: toolObservations))
                         noteReversibleActionExecuted(
@@ -4299,6 +4426,7 @@ You can turn this off at any time in Settings → Cloud bridge.
                         await streamingSentenceTTSPipeline.flushFinal(finalSpokenText: userFeedbackText)
                     }
                 } else {
+                    fastPathDispatchSummaryForDebug = "denied by user"
                     appendActionResult(PaceActionRunRecord(
                         status: .denied,
                         title: "Action denied",
@@ -4307,6 +4435,7 @@ You can turn this off at any time in Settings → Cloud bridge.
                     print("🛑 Fast local action approval denied")
                 }
             } else {
+                fastPathDispatchSummaryForDebug = "EnableActions=false — not executed"
                 appendActionResult(PaceActionRunRecord(
                     status: .skipped,
                     title: "Actions disabled",
@@ -4314,6 +4443,23 @@ You can turn this off at any time in Settings → Cloud bridge.
                 ))
                 print("🤖 Fast local action parsed but EnableActions is false")
             }
+
+            // Settings → Debug capture: the fast path matched before any
+            // planner ran, so this row proves a command stayed local and
+            // shows exactly what it parsed to.
+            recordToolCallDebug(PaceToolCallDebugRecord(
+                transcript: transcript,
+                lane: .fastPath,
+                routingDetail: "fast local parser matched (no screenshot, VLM, or planner)",
+                rawPlannerOutput: "",
+                spokenText: spokenText,
+                parsedActionsSummary: Self.toolCallDebugSummary(
+                    for: fastActionParseResult.executionPlan
+                ),
+                dispatchSummary: fastPathDispatchSummaryForDebug,
+                totalTurnLatencyMs: Int(Date().timeIntervalSince(turnStartedAt) * 1000),
+                userPrompt: transcript
+            ))
 
             while ttsClient.isPlaying {
                 try? await Task.sleep(nanoseconds: 80_000_000)
@@ -4440,6 +4586,29 @@ You can turn this off at any time in Settings → Cloud bridge.
             return
         }
 
+        // "remember this as the cloudflare dashboard" — capture the current
+        // tab URL under a user-chosen name (Tier 1 × Tier 3).
+        if let rememberSiteCommand = PaceRememberSiteCommandParser.parse(transcript: transcript) {
+            print("🔖 Remember-site command: \(rememberSiteCommand)")
+            handleRememberSiteCommand(rememberSiteCommand, transcript: transcript)
+            return
+        }
+
+        // "open the cloudflare dashboard" — recall a user-taught destination
+        // on the fast path (no VLM, no planner). Only matches names the user
+        // actually saved, so non-matching opens fall through below.
+        if let destination = PaceNamedDestinationStore.shared.recall(matching: transcript) {
+            print("🔖 Opening user-named destination: \(destination.displayName)")
+            handleFastLocalActionPath(
+                transcript: transcript,
+                fastActionParseResult: PaceFastActionParseResult(
+                    spokenText: "opening \(destination.displayName).",
+                    executionPlan: .serial(actions: [.openURL(destination.url)])
+                )
+            )
+            return
+        }
+
         // Fast-path chitchat ("hi pace", "thanks") with a canned response
         // — skips VLM + planner + agent loop entirely. ~2200ms → ~50ms.
         // Conservative: only fires when the classifier is confident
@@ -4522,6 +4691,7 @@ You can turn this off at any time in Settings → Cloud bridge.
         currentResponseTask = Task {
             voiceState = .processing
 
+            let turnStartedAt = Date()
             let maxAgentStepCount = PaceTagParsers.readMaxAgentStepCount()
             var stepIndex = 0
             var currentTurnUserPrompt = transcript
@@ -4608,9 +4778,18 @@ You can turn this off at any time in Settings → Cloud bridge.
                             appleFoundationModelsIsAvailable: appleFoundationModelsIsAvailableForRace
                         )
 
+                    // Latency + planner-input capture for the Settings → Debug
+                    // trace. plannerSectionStartedAt is measured AFTER screen
+                    // capture, so it covers VLM+OCR+planner (single path) or
+                    // the race. userPromptForPlannerForDebug records the exact
+                    // variable half of the planner input so a failing turn can
+                    // be reproduced offline (system prompt is static in source).
+                    let plannerSectionStartedAt = Date()
+                    var userPromptForPlannerForDebug = ""
                     let fullResponseText: String
                     var raceLiteWonSpokenText: String? = nil
                     if useSpeculativeRace {
+                        userPromptForPlannerForDebug = "(speculative race — full-path prompt assembled inside the race; lite path is transcript-only)"
                         let raceWiringResult = await performFirstStepSpeculativePlannerRace(
                             transcript: currentTurnUserPrompt,
                             systemPrompt: systemPromptForTurn,
@@ -4654,6 +4833,7 @@ You can turn this off at any time in Settings → Cloud bridge.
                             route: intentPrediction.route,
                             isFirstPlannerStep: isFirstStep
                         )
+                        userPromptForPlannerForDebug = userPromptForPlanner
                         let screenContextElapsedMs = Int(
                             Date().timeIntervalSince(screenContextStartedAt) * 1000
                         )
@@ -4687,17 +4867,23 @@ You can turn this off at any time in Settings → Cloud bridge.
                                 //    sees tags, thinking blocks, everything live.
                                 //    The end-of-turn step replaces this with the
                                 //    cleaned spoken text once parsing completes.
-                                self?.responseOverlayManager.updateStreamingText(accumulatedPlannerText)
+                                //    EXCEPT a structured (v10 JSON) stream —
+                                //    show a thinking ellipsis, not raw JSON.
+                                self?.responseOverlayManager.updateStreamingText(
+                                    Self.streamedPlannerTextIsStructuredEnvelope(accumulatedPlannerText)
+                                        ? "…" : accumulatedPlannerText
+                                )
                                 // 2. Hand the chunk to the streaming TTS so any
                                 //    newly-completed sentences get spoken before
                                 //    the planner has finished generating the rest.
                                 //    This is the dominant perceived-latency win.
                                 Task { @MainActor [weak self] in
                                     guard let self else { return }
-                                    let shouldSuppressStreamingNarration = self.actionExecutor.actionsAreEnabled
-                                        && PaceActionApprovalPolicy.suppressesInitialSpokenFeedback(
-                                            forPlannerResponseText: accumulatedPlannerText
-                                        )
+                                    let shouldSuppressStreamingNarration = Self.streamedPlannerTextIsStructuredEnvelope(accumulatedPlannerText)
+                                        || (self.actionExecutor.actionsAreEnabled
+                                            && PaceActionApprovalPolicy.suppressesInitialSpokenFeedback(
+                                                forPlannerResponseText: accumulatedPlannerText
+                                            ))
                                     guard !shouldSuppressStreamingNarration else { return }
                                     await self.streamingSentenceTTSPipeline.acceptStreamedText(accumulatedPlannerText)
                                 }
@@ -4718,6 +4904,9 @@ You can turn this off at any time in Settings → Cloud bridge.
                         )
                         fullResponseText = singlePlannerResponseText
                     }
+                    let plannerSectionElapsedMs = Int(
+                        Date().timeIntervalSince(plannerSectionStartedAt) * 1000
+                    )
                     guard !Task.isCancelled else { return }
 
                     // Clear the amber bridge indicator now that the stream has finished.
@@ -4973,17 +5162,68 @@ You can turn this off at any time in Settings → Cloud bridge.
                         )
                     }
 
+                    // Settings → Debug capture: record this planner step's
+                    // raw output, parsed tool calls, and dispatch outcome.
+                    // Pure observability sink — never affects the loop.
+                    let dispatchSummaryForDebug: String = {
+                        if actionParseResult.actions.isEmpty {
+                            return "no actions parsed — spoken-only turn"
+                        }
+                        if userDeniedActionApproval {
+                            return "denied by user"
+                        }
+                        if !actionExecutor.actionsAreEnabled {
+                            return "EnableActions=false — not executed"
+                        }
+                        if toolObservations.isEmpty {
+                            return "executed — no observations returned"
+                        }
+                        return PaceActionExecutionObservation.formatForPlanner(toolObservations)
+                    }()
+                    recordToolCallDebug(PaceToolCallDebugRecord(
+                        transcript: isFirstStep ? transcript : "(agent step \(stepIndex))",
+                        lane: .planner,
+                        routingDetail: "\(intentPrediction.intent.rawValue) · conf \(String(format: "%.2f", intentPrediction.confidence)) · \(intentPrediction.route.rawValue)",
+                        plannerPathDetail: useSpeculativeRace
+                            ? (raceLiteWonSpokenText != nil
+                                ? "speculative race · lite (Apple FM, no screen) won audio"
+                                : "speculative race · full planner won")
+                            : "single planner",
+                        userHeardScreenlessAnswer: raceLiteWonSpokenText,
+                        screenElementCount: lastPlannerElementLineCountForDebug,
+                        rawPlannerOutput: fullResponseText,
+                        spokenText: spokenText,
+                        parsedActionsSummary: Self.toolCallDebugSummary(
+                            for: actionParseResult.executionPlan
+                        ),
+                        dispatchSummary: dispatchSummaryForDebug,
+                        plannerLatencyMs: plannerSectionElapsedMs,
+                        totalTurnLatencyMs: Int(
+                            Date().timeIntervalSince(turnStartedAt) * 1000
+                        ),
+                        userPrompt: userPromptForPlannerForDebug
+                    ))
+
                     // 11. Exit conditions for the agent loop:
                     //     - planner emitted [DONE]
                     //     - planner emitted no action tags (pure answer turn)
                     //     - actions are disabled (treat every turn as single-shot)
+                    // Structured-output turns are SINGLE-SHOT: the v10 JSON
+                    // envelope can't carry a [DONE] tag and always contains an
+                    // action, so re-looping makes the constrained planner
+                    // invent spurious follow-ups (it dictated the user's own
+                    // command on an 8-step runaway). Multi-action sequences
+                    // ride in one envelope via payload.calls instead.
                     let exitLoop = plannerSignaledDone
                         || actionParseResult.actions.isEmpty
                         || !actionExecutor.actionsAreEnabled
                         || userDeniedActionApproval
+                        || plannerClient.usesStructuredActionOutput
                     if exitLoop {
                         if plannerSignaledDone {
                             print("✅ Agent loop: planner signaled [DONE] at step \(stepIndex)")
+                        } else if plannerClient.usesStructuredActionOutput {
+                            print("✅ Agent loop: structured-output turn is single-shot — stopping after step \(stepIndex)")
                         }
                         break agentStepLoop
                     }
@@ -5186,11 +5426,19 @@ You can turn this off at any time in Settings → Cloud bridge.
                     self.streamingSentenceTTSPipeline.prepareForSupersedingStreamWithinTurn()
                 }
                 winnerBox.winner = winner
-                self.responseOverlayManager.updateStreamingText(accumulatedText)
-                let shouldSuppressStreamingNarration = self.actionExecutor.actionsAreEnabled
-                    && PaceActionApprovalPolicy.suppressesInitialSpokenFeedback(
-                        forPlannerResponseText: accumulatedText
-                    )
+                self.responseOverlayManager.updateStreamingText(
+                    Self.streamedPlannerTextIsStructuredEnvelope(accumulatedText)
+                        ? "…" : accumulatedText
+                )
+                // The full (main) planner is decode-constrained to the v10
+                // JSON envelope, so its stream is raw JSON — never speak it;
+                // the parsed spokenText is flushed at turn end instead. The
+                // lite path stays free prose and streams normally.
+                let shouldSuppressStreamingNarration = Self.streamedPlannerTextIsStructuredEnvelope(accumulatedText)
+                    || (self.actionExecutor.actionsAreEnabled
+                        && PaceActionApprovalPolicy.suppressesInitialSpokenFeedback(
+                            forPlannerResponseText: accumulatedText
+                        ))
                 guard !shouldSuppressStreamingNarration else { return }
                 Task { @MainActor [weak self] in
                     guard let self else { return }
@@ -5255,10 +5503,14 @@ You can turn this off at any time in Settings → Cloud bridge.
         userPromptForPlanner: String,
         stepIndex: Int
     ) {
-        let elementLines = userPromptForPlanner
+        let allElementLines = userPromptForPlanner
             .split(separator: "\n")
             .filter { $0.contains("|") && !$0.hasPrefix("===") }
-            .prefix(5)
+        // Stash the full count for the Settings → Debug post-execution
+        // capture so a "did the planner even see the screen?" question is
+        // answerable per turn.
+        lastPlannerElementLineCountForDebug = allElementLines.count
+        let elementLines = allElementLines.prefix(5)
         guard !elementLines.isEmpty else {
             print("🔬 Step \(stepIndex) planner sees: <no element-list lines in prompt>")
             return

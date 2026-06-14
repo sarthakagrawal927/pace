@@ -55,6 +55,7 @@ private enum PaceSettingsTab: String, CaseIterable, Identifiable {
     case flows = "Flows"
     case memory = "Memory"
     case activity = "Activity"
+    case debug = "Debug"
 
     var id: String { rawValue }
 
@@ -80,6 +81,8 @@ private enum PaceSettingsTab: String, CaseIterable, Identifiable {
             return "brain"
         case .activity:
             return "list.bullet.rectangle"
+        case .debug:
+            return "ladybug"
         }
     }
 }
@@ -165,6 +168,8 @@ struct PaceSettingsWindowView: View {
                     PaceMemorySettingsTab(companionManager: companionManager)
                 case .activity:
                     PaceActivitySettingsTab(companionManager: companionManager)
+                case .debug:
+                    PaceDebugSettingsTab(companionManager: companionManager)
                 }
             }
             .padding(24)

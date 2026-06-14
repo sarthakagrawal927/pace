@@ -33,6 +33,7 @@ final class MenuBarPanelManager: NSObject {
     private var panel: NSPanel?
     private var panelAnchorFrameOverride: NSRect?
     private var clickOutsideMonitor: Any?
+    private var localClickOutsideMonitor: Any?
     private var dismissPanelObserver: NSObjectProtocol?
     private var showPanelObserver: NSObjectProtocol?
 
@@ -69,6 +70,9 @@ final class MenuBarPanelManager: NSObject {
 
     deinit {
         if let monitor = clickOutsideMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        if let monitor = localClickOutsideMonitor {
             NSEvent.removeMonitor(monitor)
         }
         if let observer = dismissPanelObserver {
@@ -213,29 +217,41 @@ final class MenuBarPanelManager: NSObject {
     private func installClickOutsideMonitor() {
         removeClickOutsideMonitor()
 
+        // Global monitor: clicks that land in OTHER apps.
         clickOutsideMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] _ in
+            self?.dismissPanelIfClickIsOutside()
+        }
+
+        // Local monitor: clicks that land in OUR OWN other windows — most
+        // importantly the Settings window. A global monitor never sees these
+        // (they're same-process events), so without this the panel stays open
+        // when you click the Settings window. Returns the event unchanged so
+        // the clicked control still works.
+        localClickOutsideMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] event in
-            guard let self, let panel = self.panel else { return }
+            self?.dismissPanelIfClickIsOutside()
+            return event
+        }
+    }
 
-            let clickLocation = NSEvent.mouseLocation
-            if panel.frame.contains(clickLocation) {
-                return
-            }
-
-            // Delay dismissal slightly to avoid closing the panel when
-            // a system permission dialog appears (e.g. microphone access).
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                guard panel.isVisible else { return }
-
-                // If permissions aren't all granted yet, a system dialog
-                // may have focus — don't dismiss during onboarding.
-                if !self.companionManager.allPermissionsGranted && !NSApp.isActive {
-                    return
-                }
-
-                self.hidePanel()
-            }
+    /// Hides the panel when a click lands outside its frame. Shared by the
+    /// global (other-app) and local (own-window, e.g. Settings) monitors.
+    private func dismissPanelIfClickIsOutside() {
+        guard let panel else { return }
+        let clickLocation = NSEvent.mouseLocation
+        if panel.frame.contains(clickLocation) {
+            return
+        }
+        // Small delay so a Grant button inside the panel that spawns a system
+        // permission dialog doesn't race the dismissal. Clicks inside the
+        // panel already returned above; anything here is genuinely outside,
+        // so dismiss like NSPopover.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self, panel.isVisible else { return }
+            self.hidePanel()
         }
     }
 
@@ -243,6 +259,10 @@ final class MenuBarPanelManager: NSObject {
         if let monitor = clickOutsideMonitor {
             NSEvent.removeMonitor(monitor)
             clickOutsideMonitor = nil
+        }
+        if let monitor = localClickOutsideMonitor {
+            NSEvent.removeMonitor(monitor)
+            localClickOutsideMonitor = nil
         }
     }
 }
