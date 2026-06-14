@@ -802,7 +802,13 @@ class OverlayWindowManager {
     private var overlayWindows: [OverlayWindow] = []
     var hasShownOverlayBefore = false
 
+    /// When true, the blue cursor companion never shows. Set in mascot mode
+    /// so all conversation surfaces live at the top-right perch, never near
+    /// the mouse pointer.
+    var isSuppressed = false
+
     func showOverlay(onScreens screens: [NSScreen], companionManager: CompanionManager) {
+        guard !isSuppressed else { return }
         // Hide any existing overlays
         hideOverlay()
 

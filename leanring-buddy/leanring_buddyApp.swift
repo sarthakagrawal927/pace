@@ -30,6 +30,9 @@ struct leanring_buddyApp: App {
 final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarPanelManager: MenuBarPanelManager?
     private var menuBarOverlayManager: PaceMenuBarOverlayManager?
+    /// Strong owner of the top-right mascot perch (CompanionManager holds a
+    /// weak ref). nil when running the legacy notch-capsule surface.
+    private var avatarOverlayManager: PaceAvatarOverlayManager?
     private var runtimeSmokeTestHooks: PaceRuntimeSmokeTestHooks?
     private let companionManager = CompanionManager()
 
@@ -96,14 +99,38 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
 
         let menuBarPanelManager = MenuBarPanelManager(companionManager: companionManager)
         self.menuBarPanelManager = menuBarPanelManager
+
+        // Primary surface: the top-right mascot perch. The notch capsule
+        // (PaceMenuBarOverlayManager) is created + preserved but not shown —
+        // flip useRightCornerMascot to false to restore the notch.
+        let useRightCornerMascot = true
         menuBarOverlayManager = PaceMenuBarOverlayManager(
             companionManager: companionManager,
             onTap: { [weak self] anchorFrame in
                 self?.menuBarPanelManager?.togglePanel(anchoredTo: anchorFrame)
             }
         )
-        menuBarOverlayManager?.show()
+        if useRightCornerMascot {
+            let mascot = PaceAvatarOverlayManager()
+            mascot.attach(to: companionManager)
+            mascot.onTap = { [weak self] anchorFrame in
+                self?.menuBarPanelManager?.togglePanel(anchoredTo: anchorFrame)
+            }
+            mascot.onConversationStart = { [weak self] anchorFrame in
+                self?.menuBarPanelManager?.showPanel(anchoredTo: anchorFrame)
+            }
+            companionManager.avatarOverlayManager = mascot
+            avatarOverlayManager = mascot
+            mascot.show()
+        } else {
+            menuBarOverlayManager?.show()
+        }
         companionManager.start()
+        if useRightCornerMascot {
+            // Mascot is the only surface — silence the cursor-level overlays
+            // so nothing renders near the mouse pointer.
+            companionManager.suppressCursorOverlaysForMascotMode()
+        }
         if PaceRuntimeSmokeTestHooks.isEnabled {
             runtimeSmokeTestHooks = PaceRuntimeSmokeTestHooks(
                 menuBarPanelManager: menuBarPanelManager,

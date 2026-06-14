@@ -34,6 +34,11 @@ final class MenuBarPanelManager: NSObject {
     private var panelAnchorFrameOverride: NSRect?
     private var clickOutsideMonitor: Any?
     private var localClickOutsideMonitor: Any?
+    /// When the panel was last shown. Outside-click dismissal is ignored for
+    /// a brief grace window after this so the very click/gesture that opened
+    /// the panel (e.g. tapping the mascot, which is outside the panel frame)
+    /// can't immediately close it.
+    private var panelShownAt: Date?
     private var dismissPanelObserver: NSObjectProtocol?
     private var showPanelObserver: NSObjectProtocol?
 
@@ -105,6 +110,18 @@ final class MenuBarPanelManager: NSObject {
         togglePanel()
     }
 
+    /// Non-toggling show anchored to a frame — used when a conversation
+    /// starts so the panel reliably appears at the mascot (never closes an
+    /// already-open panel mid-turn).
+    func showPanel(anchoredTo anchorFrame: NSRect) {
+        panelAnchorFrameOverride = anchorFrame
+        if panel?.isVisible != true {
+            showPanel()
+        } else {
+            positionPanelBelowAnchor()
+        }
+    }
+
     func showPanelForSmokeTest() {
         showPanel()
     }
@@ -129,6 +146,7 @@ final class MenuBarPanelManager: NSObject {
 
         panel?.makeKeyAndOrderFront(nil)
         panel?.orderFrontRegardless()
+        panelShownAt = Date()
         installClickOutsideMonitor()
     }
 
@@ -189,8 +207,18 @@ final class MenuBarPanelManager: NSObject {
         let fittingSize = panel.contentView?.fittingSize ?? CGSize(width: panelWidth, height: panelHeight)
         let actualPanelHeight = fittingSize.height
 
-        let panelOriginX = anchorFrame.midX - (panelWidth / 2)
+        var panelOriginX = anchorFrame.midX - (panelWidth / 2)
         let panelOriginY = anchorFrame.minY - actualPanelHeight - gapBelowMenuBar
+
+        // Keep the panel fully on-screen. A right-corner anchor (the mascot
+        // perch) would otherwise center the panel under the mascot and push
+        // its right half off the screen edge; clamp so it drops down-left.
+        if let anchorScreen = NSScreen.screens.first(where: { $0.frame.intersects(anchorFrame) }) ?? NSScreen.main {
+            let horizontalMargin: CGFloat = 8
+            let maxOriginX = anchorScreen.frame.maxX - panelWidth - horizontalMargin
+            let minOriginX = anchorScreen.frame.minX + horizontalMargin
+            panelOriginX = min(max(panelOriginX, minOriginX), maxOriginX)
+        }
 
         panel.setFrame(
             NSRect(x: panelOriginX, y: panelOriginY, width: panelWidth, height: actualPanelHeight),
@@ -244,6 +272,12 @@ final class MenuBarPanelManager: NSObject {
     /// global (other-app) and local (own-window, e.g. Settings) monitors.
     private func dismissPanelIfClickIsOutside() {
         guard let panel else { return }
+        // Grace window: ignore the click/gesture that just opened the panel
+        // (tapping the mascot is outside the panel frame, so without this it
+        // would immediately re-close — the open/close flicker).
+        if let panelShownAt, Date().timeIntervalSince(panelShownAt) < 0.45 {
+            return
+        }
         let clickLocation = NSEvent.mouseLocation
         if panel.frame.contains(clickLocation) {
             return

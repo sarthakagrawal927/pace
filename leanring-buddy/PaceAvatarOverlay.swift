@@ -34,6 +34,31 @@ final class PaceAvatarOverlayManager {
     /// Keeps it above the Dock without overlapping app content too much.
     private let bottomMargin: CGFloat = 14
 
+    /// When true, the mascot is a STATIC perch in the top-right corner (just
+    /// below the menu bar) and is the app's primary surface — tapping it
+    /// opens the companion panel below it. When false, the legacy
+    /// bottom-of-screen walking avatar (preserved, not deleted).
+    private let perchTopRight = true
+    private let rightPerchMargin: CGFloat = 12
+    private let topPerchMargin: CGFloat = 4
+
+    /// Set by the app on launch: tapping the perched mascot calls this with
+    /// the mascot's screen frame so the panel can anchor (drop down) from it.
+    /// When nil (legacy mode), the tap posts `.paceAvatarTapped` instead.
+    var onTap: ((NSRect) -> Void)?
+
+    /// Set by the app on launch: when a conversation starts, the panel is
+    /// surfaced (non-toggling show) anchored to the mascot, so the live
+    /// transcript + reply appear AT the mascot rather than near the cursor.
+    var onConversationStart: ((NSRect) -> Void)?
+
+    /// Surface the conversation panel at the mascot. Called by
+    /// CompanionManager when a turn begins.
+    func presentConversationPanel() {
+        guard let avatarPanel, let onConversationStart else { return }
+        onConversationStart(avatarPanel.frame)
+    }
+
     func attach(to companionManager: CompanionManager) {
         self.companionManager = companionManager
         // Mirror pace's voice state into the character so the mouth
@@ -69,10 +94,19 @@ final class PaceAvatarOverlayManager {
         guard let hostScreen = cursorScreen else { return }
         let hostVisibleFrame = hostScreen.visibleFrame
 
-        let initialPanelOrigin = CGPoint(
-            x: hostVisibleFrame.midX - panelSize.width / 2,
-            y: hostVisibleFrame.minY + bottomMargin
-        )
+        let initialPanelOrigin: CGPoint
+        if perchTopRight {
+            // Static perch just below the menu bar, right edge.
+            initialPanelOrigin = CGPoint(
+                x: hostVisibleFrame.maxX - panelSize.width - rightPerchMargin,
+                y: hostVisibleFrame.maxY - panelSize.height - topPerchMargin
+            )
+        } else {
+            initialPanelOrigin = CGPoint(
+                x: hostVisibleFrame.midX - panelSize.width / 2,
+                y: hostVisibleFrame.minY + bottomMargin
+            )
+        }
         let initialPanelFrame = NSRect(origin: initialPanelOrigin, size: panelSize)
 
         let panel = NSPanel(
@@ -116,10 +150,15 @@ final class PaceAvatarOverlayManager {
         // Drive panel position from the controller at 30fps. Position
         // changes are CGFloat deltas in the host visible-frame coord
         // space; we add the screen origin to get global panel coords.
-        positionUpdateTimer?.invalidate()
-        positionUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.repositionPanelFromController()
+        // Only drive movement in the legacy walking mode. The top-right
+        // perch is static (mouth/voice animation still runs via the
+        // controller; the panel just doesn't move).
+        if !perchTopRight {
+            positionUpdateTimer?.invalidate()
+            positionUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.repositionPanelFromController()
+                }
             }
         }
 
@@ -127,6 +166,10 @@ final class PaceAvatarOverlayManager {
     }
 
     func hide() {
+        // The top-right perch is persistent — it's the app's primary surface,
+        // so transient hide requests (e.g. during a keyboard turn) are
+        // ignored. Only the legacy walking avatar actually hides.
+        guard !perchTopRight else { return }
         positionUpdateTimer?.invalidate()
         positionUpdateTimer = nil
         walkController = nil
@@ -141,10 +184,13 @@ final class PaceAvatarOverlayManager {
     }
 
     private func handleAvatarClick() {
-        // Open the menu-bar panel so the user sees the push-to-talk
-        // hint and any active state. The existing hotkey flow (Ctrl+
-        // Opt) keeps working as the primary voice trigger.
-        NotificationCenter.default.post(name: .paceAvatarTapped, object: nil)
+        // Perched mode: anchor the panel to the mascot's frame so it drops
+        // down from the corner. Legacy mode: post the notification.
+        if let onTap, let avatarPanel {
+            onTap(avatarPanel.frame)
+        } else {
+            NotificationCenter.default.post(name: .paceAvatarTapped, object: nil)
+        }
     }
 }
 

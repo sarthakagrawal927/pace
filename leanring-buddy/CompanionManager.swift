@@ -681,6 +681,24 @@ final class CompanionManager: ObservableObject {
         return areCursorAnnotationsEnabled
     }
 
+    /// Mascot mode: the top-right perch + panel are the only conversation
+    /// surfaces, so silence BOTH cursor-level overlays — the blue cursor
+    /// companion and the response text bubble — so nothing renders near the
+    /// mouse pointer. Does not touch the user's persisted toggles (it's a
+    /// runtime surface choice, not a preference change).
+    func suppressCursorOverlaysForMascotMode() {
+        mascotModeActive = true
+        overlayWindowManager.isSuppressed = true
+        overlayWindowManager.hideOverlay()
+        isOverlayVisible = false
+        responseOverlayManager.setAnnotationsEnabled(false)
+    }
+
+    /// True when the top-right mascot perch + panel are the conversation
+    /// surface. Gates legacy behaviors that assumed the response shows near
+    /// the cursor — notably dismissing the panel on push-to-talk.
+    private var mascotModeActive = false
+
     /// User preference for whether Pace asks before higher-risk local tools.
     /// Routine reversible or visible actions auto-run; non-undoable app
     /// mutations, external tools, and blocking preflight issues still prompt.
@@ -3793,8 +3811,13 @@ You can turn this off at any time in Settings → Cloud bridge.
                 isOverlayVisible = true
             }
 
-            // Dismiss the menu bar panel so it doesn't cover the screen
-            NotificationCenter.default.post(name: .paceDismissPanel, object: nil)
+            // Dismiss the menu bar panel so it doesn't cover the screen.
+            // NOT in mascot mode — there the panel IS the conversation
+            // surface, so dismissing it on push-to-talk is the open/close
+            // flicker. presentConversationPanel keeps it up instead.
+            if !mascotModeActive {
+                NotificationCenter.default.post(name: .paceDismissPanel, object: nil)
+            }
 
             // Cancel any in-progress response and TTS from a previous utterance
             currentResponseTask?.cancel()
@@ -3847,6 +3870,12 @@ You can turn this off at any time in Settings → Cloud bridge.
                 voiceState = .idle
                 return
             }
+            // Surface the conversation at the mascot perch (top-right) the
+            // moment a turn starts, so the live transcript + reply appear
+            // THERE rather than only near the cursor. No-op in legacy mode
+            // (onConversationStart unset).
+            avatarOverlayManager?.presentConversationPanel()
+
             // Set the response bubble's anchor based on what triggered
             // this turn. Keyboard → next to the cursor (rides with the
             // Codex arrow); avatar tap → next to the walking character.
