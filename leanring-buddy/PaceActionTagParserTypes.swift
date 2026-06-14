@@ -596,6 +596,7 @@ nonisolated struct PaceFastActionParseResult {
 /// the normal planner path where screen context and approval copy are richer.
 nonisolated enum PaceFastActionCommandParser {
     private static let knownApplicationAliases: [String: String] = [
+        "apple music": "Music",
         "arc": "Arc",
         "calendar": "Calendar",
         "chrome": "Google Chrome",

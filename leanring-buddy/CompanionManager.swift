@@ -36,6 +36,11 @@ enum CompanionVoiceState {
 final class CompanionManager: ObservableObject {
     @Published private(set) var voiceState: CompanionVoiceState = .idle
     @Published private(set) var lastTranscript: String?
+    /// The live speech transcript shown as an in-progress user bubble in the
+    /// chat panel while the user is talking. Holds the streaming partial
+    /// during listening, then the final transcript through the turn, and is
+    /// cleared once the committed user message lands in the chat transcript.
+    @Published private(set) var liveSpeechDraft: String = ""
 
     /// Most recent partial transcript from the active dictation session.
     /// Used by the post-release safety net so a slow WhisperKit finalize
@@ -1936,6 +1941,9 @@ You can turn this off at any time in Settings → Cloud bridge.
         userTranscript: String,
         assistantResponse: String
     ) {
+        // The committed user message is about to land in the chat transcript,
+        // so retire the live in-progress speech bubble (no duplicate).
+        liveSpeechDraft = ""
         let recordedAt = Date()
         let stableTurnId = "turn-\(Int(recordedAt.timeIntervalSince1970))-\(abs(userTranscript.hashValue))"
 
@@ -3874,6 +3882,7 @@ You can turn this off at any time in Settings → Cloud bridge.
                         guard !trimmedPartial.isEmpty else { return }
                         Task { @MainActor [weak self] in
                             self?.lastPartialTranscriptFromActiveDictation = trimmedPartial
+                            self?.liveSpeechDraft = trimmedPartial
                             self?.responseOverlayManager.updateStreamingText(trimmedPartial)
                         }
                     },
@@ -3884,6 +3893,10 @@ You can turn this off at any time in Settings → Cloud bridge.
                             // safety timer skips its cleanup pass.
                             self.transcriptArrivedSinceRelease = true
                             self.lastTranscript = finalTranscript
+                            // Keep the live user bubble showing the final
+                            // transcript through the turn; recordConversationTurn
+                            // clears it when the committed message lands.
+                            self.liveSpeechDraft = finalTranscript
                             _ = PaceAPIAuditLog.shared.beginTurn()
                             print("🗣️ Companion received transcript: \(finalTranscript)")
                             PaceAnalytics.trackUserMessageSent(transcript: finalTranscript)

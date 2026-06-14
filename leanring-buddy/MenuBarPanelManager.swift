@@ -138,7 +138,10 @@ final class MenuBarPanelManager: NSObject {
     }
 
     private func createPanel() {
-        let companionPanelView = CompanionPanelView(companionManager: companionManager)
+        // Premium chat surface (PacePanelChatView). The prior dashboard
+        // (CompanionPanelView) is kept in the tree, not deleted — swap this
+        // line back to revert.
+        let companionPanelView = PacePanelChatView(companionManager: companionManager)
             .frame(width: panelWidth)
 
         let hostingView = NSHostingView(rootView: companionPanelView)
