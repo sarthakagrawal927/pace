@@ -8,6 +8,7 @@ scope, test gates, and acceptance criteria.
 
 | PRD | Status | Purpose |
 |---|---|---|
+| `unified-memory.md` | wired (Phases 1–5) | One index + write pass + recall + Memory UI. Recall is now UNIFIED-ONLY: semantic (LM Studio embeddings) or BM25 keyword over one index that's a superset of turns + facts + every connector source; the parallel lexical recall path is retired. `PaceLocalRetrieval` stays as the connector ingestion layer; deleting that store (rewriting connectors to emit memory entries) is the one remaining follow-up. No bundled-model dependency. |
 | `restraint-policy.md` | shipped (v0.3.12) | Pure speak/stay-quiet/queue gate that every proactive source flows through. Active-call detection + user-input timing wired. |
 | `proactive-nudges.md` | shipped (v0.3.12) | Focus-fatigue / calendar pre-meeting / watch-mode observation nudges, all default-off, gated by restraint. |
 | `barge-in-tts-interrupt.md` | shipped (v0.3.12) | User can interrupt Pace mid-TTS by speaking; VAD subscribes to the existing audio tap. |

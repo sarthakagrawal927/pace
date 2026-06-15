@@ -16,6 +16,8 @@ struct PaceMemorySettingsTab: View {
 
     @State private var injectSensitiveEpisodicTopicsForSettings: Bool = PaceUserPreferencesStore
         .bool(.injectSensitiveEpisodicTopics, default: false)
+    @State private var useUnifiedMemoryRecallForSettings: Bool = PaceUserPreferencesStore
+        .bool(.useUnifiedMemoryRecall, default: true)
     @State private var memoryRefreshTick: Int = 0
 
     var body: some View {
@@ -29,6 +31,27 @@ struct PaceMemorySettingsTab: View {
                     .foregroundColor(DS.Colors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            Toggle(isOn: $useUnifiedMemoryRecallForSettings) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Smart recall (semantic)")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(DS.Colors.textPrimary)
+                    Text("Ranks everything Pace remembers by meaning, not just keywords, so a question can recall related memories even without matching words. Needs the embedding model loaded in LM Studio; otherwise Pace falls back to keyword search automatically.")
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
+            .onChange(of: useUnifiedMemoryRecallForSettings) { _, newValue in
+                PaceUserPreferencesStore.setBool(newValue, for: .useUnifiedMemoryRecall)
+            }
+
+            Text("Indexed for recall: \(companionManager.unifiedMemoryFactCount()) fact\(companionManager.unifiedMemoryFactCount() == 1 ? "" : "s") · \(companionManager.unifiedMemoryConversationCount()) conversation\(companionManager.unifiedMemoryConversationCount() == 1 ? "" : "s")")
+                .font(.system(size: 11))
+                .foregroundColor(DS.Colors.textTertiary)
+                .id(memoryRefreshTick)
 
             Toggle(isOn: $injectSensitiveEpisodicTopicsForSettings) {
                 VStack(alignment: .leading, spacing: 3) {

@@ -521,6 +521,270 @@ final class CompanionManager: ObservableObject {
         PaceThreadSummarizerClientFactory.makeDefault()
     }()
 
+    /// On-device persistence for `threadMemory` so a conversation
+    /// survives quit/relaunch ("resume always, until reset"). Only the
+    /// store touches disk; `threadMemory` stays I/O-free.
+    private let threadMemoryStore = PaceThreadMemoryStore()
+
+    /// Whether thread memory (and therefore its persistence) is active.
+    /// When off, we neither restore nor write the conversation to disk,
+    /// and we clear any existing file so disabling the feature honors
+    /// the user's privacy intent.
+    private var isThreadMemoryEnabled: Bool {
+        PaceUserPreferencesStore.bool(.isThreadMemoryEnabled, default: true)
+    }
+
+    /// Persist the current thread-memory state. Best-effort and cheap;
+    /// called after every mutation (turn recorded, summary updated,
+    /// session reset). No-op (and clears the file) when the feature is
+    /// disabled so a stale conversation can't linger on disk.
+    private func persistThreadMemorySnapshot() {
+        guard isThreadMemoryEnabled else {
+            threadMemoryStore.clear()
+            return
+        }
+        threadMemoryStore.save(threadMemory.snapshot(now: Date()))
+    }
+
+    /// Rehydrate the prior conversation at launch. Called once from
+    /// `start()`. Skips restore (and wipes the file) when the feature
+    /// is disabled.
+    private func restorePersistedThreadMemoryIfEnabled() {
+        guard isThreadMemoryEnabled else {
+            threadMemoryStore.clear()
+            return
+        }
+        guard let persistedSnapshot = threadMemoryStore.load() else { return }
+        threadMemory.restore(from: persistedSnapshot)
+        print("🧠 Thread memory restored: \(persistedSnapshot.verbatimWindow.count) verbatim turn(s), summary=\(persistedSnapshot.summary != nil)")
+    }
+
+    // MARK: - Unified memory (Phase 2: dual-write)
+
+    /// The single unified memory index (docs/prds/unified-memory.md). In
+    /// Phase 2 it is DUAL-WRITTEN alongside the existing thread/episodic/
+    /// retrieval stores — those stay authoritative; this ships dark and
+    /// nothing reads it yet. Phase 3 cuts recall over to it behind a flag.
+    private let memoryIndex = PaceMemoryIndex()
+    private let memoryStore = PaceMemoryStore()
+
+    /// Phase 3 recall: semantically ranks the unified index for the
+    /// LOCAL CONTEXT block. Gated by `useUnifiedMemoryRecall` (default
+    /// off) at the call site; falls back to lexical recall when the
+    /// embedding endpoint is unavailable. Reads the sensitive-topic
+    /// opt-in live so a Settings change takes effect without relaunch.
+    private lazy var memoryRetriever = PaceMemoryRetriever(
+        memoryIndex: memoryIndex,
+        embeddingClient: LMStudioEmbeddingClient(),
+        shouldInjectSensitiveTopics: {
+            PaceUserPreferencesStore.bool(.injectSensitiveEpisodicTopics, default: false)
+        }
+    )
+
+    /// Rehydrate the unified index at launch and drop tombstones past the
+    /// 30-day retention window. Called once from `start()`.
+    private func restoreUnifiedMemory() {
+        memoryIndex.replaceAll(memoryStore.load())
+        memoryIndex.purgeTombstonesOlderThan(
+            PaceEpisodicTombstone.retentionInterval,
+            now: Date()
+        )
+    }
+
+    /// Persist the whole index. Best-effort; the file is small for one
+    /// user and the store swallows any write failure.
+    private func persistUnifiedMemory() {
+        memoryStore.save(memoryIndex.allEntries())
+    }
+
+    /// Dual-write a completed conversation turn into the unified index.
+    /// Mirrors the `paceHistory` write — same combined "User: …\nPace: …"
+    /// surface form — so recall can later rank turns semantically.
+    private func recordUnifiedMemoryTurn(
+        userTranscript: String,
+        assistantResponse: String,
+        turnId: String,
+        recordedAt: Date
+    ) {
+        let combinedTurnText = "User: \(userTranscript)\nPace: \(assistantResponse)"
+        memoryIndex.upsert(
+            PaceMemoryEntry(
+                id: turnId,
+                kind: .conversationTurn,
+                text: combinedTurnText,
+                structured: nil,
+                source: .paceHistory,
+                createdAt: recordedAt,
+                updatedAt: recordedAt,
+                embedding: nil,
+                confidence: nil,
+                topicTags: [],
+                tombstonedAt: nil
+            )
+        )
+        persistUnifiedMemory()
+        scheduleLazyEmbedding([(id: turnId, text: combinedTurnText)])
+    }
+
+    /// Dual-write extracted durable facts into the unified index, and
+    /// tombstone any fact a dedup `.replaced` outcome superseded so the
+    /// stale value can't be recalled. Mirrors the episodic store.
+    private func upsertUnifiedMemoryFacts(
+        _ facts: [PaceEpisodicFact],
+        replacedPreviousFactIds: [String]
+    ) {
+        let now = Date()
+        for previousFactId in replacedPreviousFactIds {
+            memoryIndex.tombstone(id: previousFactId, now: now)
+        }
+        var entryIdsAndTextsToEmbed: [(id: String, text: String)] = []
+        for fact in facts {
+            let factText = "\(fact.subject) \(fact.predicate) \(fact.value)"
+            memoryIndex.upsert(
+                PaceMemoryEntry(
+                    id: fact.identifier,
+                    kind: .fact,
+                    text: factText,
+                    structured: [
+                        "subject": fact.subject,
+                        "predicate": fact.predicate,
+                        "value": fact.value
+                    ],
+                    source: .episodicMemory,
+                    createdAt: fact.extractedAt,
+                    updatedAt: fact.extractedAt,
+                    embedding: nil,
+                    confidence: fact.confidence,
+                    topicTags: fact.topicHashtags,
+                    tombstonedAt: nil
+                )
+            )
+            entryIdsAndTextsToEmbed.append((id: fact.identifier, text: factText))
+        }
+        persistUnifiedMemory()
+        scheduleLazyEmbedding(entryIdsAndTextsToEmbed)
+    }
+
+    /// Compute embeddings off the hot path so the user-facing turn never
+    /// waits. Constructs a fresh embedding client inside the detached task
+    /// to avoid capturing main-actor state. Best-effort: any failure (e.g.
+    /// the embedding model isn't loaded in LM Studio) just leaves the
+    /// entries nil-embedded, which excludes them from semantic recall — the
+    /// lexical retriever still covers them.
+    private func scheduleLazyEmbedding(_ entryIdsAndTexts: [(id: String, text: String)]) {
+        guard !entryIdsAndTexts.isEmpty else { return }
+        let entryIds = entryIdsAndTexts.map { $0.id }
+        let entryTexts = entryIdsAndTexts.map { $0.text }
+        Task.detached(priority: .utility) { [weak self] in
+            let embeddingClient = LMStudioEmbeddingClient()
+            guard
+                let embeddingVectors = try? await embeddingClient.embed(entryTexts),
+                embeddingVectors.count == entryIds.count
+            else {
+                return
+            }
+            await MainActor.run {
+                guard let self else { return }
+                for (entryId, embeddingVector) in zip(entryIds, embeddingVectors) {
+                    self.memoryIndex.setEmbedding(embeddingVector, forEntryId: entryId)
+                }
+                self.persistUnifiedMemory()
+            }
+        }
+    }
+
+    // MARK: - Unified memory (Phase 4: UI accessors + cascade)
+
+    /// Durable facts currently indexed for semantic recall. Surfaced as a
+    /// status line in Settings → Memory so the user can SEE the unified
+    /// memory accruing.
+    func unifiedMemoryFactCount() -> Int {
+        memoryIndex.activeEntries().filter { $0.kind == .fact }.count
+    }
+
+    /// Conversation turns currently indexed for semantic recall.
+    func unifiedMemoryConversationCount() -> Int {
+        memoryIndex.activeEntries().filter { $0.kind == .conversationTurn }.count
+    }
+
+    /// Cascade target: tombstone one unified entry so a fact deleted in the
+    /// Memory view stops surfacing in semantic recall too. The unified fact
+    /// entry shares its id with the episodic fact identifier.
+    private func tombstoneUnifiedMemoryEntry(id: String) {
+        memoryIndex.tombstone(id: id, now: Date())
+        persistUnifiedMemory()
+    }
+
+    /// Cascade target: tombstone every unified fact entry when the user
+    /// resets episodic memory, so semantic recall and the episodic roster
+    /// stay in lockstep. Conversation-turn entries are left intact.
+    private func tombstoneAllUnifiedMemoryFacts() {
+        let now = Date()
+        for factEntry in memoryIndex.activeEntries() where factEntry.kind == .fact {
+            memoryIndex.tombstone(id: factEntry.id, now: now)
+        }
+        persistUnifiedMemory()
+    }
+
+    /// Throttle so the connector resync runs at most once a minute even
+    /// though `refreshLocalRetrievalPublishedState()` fires after every
+    /// retrieval write.
+    private var lastUnifiedMemoryConnectorSyncAt: Date?
+    private static let unifiedMemoryConnectorSyncMinimumInterval: TimeInterval = 60
+
+    /// Phase 5 step 2: pull every connector source's current retrieval
+    /// documents into the unified index as `.journalEvent` / `.preference`
+    /// producers, making the index a superset of the lexical store. `.paceHistory`
+    /// and `.episodicMemory` are skipped — Phase 2 already dual-writes those with
+    /// richer typing. Read-only against the retriever; idempotent per source via
+    /// `replaceEntries`. Embeddings are preserved across resyncs when an entry's
+    /// text is unchanged, and scheduled only for new/changed entries so a resync
+    /// doesn't re-embed the whole corpus.
+    private func syncConnectorsIntoUnifiedMemory() {
+        let now = Date()
+        var entryIdsAndTextsToEmbed: [(id: String, text: String)] = []
+        for source in PaceRetrievalSource.allCases
+        where source != .paceHistory && source != .episodicMemory {
+            let documents = localRetriever.documents(forSource: source)
+            let entries: [PaceMemoryEntry] = documents.map { document in
+                let existingEntry = memoryIndex.entry(id: document.id)
+                let textIsUnchanged = existingEntry?.text == document.text
+                let preservedEmbedding = textIsUnchanged ? existingEntry?.embedding : nil
+                if preservedEmbedding == nil {
+                    entryIdsAndTextsToEmbed.append((id: document.id, text: document.text))
+                }
+                return PaceMemoryEntry(
+                    id: document.id,
+                    kind: source == .localPreference ? .preference : .journalEvent,
+                    text: document.text,
+                    structured: nil,
+                    source: source,
+                    createdAt: existingEntry?.createdAt ?? document.modifiedAt ?? now,
+                    updatedAt: document.modifiedAt ?? now,
+                    embedding: preservedEmbedding,
+                    confidence: nil,
+                    topicTags: [],
+                    tombstonedAt: nil
+                )
+            }
+            memoryIndex.replaceEntries(forSource: source, with: entries)
+        }
+        persistUnifiedMemory()
+        scheduleLazyEmbedding(entryIdsAndTextsToEmbed)
+    }
+
+    /// Debounced entry point called from `refreshLocalRetrievalPublishedState()`
+    /// after retrieval writes, so the unified index trails connector changes
+    /// without re-mapping every source on every single write.
+    private func syncConnectorsIntoUnifiedMemoryIfDue(now: Date = Date()) {
+        if let lastSyncAt = lastUnifiedMemoryConnectorSyncAt,
+           now.timeIntervalSince(lastSyncAt) < Self.unifiedMemoryConnectorSyncMinimumInterval {
+            return
+        }
+        lastUnifiedMemoryConnectorSyncAt = now
+        syncConnectorsIntoUnifiedMemory()
+    }
+
     /// Low-frequency idle sweep so the menu-bar surface can drop
     /// "session live" indicators without needing a new user turn.
     private var threadMemoryIdleSweepTimer: Timer?
@@ -1962,6 +2226,12 @@ You can turn this off at any time in Settings → Cloud bridge.
         // The committed user message is about to land in the chat transcript,
         // so retire the live in-progress speech bubble (no duplicate).
         liveSpeechDraft = ""
+        // Same reasoning on the assistant side: the committed reply is about
+        // to land, so retire the live streamed-reply row or the panel shows
+        // the reply twice (streaming row + committed row). This LOCKS the row
+        // retired for the rest of the turn, so the final flushFinal dispatch
+        // and any late stream chunk can't re-populate it.
+        streamingSentenceTTSPipeline.finalizeInFlightStreamedTextForTurn()
         let recordedAt = Date()
         let stableTurnId = "turn-\(Int(recordedAt.timeIntervalSince1970))-\(abs(userTranscript.hashValue))"
 
@@ -2012,6 +2282,19 @@ You can turn this off at any time in Settings → Cloud bridge.
             intentRoute: lastIntentRouteForEpisodicExtraction
         )
 
+        // Persist the conversation after every turn so it survives
+        // quit/relaunch. Before the displaced-pair guard below, which
+        // returns early on turns that didn't overflow the window.
+        persistThreadMemorySnapshot()
+
+        // Dual-write the turn into the unified memory index (ships dark).
+        recordUnifiedMemoryTurn(
+            userTranscript: userTranscript,
+            assistantResponse: assistantResponse,
+            turnId: stableTurnId,
+            recordedAt: recordedAt
+        )
+
         guard let displacedTurnPair else { return }
         scheduleDetachedThreadSummarizationCall(
             displacedTurnPair: displacedTurnPair,
@@ -2050,6 +2333,7 @@ You can turn this off at any time in Settings → Cloud bridge.
                         summaryVersion: reservedSummaryVersion,
                         updatedAt: Date()
                     )
+                    self?.persistThreadMemorySnapshot()
                 }
             } catch {
                 // Summarizer failure leaves the prior summary in
@@ -2083,14 +2367,21 @@ You can turn this off at any time in Settings → Cloud bridge.
         // For replacements, drop the previous fact's retrieval doc
         // so the store never carries two `(subject, predicate)`
         // rows when the dedup policy said "replace".
+        var replacedPreviousFactIds: [String] = []
         for (_, outcome) in appliedOutcomes {
             if case .replaced(let previousFactId) = outcome {
                 localRetriever.removeEpisodicFactDocument(withId: previousFactId)
+                replacedPreviousFactIds.append(previousFactId)
             }
         }
         if !survivingFacts.isEmpty {
             localRetriever.recordEpisodicFacts(survivingFacts)
         }
+        // Dual-write the same facts into the unified memory index (ships dark).
+        upsertUnifiedMemoryFacts(
+            survivingFacts,
+            replacedPreviousFactIds: replacedPreviousFactIds
+        )
     }
 
     /// Fires the LLM-backed episodic extractor on a DETACHED utility
@@ -2141,6 +2432,9 @@ You can turn this off at any time in Settings → Cloud bridge.
     func deleteEpisodicFact(withIdentifier factId: String) {
         guard let _ = episodicFactStore.deleteFact(withIdentifier: factId) else { return }
         localRetriever.removeEpisodicFactDocument(withId: factId)
+        // Cascade into the unified index so semantic recall also stops
+        // surfacing the deleted fact (same id as the episodic identifier).
+        tombstoneUnifiedMemoryEntry(id: factId)
         refreshLocalRetrievalPublishedState()
     }
 
@@ -2150,6 +2444,9 @@ You can turn this off at any time in Settings → Cloud bridge.
     func resetAllEpisodicMemory() {
         episodicFactStore.resetAll()
         localRetriever.clearDocuments(forSource: .episodicMemory)
+        // Cascade into the unified index so semantic recall and the
+        // episodic roster stay in lockstep after a reset.
+        tombstoneAllUnifiedMemoryFacts()
         refreshLocalRetrievalPublishedState()
     }
 
@@ -2164,6 +2461,10 @@ You can turn this off at any time in Settings → Cloud bridge.
         }
         let endingSessionId = threadMemory.currentSessionId
         threadMemory.resetSession(cause: sessionEndCause, now: now)
+        // Mirror the now-empty live state to disk so a relaunch after an
+        // idle-while-running reset starts fresh rather than resurrecting
+        // the conversation the idle gate just decided to drop.
+        persistThreadMemorySnapshot()
         let causeDisplayName: String
         switch sessionEndCause {
         case .idleTimeout:
@@ -2184,6 +2485,9 @@ You can turn this off at any time in Settings → Cloud bridge.
         let now = Date()
         let endingSessionId = threadMemory.currentSessionId
         threadMemory.resetSession(cause: .userReset, now: now)
+        // "Until I reset" — an explicit reset wipes the on-disk copy too,
+        // so the conversation does not come back on the next launch.
+        threadMemoryStore.clear()
         localRetriever.recordPaceHistory(
             userTranscript: "session ended (cause: userReset)",
             assistantResponse: "session \(endingSessionId) ended",
@@ -2215,22 +2519,35 @@ You can turn this off at any time in Settings → Cloud bridge.
             return userPrompt
         }
 
-        let retrievalQuery = PaceRetrievalQuery(
-            text: query,
-            maximumResultCount: 3,
-            maximumSnippetCharacters: 180
-        )
         defer {
+            // Updates the Settings retrieval status AND debounce-triggers the
+            // connector → unified-index resync, so the single recall path below
+            // keeps trailing connector changes.
             refreshLocalRetrievalPublishedState()
         }
-        // Embedding-reranked when the local embeddings endpoint responds in
-        // time; degrades to plain lexical order otherwise.
-        guard let localContextBlock = await localRetriever.rerankedLocalContextBlock(
-            for: retrievalQuery
+
+        // Phase 5 step 3 (docs/prds/unified-memory.md): the unified index is
+        // now the SINGLE recall path. It's a superset — conversation turns +
+        // durable facts (dual-written) + every connector source (synced in) —
+        // and the retriever ranks it semantically when embeddings are loaded,
+        // by BM25 keyword otherwise. The legacy parallel lexical-injection path
+        // (`rerankedLocalContextBlock`) has been retired; `PaceLocalRetrieval`
+        // remains only as the connector ingestion layer the resync reads from.
+        // Verbatim-window turns are excluded — they already ship to the planner
+        // as conversation history, so re-injecting them would duplicate.
+        guard PaceUserPreferencesStore.bool(.useUnifiedMemoryRecall, default: true) else {
+            return userPrompt
+        }
+        let verbatimWindowTurnIds = Set(threadMemory.verbatimWindow().map { $0.turnId })
+        guard let memoryContextBlock = await memoryRetriever.assembleContextBlock(
+            forQuery: query,
+            excludingEntryIds: verbatimWindowTurnIds,
+            maxEntries: 8,
+            now: Date()
         ) else {
             return userPrompt
         }
-        return "\(localContextBlock)\n\nUSER REQUEST\n\(userPrompt)"
+        return "\(memoryContextBlock)\n\nUSER REQUEST\n\(userPrompt)"
     }
 
     private func localRetrievalSummaryText(
@@ -2258,6 +2575,9 @@ You can turn this off at any time in Settings → Cloud bridge.
             from: sourceStatuses,
             lastQueryDurationMilliseconds: localRetriever.lastQueryDurationMilliseconds
         )
+        // Trail connector changes into the unified index (debounced). This
+        // only READS from the retriever, so it can't re-enter this method.
+        syncConnectorsIntoUnifiedMemoryIfDue()
     }
 
     func addLocalRetrievalFileRootURLs(_ rootURLs: [URL]) {
@@ -3102,6 +3422,17 @@ You can turn this off at any time in Settings → Cloud bridge.
     func start() {
         refreshAllPermissions()
         loadPersistedToolCallDebugRecords()
+        // Resume the prior conversation across quit/relaunch. "Always,
+        // until reset" — no staleness expiry; the file is only cleared on
+        // an explicit thread reset or when the feature is disabled.
+        restorePersistedThreadMemoryIfEnabled()
+        // Rehydrate the unified memory index (Phase 2 dual-write; ships dark).
+        restoreUnifiedMemory()
+        // Phase 5 step 2: pull any already-indexed connector docs (preferences,
+        // competitive research, rehydrated journals) into the unified index.
+        // Sources that populate later in the session get synced via the
+        // debounced hook in refreshLocalRetrievalPublishedState().
+        syncConnectorsIntoUnifiedMemoryIfDue()
         print("🔑 Pace start — accessibility: \(hasAccessibilityPermission), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), screenContent: \(hasScreenContentPermission), onboarded: \(hasCompletedOnboarding)")
         // Wire the timer-scheduler speak callback to the active TTS
         // client and rehydrate any persisted timers. Doing this before
@@ -4300,27 +4631,7 @@ You can turn this off at any time in Settings → Cloud bridge.
 
                 let threadSummaryInjectionForTurn = threadMemory.injectionPrefix()
 
-                // Wave 4: eager-filler debouncer. If the planner doesn't
-                // produce its first token within 600ms, dispatch one
-                // short "okay" / "let me think" token through TTS so the
-                // user hears acknowledgement instead of silence. Only
-                // fires on pure-knowledge + chitchat (this path) and is
-                // rate-limited across consecutive slow turns.
                 let plannerStartedAt = Date()
-                let eagerFillerTask: Task<Void, Never> = Task { [weak self] in
-                    try? await Task.sleep(
-                        nanoseconds: UInt64(StreamingSentenceTTSPipeline
-                            .eagerFillerThresholdMillis) * 1_000_000
-                    )
-                    guard !Task.isCancelled, let self else { return }
-                    let elapsedSinceStartMs = Int(
-                        Date().timeIntervalSince(plannerStartedAt) * 1000
-                    )
-                    await self.streamingSentenceTTSPipeline
-                        .dispatchEagerFillerIfThresholdExceeded(
-                            plannerTTFTMilliseconds: elapsedSinceStartMs
-                        )
-                }
 
                 let (fullResponseText, _) = try await plannerForTextOnlyTurn.generateResponseStreaming(
                     images: [],
@@ -4330,17 +4641,12 @@ You can turn this off at any time in Settings → Cloud bridge.
                     conversationHistory: historyForPlanner,
                     userPrompt: userPromptForPlanner,
                     onTextChunk: { [weak self] accumulatedPlannerText in
-                        // Real text arrived — cancel the filler watcher
-                        // so we never speak "okay" right before the real
-                        // first sentence lands.
-                        eagerFillerTask.cancel()
                         self?.responseOverlayManager.updateStreamingText(accumulatedPlannerText)
                         Task { @MainActor [weak self] in
                             await self?.streamingSentenceTTSPipeline.acceptStreamedText(accumulatedPlannerText)
                         }
                     }
                 )
-                eagerFillerTask.cancel()
                 guard !Task.isCancelled else { return }
 
                 let actionParseResult = PaceActionTagParser.parseActions(from: fullResponseText)

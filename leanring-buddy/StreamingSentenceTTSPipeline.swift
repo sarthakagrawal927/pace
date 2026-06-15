@@ -34,6 +34,18 @@ final class StreamingSentenceTTSPipeline: ObservableObject {
     /// `[POINT:…]` tags.
     @Published private(set) var inFlightStreamedText: String = ""
 
+    /// Set once the turn's reply has been committed to the chat
+    /// transcript (via `finalizeInFlightStreamedTextForTurn()`). While
+    /// true, the dispatch path stops mirroring text into
+    /// `inFlightStreamedText` — the committed message is now the single
+    /// source of truth, so the live "assistant is typing" row must NOT
+    /// reappear. Without this guard the final `flushFinal(...)` call
+    /// (and any late `acceptStreamedText` chunk that lands after the
+    /// commit) re-populates `inFlightStreamedText`, making the panel
+    /// render the reply twice (streaming row + committed row). Reset by
+    /// `resetForNewTurn()`.
+    private var hasFinalizedStreamedTextForTurn: Bool = false
+
     /// Minimum length of a "completed" prefix before we submit it to
     /// the TTS. Avoids speaking tiny fragments like "Sure," in
     /// isolation when the planner is still thinking. Lower = faster
@@ -65,48 +77,6 @@ final class StreamingSentenceTTSPipeline: ObservableObject {
     /// threshold a hard cut feels jarring even if the full stream is
     /// only milliseconds away. Reset on every `markIntentCommitted()`.
     @Published private(set) var firstSpokenWordCharacterCount: Int = 0
-
-    /// Wave 4 eager-filler state: true once the pipeline has dispatched
-    /// a placeholder "okay" / "let me think" token this turn because the
-    /// planner took longer than `eagerFillerThresholdMillis` to produce
-    /// real text. Reset on `markIntentCommitted()`. Read by tests and by
-    /// CompanionManager's HUD for whether to label the filler in UI.
-    @Published private(set) var fillerWasDispatchedThisTurn: Bool = false
-
-    /// Process-global timestamp of the LAST turn whose planner exceeded
-    /// the eager-filler threshold AND dispatched a filler. Used to
-    /// debounce fillers across consecutive slow turns so the user
-    /// doesn't hear "okay... okay... okay..." in a row. Static because
-    /// the pipeline is re-created per turn in tests and the user-facing
-    /// behavior must persist across instances.
-    nonisolated(unsafe) private static var lastFillerDispatchTimestamp: Date?
-
-    /// Wave 4: the eager-filler tokens cycled per turn when the planner
-    /// runs past the threshold. Configurable so tests can stub a small
-    /// fixed list without depending on the production cycle. Two-element
-    /// default chosen so back-to-back slow turns don't say the same word.
-    private static let eagerFillerTokens: [String] = ["okay.", "let me think."]
-
-    /// Wave 4: planner TTFT threshold above which an eager filler is
-    /// dispatched for `pureKnowledge` / `chitchat` intents. Picked at
-    /// 600ms because anything faster wouldn't have a noticeable gap to
-    /// fill — and dispatching a filler when real text arrives 100ms
-    /// later would talk over the real reply. Public-package level so
-    /// CompanionManager can read the same constant when scheduling the
-    /// filler watch task.
-    static let eagerFillerThresholdMillis: Int = 600
-
-    /// Wave 4: minimum gap (seconds) between two filler dispatches so
-    /// the user doesn't hear the same canned word repeated turn after
-    /// turn. 10 seconds matches the average voice-turn cadence — long
-    /// enough that the user is unlikely to notice the pattern.
-    private static let eagerFillerMinimumGapBetweenTurnsInSeconds: TimeInterval = 10
-
-    /// Wave 4: turn-local cursor into `eagerFillerTokens` so the dispatched
-    /// filler rotates across instances. Static (nonisolated unsafe) for the
-    /// same reason as `lastFillerDispatchTimestamp` — keep cycle state
-    /// stable across freshly-constructed pipelines in tests/production.
-    nonisolated(unsafe) private static var nextEagerFillerCycleIndex: Int = 0
 
     /// Timestamp of the moment the user committed to a query — typically
     /// PTT-release. Set externally via `markIntentCommitted()`. Used to
@@ -154,7 +124,21 @@ final class StreamingSentenceTTSPipeline: ObservableObject {
         hasBeenDrainedForBargeInThisTurn = false
         hasDispatchedFirstSentenceOfTurn = false
         firstSpokenWordCharacterCount = 0
-        fillerWasDispatchedThisTurn = false
+        hasFinalizedStreamedTextForTurn = false
+    }
+
+    /// Retires the live streaming-reply mirror at turn completion and
+    /// LOCKS it retired for the rest of the turn. The committed assistant
+    /// message has just landed in the chat transcript, so the "assistant
+    /// is typing" row must clear now AND stay clear — otherwise the final
+    /// `flushFinal(...)` dispatch (which still needs to play the audio
+    /// tail) or a late `acceptStreamedText` chunk re-populates
+    /// `inFlightStreamedText` and the panel renders the reply twice. The
+    /// lock is released by the next turn's `resetForNewTurn()`. Mirrors
+    /// the `liveSpeechDraft` retirement on the user side.
+    func finalizeInFlightStreamedTextForTurn() {
+        hasFinalizedStreamedTextForTurn = true
+        inFlightStreamedText = ""
     }
 
     /// Sets the per-turn mute flag. Called by `CompanionManager` right
@@ -178,11 +162,9 @@ final class StreamingSentenceTTSPipeline: ObservableObject {
         hasBeenDrainedForBargeInThisTurn = false
         // Wave 4: every per-turn flag controlling the speed levers
         // resets here. The new turn earns its lowered first-sentence
-        // threshold + fresh eager-filler budget regardless of how the
-        // previous turn ended.
+        // threshold regardless of how the previous turn ended.
         hasDispatchedFirstSentenceOfTurn = false
         firstSpokenWordCharacterCount = 0
-        fillerWasDispatchedThisTurn = false
     }
 
     /// Wave 4 speculative-race supersede entry point. Distinct from
@@ -262,11 +244,15 @@ final class StreamingSentenceTTSPipeline: ObservableObject {
         speakableSafePrefix: String,
         allowShortFinalChunk: Bool = false
     ) async {
-        // Always mirror the current speakable prefix to the chat-stream
+        // Mirror the current speakable prefix to the chat-stream
         // publisher, even when the delta is whitespace-only or below the
         // TTS dispatch threshold. The chat UI wants to render every
         // intermediate character; the TTS just wants meaningful chunks.
-        if speakableSafePrefix != inFlightStreamedText {
+        // Once the turn is finalized (committed reply in the transcript)
+        // we STOP mirroring so the live row can't reappear over the
+        // committed message — but audio dispatch below still runs, so
+        // `flushFinal`'s tail still plays.
+        if !hasFinalizedStreamedTextForTurn && speakableSafePrefix != inFlightStreamedText {
             inFlightStreamedText = speakableSafePrefix
         }
 
@@ -327,71 +313,6 @@ final class StreamingSentenceTTSPipeline: ObservableObject {
         } catch {
             print("⚠️ Streaming TTS submission failed: \(error.localizedDescription)")
         }
-    }
-
-    /// Wave 4: eager-filler dispatch for `pureKnowledge` / `chitchat`
-    /// turns whose planner is taking longer than the threshold to
-    /// produce any text. The filler is a short cycle-chosen token like
-    /// "okay." or "let me think." that plays through the same TTS path
-    /// as a normal sentence. Debounced across turns so two slow turns
-    /// in a row don't repeat the same opener.
-    ///
-    /// Returns true when a filler was dispatched. Caller is expected to
-    /// observe `fillerWasDispatchedThisTurn` for UI labelling. Safe to
-    /// call multiple times per turn — only the first call past the
-    /// threshold actually speaks.
-    @discardableResult
-    func dispatchEagerFillerIfThresholdExceeded(
-        plannerTTFTMilliseconds: Int,
-        now: Date = Date()
-    ) async -> Bool {
-        guard !fillerWasDispatchedThisTurn else { return false }
-        guard !hasBeenDrainedForBargeInThisTurn else { return false }
-        guard !isMutedForCurrentTurn else { return false }
-        guard plannerTTFTMilliseconds >= Self.eagerFillerThresholdMillis else {
-            return false
-        }
-        // Debounce: if the previous turn ALSO triggered a filler within
-        // the last `eagerFillerMinimumGapBetweenTurnsInSeconds` seconds,
-        // stay silent. Otherwise the user hears "okay... okay... okay..."
-        // across slow turns and the filler stops sounding human.
-        if let lastFillerDispatchTimestamp = Self.lastFillerDispatchTimestamp,
-           now.timeIntervalSince(lastFillerDispatchTimestamp)
-            < Self.eagerFillerMinimumGapBetweenTurnsInSeconds {
-            return false
-        }
-
-        let nextFillerToken = Self.eagerFillerTokens[
-            Self.nextEagerFillerCycleIndex % Self.eagerFillerTokens.count
-        ]
-        Self.nextEagerFillerCycleIndex += 1
-        Self.lastFillerDispatchTimestamp = now
-        fillerWasDispatchedThisTurn = true
-
-        do {
-            try await ttsClient.speakText(nextFillerToken)
-            // The filler IS "first spoken text" for the purpose of
-            // TTFSW: the user heard something. The threshold gate flips
-            // and the spoken character count advances so the speculative-
-            // race supersede decision sees the user has actually heard
-            // audio already.
-            hasDispatchedFirstSentenceOfTurn = true
-            firstSpokenWordCharacterCount += nextFillerToken.count
-            logTimeToFirstSpokenWordIfApplicable()
-            return true
-        } catch {
-            print("⚠️ Eager filler dispatch failed: \(error.localizedDescription)")
-            return false
-        }
-    }
-
-    /// Wave 4 test seam: reset the static debounce timestamp + cycle
-    /// index so a fresh test run starts from a known state. Production
-    /// never calls this — the static state is intentional cross-turn
-    /// behavior.
-    nonisolated static func _testablyResetEagerFillerStaticState() {
-        lastFillerDispatchTimestamp = nil
-        nextEagerFillerCycleIndex = 0
     }
 
     /// On the first successful dispatch after `markIntentCommitted()`,

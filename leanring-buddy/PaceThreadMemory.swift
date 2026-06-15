@@ -14,9 +14,14 @@
 //  turns, prepends the injection block, and gates the idle timeout
 //  lives in `CompanionManager`.
 //
-//  Lifetime: session-scoped and ephemeral. Never persisted to disk.
-//  The user can audit and reset via Settings → Memory → Thread
-//  summary, but the summary itself never leaves process memory.
+//  Lifetime: the live state is session-scoped, but a `snapshot()` of it
+//  is persisted to disk by `PaceThreadMemoryStore` (wired in
+//  `CompanionManager`) so a conversation survives quit/relaunch and is
+//  restored via `restore(from:)` at launch. This module itself still
+//  owns NO I/O — it only exposes the pure snapshot/restore surface. The
+//  persisted copy stays on-device and is cleared on an explicit thread
+//  reset (Settings → Memory → Reset thread). In-session 20-minute idle
+//  still drops the live state as before.
 //
 
 import Foundation
@@ -50,11 +55,31 @@ nonisolated struct PaceThreadMemoryConfiguration: Equatable {
 
 // MARK: - Turn pair
 
-struct PaceThreadTurnPair: Equatable {
+struct PaceThreadTurnPair: Equatable, Codable {
     let turnId: String
     let userText: String
     let assistantText: String
     let recordedAt: Date
+}
+
+// MARK: - Persistable snapshot
+
+/// A full, on-device-persistable copy of the live thread-memory state.
+/// `PaceThreadMemoryStore` writes/reads this JSON; `PaceThreadMemory`
+/// produces it via `snapshot()` and rehydrates from it via
+/// `restore(from:)`. Keeping persistence as a value type means the
+/// module itself stays I/O-free.
+struct PaceThreadMemorySnapshot: Equatable, Codable {
+    let sessionId: String
+    let summary: String?
+    let summaryVersion: Int
+    let nextSummaryVersionToAssign: Int
+    let verbatimWindow: [PaceThreadTurnPair]
+    let lastTurnRecordedAt: Date?
+    /// When this snapshot was taken. Not used for any expiry decision
+    /// today ("resume always, until reset"), but recorded so a future
+    /// staleness policy can be added without a schema migration.
+    let savedAt: Date
 }
 
 // MARK: - Session end cause
@@ -190,6 +215,47 @@ final class PaceThreadMemory {
         }
         currentSummary = truncatedSummary
         currentSummaryVersion = summaryVersion
+    }
+
+    // MARK: - Persistence (pure, no I/O)
+
+    /// Capture the full live state for `PaceThreadMemoryStore` to write
+    /// to disk. Called by `CompanionManager` after every mutation (turn
+    /// recorded, summary updated, session reset).
+    func snapshot(now: Date) -> PaceThreadMemorySnapshot {
+        return PaceThreadMemorySnapshot(
+            sessionId: currentSessionId,
+            summary: currentSummary,
+            summaryVersion: currentSummaryVersion,
+            nextSummaryVersionToAssign: nextSummaryVersionToAssign,
+            verbatimWindow: verbatimWindowStorage,
+            lastTurnRecordedAt: lastTurnRecordedAt,
+            savedAt: now
+        )
+    }
+
+    /// Rehydrate from a persisted snapshot at launch so a conversation
+    /// survives quit/relaunch. Trims the restored window to the current
+    /// configured size in case the user shrank the window between
+    /// sessions, and keeps the version counter strictly ahead of the
+    /// restored summary version so a fresh detached summarizer call
+    /// can still supersede the restored summary.
+    func restore(from snapshot: PaceThreadMemorySnapshot) {
+        currentSessionId = snapshot.sessionId
+        currentSummary = snapshot.summary
+        currentSummaryVersion = snapshot.summaryVersion
+        nextSummaryVersionToAssign = max(
+            snapshot.nextSummaryVersionToAssign,
+            snapshot.summaryVersion + 1
+        )
+        if snapshot.verbatimWindow.count > configuration.verbatimWindowSize {
+            verbatimWindowStorage = Array(
+                snapshot.verbatimWindow.suffix(configuration.verbatimWindowSize)
+            )
+        } else {
+            verbatimWindowStorage = snapshot.verbatimWindow
+        }
+        lastTurnRecordedAt = snapshot.lastTurnRecordedAt
     }
 
     // MARK: - Session lifecycle

@@ -255,4 +255,84 @@ struct PaceThreadMemoryTests {
         #expect(threadMemory.currentSummaryText() == nil)
         #expect(threadMemory.currentSummaryVersionValue() == 0)
     }
+
+    // MARK: - Persistence snapshot / restore (resume across relaunch)
+
+    @Test func snapshotThenRestoreReproducesWindowSummaryAndVersion() async throws {
+        let source = PaceThreadMemory(configuration: defaultConfiguration())
+        for turnIndex in 0..<3 {
+            _ = source.record(
+                userTurn: "user-\(turnIndex)",
+                assistantTurn: "assistant-\(turnIndex)",
+                turnId: "turn-\(turnIndex)",
+                now: makeFixedDate(2_000 + Double(turnIndex))
+            )
+        }
+        let reservedVersion = source.reserveNextSummaryVersion()
+        source.applySummaryUpdate(
+            summary: "earlier in the conversation we set up the morning brief",
+            summaryVersion: reservedVersion,
+            updatedAt: makeFixedDate(2_100)
+        )
+
+        let snapshot = source.snapshot(now: makeFixedDate(2_200))
+
+        // A brand-new instance (simulating a relaunched app) restores the
+        // exact verbatim window, summary text, and a version counter that
+        // still sits strictly ahead of the restored summary version.
+        let restored = PaceThreadMemory(configuration: defaultConfiguration())
+        restored.restore(from: snapshot)
+
+        #expect(restored.verbatimWindow().map(\.userText) == ["user-0", "user-1", "user-2"])
+        #expect(restored.currentSummaryText() == "earlier in the conversation we set up the morning brief")
+        #expect(restored.currentSummaryVersionValue() == reservedVersion)
+        #expect(restored.reserveNextSummaryVersion() > reservedVersion)
+    }
+
+    @Test func restoreTrimsWindowToCurrentConfiguredSize() async throws {
+        // Snapshot taken with a window of 4, restored into a memory
+        // configured for a window of 2 (user shrank it between sessions).
+        // Only the two most-recent pairs survive.
+        let wideSource = PaceThreadMemory(configuration: defaultConfiguration())
+        for turnIndex in 0..<4 {
+            _ = wideSource.record(
+                userTurn: "u\(turnIndex)",
+                assistantTurn: "a\(turnIndex)",
+                turnId: "t\(turnIndex)",
+                now: makeFixedDate(3_000 + Double(turnIndex))
+            )
+        }
+        let snapshot = wideSource.snapshot(now: makeFixedDate(3_100))
+
+        let narrowConfiguration = PaceThreadMemoryConfiguration(
+            verbatimWindowSize: 2,
+            sessionIdleThreshold: 20 * 60,
+            summaryMaxTokenEstimate: 400
+        )
+        let narrowMemory = PaceThreadMemory(configuration: narrowConfiguration)
+        narrowMemory.restore(from: snapshot)
+
+        #expect(narrowMemory.verbatimWindow().map(\.userText) == ["u2", "u3"])
+    }
+
+    @Test func restoredSnapshotEncodesAndDecodesThroughJSON() async throws {
+        let source = PaceThreadMemory(configuration: defaultConfiguration())
+        _ = source.record(
+            userTurn: "remember my preferred browser is Firefox",
+            assistantTurn: "got it, Firefox it is",
+            turnId: "turn-json",
+            now: makeFixedDate(4_000)
+        )
+        let snapshot = source.snapshot(now: makeFixedDate(4_050))
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let encoded = try encoder.encode(snapshot)
+        let decoded = try decoder.decode(PaceThreadMemorySnapshot.self, from: encoded)
+
+        #expect(decoded == snapshot)
+    }
 }

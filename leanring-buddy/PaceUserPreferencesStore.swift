@@ -77,6 +77,13 @@ enum PaceUserPreferenceKey: String {
     /// Users disable it from Settings → Planner if they prefer the
     /// VLM-fed answer regardless of latency. See Wave 4 plan.
     case enableSpeculativePlannerRace
+    /// Unified-memory recall (docs/prds/unified-memory.md, Phase 3): when
+    /// ON, the LOCAL CONTEXT block is AUGMENTED with semantically-ranked
+    /// entries from the unified memory index (durable facts + relevant past
+    /// turns) alongside the lexical connector/history block. Default ON;
+    /// safe because it degrades to lexical-only when embeddings are
+    /// unavailable. Users can turn it off in Settings → Memory.
+    case useUnifiedMemoryRecall
 }
 
 enum PaceUserPreferencesStore {
