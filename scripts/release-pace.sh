@@ -42,10 +42,20 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 # xcodebuild lives in Xcode.app, not the Command Line Tools shim. Many
 # Macs default xcode-select to /Library/Developer/CommandLineTools and
-# xcodebuild fails with "requires Xcode" in that state. Pin DEVELOPER_DIR
-# here so the release works regardless of the user's xcode-select state.
-if [ -z "${DEVELOPER_DIR:-}" ] && [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
-    export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+# xcodebuild fails with "requires Xcode" in that state. Probe known full-Xcode
+# locations (the beta has lived under both /Applications and ~/Downloads) so
+# the release works regardless of the user's xcode-select state.
+if [ -z "${DEVELOPER_DIR:-}" ]; then
+    for candidateDeveloperDir in \
+        "/Applications/Xcode-27.0.0-Beta.app/Contents/Developer" \
+        "/Applications/Xcode-beta.app/Contents/Developer" \
+        "/Users/sarthak/Downloads/Xcode-beta.app/Contents/Developer" \
+        "/Applications/Xcode.app/Contents/Developer"; do
+        if [ -d "$candidateDeveloperDir" ]; then
+            export DEVELOPER_DIR="$candidateDeveloperDir"
+            break
+        fi
+    done
 fi
 
 SPARKLE_BIN=$(find ~/Library/Developer/Xcode/DerivedData -path "*sparkle/Sparkle/bin/sign_update" 2>/dev/null | head -1)
