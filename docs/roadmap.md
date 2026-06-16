@@ -145,3 +145,77 @@ Next live step: install one OSS server, preferably Altic MCP first because it
 covers Notes, Reminders, Calendar, Finder/files, clipboard, browsers, screen
 capture, app opening, volume, and brightness with a narrower surface than the
 largest Apple-ecosystem servers.
+
+---
+
+# Next Up (handoff for the next agent)
+
+The priorities above are implemented. The items below are the live unstarted /
+in-flight threads. Each is written to be picked up cold — no prior session
+context needed.
+
+## Priority 12: Set-of-Mark Click Recovery — SHIP VERDICT PENDING
+
+Status: built + unit-tested + live on the local dev Mac (branch
+`feature/set-of-mark-click-recovery`, commit `ccd2bbf`). NOT on `main`, NOT
+released. Awaiting a real-world click-miss test before shipping.
+
+- What: when a planner click misses (all candidates fail with no observable
+  state change), render numbered marks on the same screenshot, round-trip the
+  MARKED image through the local VLM ("which mark is `<target>`?"), and re-click
+  the chosen element's bbox center. Full design in PRD
+  `docs/prds/set-of-mark-click-recovery.md`.
+- Why: gives the previously-dead `PaceSetOfMarkRenderer` a real consumer; turns
+  wasted clicks into self-correction; generates the click-failure data the
+  UI-TARS direction below would need.
+- Files: `PaceSetOfMarkClickRecovery.swift` (pure coordinator),
+  `LocalVLMClient.groundMarkedClickTarget`, `PaceActionExecutor` (the all-fail
+  recovery signal + `executeRecoveredClick`), `CompanionManager
+  .attemptSetOfMarkClickRecovery`, pref `enableSetOfMarkClickRecovery`
+  (default on, only fires on a miss).
+- Unverified: the VLM's actual mark-reading hit-rate. Logic is tested; live
+  quality is not. Watch Console (`com.pace.app`) for `🎯 Set-of-Mark recovery
+  succeeded`.
+- Next step: live-test on a real miss. If the VLM re-grounds reliably → PR to
+  `main` → release v0.3.17. If the hit-rate disappoints → iterate the grounding
+  prompt in `LocalVLMClient.groundMarkedClickTarget` before shipping.
+
+## Priority 13: Premium Conversational UI
+
+Status: unstarted. Biggest remaining quality lever toward "best local tool."
+
+- What: make the primary surface a clean Claude-Desktop-style chat panel (text
+  input + transcript + inline tool-use chips + gear → Settings), with the
+  mascot on a top-right perch; add wake/listen/think/speak animation polish.
+  Keep the notch code behind a flag — do NOT delete it.
+- Why: today's primary surface is a dense ~15-section dashboard; the product
+  vision is a focused chat surface.
+- Scaffolding that exists: `PaceConversationsView`, `PaceMainWindow`,
+  `PaceChatSession`.
+- IMPORTANT for the next agent: this needs HUMAN visual review on each rebuild —
+  an agent can't see the UI render, so treat it as iterative back-and-forth with
+  the user, not fire-and-forget. Don't claim UI correctness from a green build.
+
+## Priority 14: One-Tap obscura (headless browser) in the MCP catalog
+
+Status: unstarted. Drivable solo (no visual judgment needed).
+
+- Context: the bundled six-server catalog (`PaceMCPServerCatalog`, Settings →
+  MCP) already does one-tap npx/uvx installs. obscura is validated end-to-end
+  via a hand-edited `~/.config/pace/mcp-servers.json` but is NOT in the catalog.
+- What: add obscura to `PaceMCPServerCatalog` plus a binary-download install
+  path (obscura ships as a prebuilt per-arch binary, not npx/uvx) so any user
+  gets the headless programmable browser.
+- Why: obscura (Rust + V8, CDP + MCP, ~35 tools) renders JS pages; productizing
+  it lifts it beyond the current hand-config.
+- Consideration: downloading + running a third-party binary at install is a
+  trust surface on a privacy-first product — confirm the install/consent UX
+  before shipping.
+
+## Deferred (gated, do NOT start blind): UI-TARS / GUI-grounding VLM
+
+A purpose-built grounding VLM (UI-TARS-class) that makes the click decision
+directly from the (optionally marked) screenshot is the "real" Set-of-Mark
+architecture. Gated on click-failure data — which Priority 12's recovery now
+logs. Let that data accumulate first; a larger TEXT planner (e.g. qwen3-30b-a3b)
+does NOT consume the marked image, so it would not benefit from this.
