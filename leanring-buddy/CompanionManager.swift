@@ -4994,6 +4994,15 @@ You can turn this off at any time in Settings → Cloud bridge.
                 let bridgeRoutingHUDDetail = "thinking with \(upstreamDisplayName.lowercased())…"
                 currentTurnHUDState = .understanding(bridgeRoutingHUDDetail)
                 print("📡 Routing phoneLargeModel turn to cloud bridge (\(upstreamDisplayName))")
+                // Speak the "phone a friend" announcement immediately (fire-and-
+                // forget so it doesn't block the bridge call) — it both sets the
+                // expectation that this turn goes off-device AND masks the
+                // bridge's spin-up latency, so the user isn't left in silence.
+                Task { [weak self] in
+                    try? await self?.ttsClient.speakText(
+                        "Let me phone a friend for this one — give me a sec."
+                    )
+                }
                 // Fall through to the normal planner pipeline — the routing hint
                 // will cause the planner to call the bridge.
             } else {

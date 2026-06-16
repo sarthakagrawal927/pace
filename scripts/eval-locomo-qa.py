@@ -66,11 +66,18 @@ def embed(texts, base_url, model, chunk=64):
     return out
 
 
-def chat(messages, base_url, model, timeout=120, max_tokens=256):
+def chat(messages, base_url, model, timeout=240, max_tokens=512):
+    # max_tokens must be generous: reasoning models (gemma-4, qwen3.5) spend
+    # most of the budget on hidden reasoning before emitting `content`, so a
+    # tiny cap yields an EMPTY content field (the bug that 0%'d them earlier).
     d = post("/chat/completions",
              {"model": model, "messages": messages, "temperature": 0, "max_tokens": max_tokens},
              base_url, timeout)
-    return d["choices"][0]["message"]["content"].strip()
+    content = d["choices"][0]["message"].get("content") or ""
+    # Reasoning models keep thinking in a separate reasoning_content field, but
+    # strip any inline <think>…</think> defensively too.
+    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+    return content.strip()
 
 
 def cosine(a, b):
@@ -127,10 +134,17 @@ def main():
     p.add_argument("--base-url", default="http://localhost:1234/v1")
     p.add_argument("--embed-model", default="text-embedding-nomic-embed-text-v1.5")
     p.add_argument("--chat-model", default="google/gemma-3-12b")
+    # Split answerer from judge so an answerer can be tested with a FIXED,
+    # reliable judge — isolates answer quality and avoids reasoning models
+    # botching their own terse verdict. Both default to --chat-model.
+    p.add_argument("--answer-model", default=None)
+    p.add_argument("--judge-model", default=None)
     p.add_argument("--conversations", type=int, default=1)
     p.add_argument("--sample-per-category", type=int, default=15)
     p.add_argument("--top-k", type=int, default=10)
     args = p.parse_args()
+    answer_model = args.answer_model or args.chat_model
+    judge_model = args.judge_model or args.chat_model
 
     dataset = json.load(open(args.data))
     correct = defaultdict(int); total = defaultdict(int)
@@ -158,25 +172,27 @@ def main():
                 pred = chat([
                     {"role": "system", "content": "Answer the question. Use the conversation memory below as your primary source; you may also draw on general world knowledge when the memory doesn't fully cover it. Be concise — a few words or a short phrase, no explanation."},
                     {"role": "user", "content": f"Conversation memory:\n{ctx}\n\nQuestion: {qa['question']}\nAnswer:"}
-                ], args.base_url, args.chat_model, max_tokens=120)
+                ], args.base_url, answer_model, max_tokens=600)
                 # LoCoMo-style lenient semantic judge: tolerate formatting, date
                 # phrasing, paraphrase, and extra words — mark wrong only on a
                 # real factual mismatch. Matches how the benchmark is scored.
                 verdict = chat([
                     {"role": "system", "content": "You grade a predicted answer against a reference for a memory QA benchmark. Reply YES if the prediction is semantically equivalent to, or contains, the reference answer — ignore formatting, date phrasing (e.g. '7 May 2023' = 'May 7, 2023'), word order, and extra words. Reply NO only if it states a different fact or omits the key fact. Reply with exactly YES or NO."},
                     {"role": "user", "content": f"Question: {qa['question']}\nReference: {qa['answer']}\nPredicted: {pred}\nVerdict:"}
-                ], args.base_url, args.chat_model, max_tokens=5)
+                ], args.base_url, judge_model, max_tokens=400)
             except Exception as exc:
                 print(f"  (skip: {exc})", file=sys.stderr); continue
             c = qa.get("category")
             total[c] += 1
-            if verdict.strip().upper().startswith("Y"):
+            # Robust: a reasoning model may answer "Yes", "**YES**", or end with
+            # "...so the verdict is YES" — match the YES token anywhere.
+            if re.search(r"\byes\b", verdict, re.IGNORECASE):
                 correct[c] += 1
 
     grand_c = sum(correct.values()); grand_t = sum(total.values())
-    print(f"# Pace local-stack LoCoMo ANSWER accuracy (LLM-judge: {args.chat_model})\n")
+    print(f"# Pace LoCoMo ANSWER accuracy — answerer={answer_model}, judge={judge_model}\n")
     print(f"retrieval = nomic + window3 + date + hybrid-RRF, top-k={args.top_k}; "
-          f"answer+judge = {args.chat_model} (LOCAL judge)\n")
+          f"retrieval = nomic + window3 + date + hybrid-RRF, top-k={args.top_k}\n")
     print("| category | n | accuracy |")
     print("|---|---|---|")
     for c in sorted(total):
