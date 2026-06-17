@@ -80,16 +80,6 @@ enum PaceMCPServerCatalog {
             environment: [:]
         ),
         PaceMCPServerCatalogEntry(
-            slug: "github",
-            displayName: "GitHub",
-            description: "Repo ops — issues, PRs, file reads.",
-            setupNote: "Needs a GitHub personal access token. Replace ghp_replace_me in the config.",
-            setupDocsURL: URL(string: "https://github.com/modelcontextprotocol/servers/tree/main/src/github"),
-            command: "npx",
-            arguments: ["-y", "@modelcontextprotocol/server-github"],
-            environment: ["GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_replace_me"]
-        ),
-        PaceMCPServerCatalogEntry(
             slug: "applescript",
             displayName: "AppleScript",
             description: "Bridge to apps Pace doesn't integrate natively.",
@@ -100,28 +90,35 @@ enum PaceMCPServerCatalog {
             environment: [:]
         ),
         PaceMCPServerCatalogEntry(
-            slug: "slack",
-            displayName: "Slack",
-            description: "Read channels, send messages, search workspace.",
-            setupNote: "Needs SLACK_BOT_TOKEN and SLACK_TEAM_ID. Replace the placeholders in the config.",
-            setupDocsURL: URL(string: "https://github.com/modelcontextprotocol/servers/tree/main/src/slack"),
+            slug: "composio",
+            displayName: "Composio",
+            description: "OAuth + 700 SaaS tools (Gmail, Slack, GitHub, Linear, Notion, Calendar, web search). Off-device — routes through Composio's cloud.",
+            setupNote: "Set your COMPOSIO_API_KEY in Settings → MCP → Composio Key. First call to each tool opens an OAuth flow in your browser.",
+            setupDocsURL: URL(string: "https://docs.composio.dev/mcp"),
             command: "npx",
-            arguments: ["-y", "@modelcontextprotocol/server-slack"],
-            environment: [
-                "SLACK_BOT_TOKEN": "xoxb-replace_me",
-                "SLACK_TEAM_ID": "T_replace_me"
-            ]
-        ),
-        PaceMCPServerCatalogEntry(
-            slug: "linear",
-            displayName: "Linear",
-            description: "Read and create Linear issues.",
-            setupNote: "Needs LINEAR_API_KEY. Replace the placeholder in the config.",
-            setupDocsURL: URL(string: "https://github.com/jerhadf/linear-mcp-server"),
-            command: "npx",
-            arguments: ["-y", "mcp-linear"],
-            environment: ["LINEAR_API_KEY": "lin_api_replace_me"]
+            // The empty COMPOSIO_API_KEY sentinel is the marker
+            // `PaceMCPServerRegistry`/`PaceMCPClient` will substitute
+            // from `PaceMCPSecretStore` at spawn time. The user never
+            // needs to edit the JSON file — the Settings card paste
+            // flow writes the key directly to Keychain.
+            arguments: ["-y", "@composio/mcp@latest"],
+            environment: ["COMPOSIO_API_KEY": ""]
         )
+    ]
+
+    /// Catalog slugs whose entries were retired (superseded by Composio)
+    /// but may still be present in user-installed mcp-servers.json files.
+    /// The Settings → MCP tab surfaces a one-time "Composio replaces
+    /// this" hint when one of these slugs is still installed.
+    ///
+    /// We do NOT auto-remove these — silent removal of a working
+    /// integration would be hostile to the user's setup. They migrate
+    /// when they're ready by clicking Remove on the legacy server card
+    /// and Install on the Composio entry.
+    static let supersededBySlug: [String: String] = [
+        "github": "composio",
+        "slack": "composio",
+        "linear": "composio"
     ]
 
     /// Convenience lookup used by the Settings cards to map slug → entry.

@@ -23,6 +23,17 @@ struct PaceMCPSettingsTab: View {
     /// show "Installed ✓" / "Removed" / "Failed: …" after each tap.
     /// Resets to nil on a fresh refresh so stale outcomes don't linger.
     @State private var lastCatalogActionBySlug: [String: String] = [:]
+    /// In-memory editing state for the Composio API key SecureField.
+    /// Never persisted in @State — Save commits it to Keychain via
+    /// `PaceMCPSecretStore`; the field clears after save so the SwiftUI
+    /// tree never holds the secret across re-renders.
+    @State private var composioAPIKeyEditingDraft: String = ""
+    /// Mirror of `PaceMCPSecretStore.hasSecret(...)` re-evaluated on
+    /// appear / save / remove so the "Key in Keychain: yes/no"
+    /// indicator stays in sync without polling.
+    @State private var composioKeyIsStoredInKeychain: Bool = false
+    /// Save/Remove feedback for the Composio key row.
+    @State private var composioKeyStatusFeedback: String?
 
     var body: some View {
         ScrollView {
@@ -90,6 +101,7 @@ struct PaceMCPSettingsTab: View {
         }
         .onAppear {
             refreshMCPServerNames()
+            refreshComposioKeyState()
         }
     }
 
@@ -103,17 +115,152 @@ struct PaceMCPSettingsTab: View {
             Text("Install a popular server")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(DS.Colors.textSecondary)
-            Text("One-tap installs for the six MCP servers users ask about most. Adds the entry to your local config — never fetches a remote catalog.")
+            Text("One-tap installs for the curated MCP servers Pace ships with. Adds the entry to your local config — never fetches a remote catalog. Composio handles the bulk of external SaaS (Gmail, Slack, GitHub, Linear, Notion, web search) via one OAuth.")
                 .font(.system(size: 11))
                 .foregroundColor(DS.Colors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            // One-time hint: when the user still has a superseded
+            // server installed (github / slack / linear), point them
+            // at Composio. We don't auto-remove their existing setup
+            // — silent removal of a working integration would be
+            // hostile. They migrate when they're ready.
+            if !installedSupersededServerSlugs.isEmpty {
+                supersededByComposioHintBanner
+            }
+
             VStack(spacing: 6) {
                 ForEach(PaceMCPServerCatalog.bundledCatalog) { catalogEntry in
                     mcpCatalogCardRow(entry: catalogEntry)
+                    if catalogEntry.slug == "composio"
+                        && configuredMCPServerNames.contains(catalogEntry.slug) {
+                        composioKeyEditorRow
+                    }
                 }
             }
         }
+    }
+
+    /// Slugs still configured in the user's mcp-servers.json that
+    /// have been superseded by Composio.
+    private var installedSupersededServerSlugs: [String] {
+        configuredMCPServerNames.filter { slug in
+            PaceMCPServerCatalog.supersededBySlug[slug] != nil
+        }
+    }
+
+    private var supersededByComposioHintBanner: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "arrow.triangle.swap")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(DS.Colors.warning)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Composio now handles \(installedSupersededServerSlugs.map { $0.capitalized }.sorted().joined(separator: ", ")) through a single OAuth.")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("You can remove the server-specific entries below when you've installed Composio and confirmed it works for you.")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(DS.Colors.warning.opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DS.Colors.warning.opacity(0.35), lineWidth: 0.5)
+        )
+    }
+
+    private var composioKeyEditorRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "key.fill")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.Colors.textTertiary)
+                Text("Composio API key")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(DS.Colors.textSecondary)
+                Spacer()
+                Text("Key in Keychain: \(composioKeyIsStoredInKeychain ? "yes" : "no")")
+                    .font(.system(size: 11))
+                    .foregroundColor(composioKeyIsStoredInKeychain ? DS.Colors.success : DS.Colors.textTertiary)
+            }
+            HStack(spacing: 8) {
+                SecureField("paste composio API key", text: $composioAPIKeyEditingDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                paceSettingsButton("Save", systemName: "checkmark.circle") {
+                    saveComposioAPIKey()
+                }
+                if composioKeyIsStoredInKeychain {
+                    paceSettingsButton("Remove", systemName: "xmark.circle") {
+                        removeComposioAPIKey()
+                    }
+                }
+            }
+            if let statusFeedback = composioKeyStatusFeedback {
+                Text(statusFeedback)
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("Stored in macOS Keychain; auto-injected into the Composio subprocess at launch. Never written to the mcp-servers.json file or to any log.")
+                .font(.system(size: 11))
+                .foregroundColor(DS.Colors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white.opacity(0.025))
+        )
+    }
+
+    private func saveComposioAPIKey() {
+        let trimmedKey = composioAPIKeyEditingDraft
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty else {
+            composioKeyStatusFeedback = "Paste a key before tapping Save."
+            return
+        }
+        let didStore = PaceMCPSecretStore.storeSecret(
+            trimmedKey,
+            server: "composio",
+            key: "COMPOSIO_API_KEY"
+        )
+        if didStore {
+            composioAPIKeyEditingDraft = ""
+            composioKeyIsStoredInKeychain = true
+            composioKeyStatusFeedback = "Saved to Keychain."
+        } else {
+            composioKeyStatusFeedback = "Save failed — see Console for the Keychain status code."
+        }
+    }
+
+    private func removeComposioAPIKey() {
+        let didDelete = PaceMCPSecretStore.deleteSecret(
+            server: "composio",
+            key: "COMPOSIO_API_KEY"
+        )
+        if didDelete {
+            composioKeyIsStoredInKeychain = false
+            composioKeyStatusFeedback = "Removed from Keychain."
+        } else {
+            composioKeyStatusFeedback = "Remove failed — see Console for the Keychain status code."
+        }
+    }
+
+    private func refreshComposioKeyState() {
+        composioKeyIsStoredInKeychain = PaceMCPSecretStore.hasSecret(
+            server: "composio",
+            key: "COMPOSIO_API_KEY"
+        )
     }
 
     private func mcpCatalogCardRow(entry: PaceMCPServerCatalogEntry) -> some View {
@@ -189,8 +336,17 @@ struct PaceMCPSettingsTab: View {
         let configURL = PaceMCPServerRegistry.configurationPaths[0]
         do {
             try PaceMCPCatalogInstaller.install(entry, into: configURL)
-            lastCatalogActionBySlug[entry.slug] = "Installed. Edit \(configURL.lastPathComponent) to fill in any required values."
+            // Composio's key lives in Keychain (sentinel "" env value
+            // in the catalog entry), so the user doesn't have to edit
+            // the JSON. Other servers still use the legacy placeholder
+            // flow.
+            if entry.slug == "composio" {
+                lastCatalogActionBySlug[entry.slug] = "Installed. Paste your COMPOSIO_API_KEY in the key field below; it'll be auto-injected at launch."
+            } else {
+                lastCatalogActionBySlug[entry.slug] = "Installed. Edit \(configURL.lastPathComponent) to fill in any required values."
+            }
             refreshMCPServerNames()
+            refreshComposioKeyState()
         } catch {
             lastCatalogActionBySlug[entry.slug] = "Install failed: \(error.localizedDescription)"
         }
@@ -202,6 +358,7 @@ struct PaceMCPSettingsTab: View {
             try PaceMCPCatalogInstaller.uninstall(slug: entry.slug, from: configURL)
             lastCatalogActionBySlug[entry.slug] = "Removed from \(configURL.lastPathComponent)."
             refreshMCPServerNames()
+            refreshComposioKeyState()
         } catch {
             lastCatalogActionBySlug[entry.slug] = "Remove failed: \(error.localizedDescription)"
         }

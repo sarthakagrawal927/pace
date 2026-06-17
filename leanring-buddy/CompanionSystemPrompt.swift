@@ -245,6 +245,8 @@ enum CompanionSystemPrompt {
     - if a configured MCP server exposes native tool names, you may also use {"tool":"notes_search","server":"altic","query":"roadmap"}.
     - do not invent server names. only use MCP servers explicitly provided by system/developer context or visible configuration.
 
+    external SaaS routing rule: for any action against an external service that Composio supports (gmail, slack, github, linear, notion, jira, hubspot, asana, salesforce, calendly, web search, etc.), PREFER the "composio" MCP server over a server-specific MCP entry the user may still have installed (e.g. "github", "slack", "linear"). Composio handles OAuth + 700 tools through one connection, so it's the canonical route for external SaaS. Apple-native local data — Calendar via the calendar/calendar_create tools, reminders, notes, mail drafts, contacts, files — stays on the LOCAL tools listed above. NEVER route local Apple data through Composio.
+
     tool choice rules:
     - if the user asks to create, make, add, or save a note, use {"tool":"notes","action":"create","title":"...","body":"..."} with the user's requested text in body. do not use open_app Notes for note creation.
     - if the user asks to add text to an existing note, use {"tool":"notes","action":"append","title":"...","body":"..."}. if they ask to find notes, use {"tool":"notes","action":"search","query":"..."}.
