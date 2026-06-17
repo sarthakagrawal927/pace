@@ -20,9 +20,43 @@ struct PaceQuickTogglesView: View {
         VStack(spacing: 0) {
             readScreenToggleRow
             cursorAnnotationsToggleRow
+            tuitionModeToggleRow
             actionApprovalToggleRow
             watchModeToggleRow
         }
+    }
+
+    private var tuitionModeToggleRow: some View {
+        HStack {
+            HStack(spacing: 8) {
+                Image(systemName: "graduationcap")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(companionManager.isTuitionModeEnabled ? DS.Colors.accent : DS.Colors.textTertiary)
+                    .frame(width: 16)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Tuition Mode")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(DS.Colors.textSecondary)
+
+                    Text("Pace draws and explains instead of clicking")
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.Colors.textTertiary)
+                }
+            }
+
+            Spacer()
+
+            Toggle("", isOn: Binding(
+                get: { companionManager.isTuitionModeEnabled },
+                set: { companionManager.setIsTuitionModeEnabled($0) }
+            ))
+            .toggleStyle(.switch)
+            .labelsHidden()
+            .tint(DS.Colors.accent)
+            .scaleEffect(0.8)
+        }
+        .padding(.vertical, 4)
     }
 
     private var readScreenToggleRow: some View {

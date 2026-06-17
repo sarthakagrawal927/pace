@@ -144,6 +144,15 @@ final class CompanionManager: ObservableObject {
     /// BlueCursorView uses this instead of a random pointer phrase.
     @Published var detectedElementBubbleText: String?
 
+    /// Tuition-mode annotation layer: shapes the planner has drawn on
+    /// the screen for teaching, plus the lifecycle timer that auto-fades
+    /// them after 30 s. `BlueCursorView` observes
+    /// `annotationOverlayController.activeAnnotations` directly to
+    /// render the layer. Lifecycle: cleared at every PTT-release, on
+    /// `clear_annotations` (tool or voice command), and on the 30 s
+    /// timer. See PRD tuition-mode annotations.
+    let annotationOverlayController = PaceAnnotationOverlayController()
+
     let buddyDictationManager = PacePushToTalkManager()
     /// Wave 2b — always-listening wake-word spotter (Apple Speech,
     /// on-device, ANE-backed). Lifecycled by
@@ -943,6 +952,26 @@ final class CompanionManager: ObservableObject {
     func smokeSetCursorAnnotationsEnabled(_ enabled: Bool) -> Bool {
         setCursorAnnotationsEnabled(enabled)
         return areCursorAnnotationsEnabled
+    }
+
+    /// Tuition mode: when ON, the planner is told (via a system-prompt
+    /// block) to TEACH rather than DO — emit `draw_annotation` and
+    /// narrate, instead of `click`/`type`. The `draw_annotation` and
+    /// `clear_annotations` tools are ALWAYS available regardless of this
+    /// flag; the toggle only changes the planner's bias. See PRD
+    /// tuition-mode annotations.
+    @Published var isTuitionModeEnabled: Bool = PaceUserPreferencesStore
+        .bool(.isTuitionModeEnabled, default: false)
+
+    func setIsTuitionModeEnabled(_ enabled: Bool) {
+        isTuitionModeEnabled = enabled
+        PaceUserPreferencesStore.setBool(enabled, for: .isTuitionModeEnabled)
+        // Drop any visible annotations when switching modes — they
+        // were generated under different planner bias and would feel
+        // stale once the mode flips.
+        if !enabled {
+            annotationOverlayController.clear(reason: "tuition mode disabled")
+        }
     }
 
     /// Mascot mode: the top-right perch + panel are the only conversation
@@ -4971,6 +5000,11 @@ You can turn this off at any time in Settings → Cloud bridge.
         // drop it silently rather than auto-clicking, because the user
         // chose to keep talking instead of answering.
         pendingClickTargetClarification = nil
+        // Tuition-mode annotations live until the next user turn or the
+        // 30 s auto-fade. PTT-release IS the next user turn, so wipe
+        // them here BEFORE any routing branch — every fast path
+        // (watch-mode, recipe, memory, fast-action) clears them too.
+        annotationOverlayController.clearOnNextUserTurn()
 
         // Idle gate: if the thread sat quiet past the configured
         // threshold, drop the verbatim window + summary and journal
@@ -4990,6 +5024,21 @@ You can turn this off at any time in Settings → Cloud bridge.
         if let watchModeCommand = PaceWatchModeCommandParser.parse(transcript) {
             print("👀 Watch mode voice command: \(watchModeCommand)")
             handleWatchModeCommand(watchModeCommand, transcript: transcript)
+            return
+        }
+
+        // Tuition-mode "clear annotations" fast path: never burn a
+        // planner round-trip on a pure overlay-clear command. Runs
+        // after watch-mode (which has its own start/stop verbs that
+        // would tie a "stop drawing" phrase) but before every other
+        // routing branch.
+        if PaceClearAnnotationsCommandParser.parse(transcript) != nil {
+            print("🧽 Clear-annotations voice command")
+            // clearOnNextUserTurn() at the top of this function has
+            // already wiped the layer; this second call is a safe
+            // no-op and serves as the user-feedback log line.
+            annotationOverlayController.clear(reason: "voice command")
+            voiceState = .idle
             return
         }
 
@@ -5189,6 +5238,7 @@ You can turn this off at any time in Settings → Cloud bridge.
                     let threadSummaryInjectionForTurn = threadMemory.injectionPrefix()
                     let systemPromptForTurn = CompanionSystemPrompt.build(
                         includeAgentMode: isAgentModeEnabled,
+                        isTuitionModeEnabled: isTuitionModeEnabled,
                         threadSummaryInjection: threadSummaryInjectionForTurn
                     )
                     // Mark this turn as off-device for the amber-tint
@@ -5360,7 +5410,18 @@ You can turn this off at any time in Settings → Cloud bridge.
                     // 6. Parse: action tags → [DONE] flag → pointing tag.
                     //    Each pass strips its own tag class so the final
                     //    `spokenText` is clean enough to play via TTS.
-                    let actionParseResult = PaceActionTagParser.parseActions(from: fullResponseText)
+                    let rawActionParseResult = PaceActionTagParser.parseActions(from: fullResponseText)
+                    // Tuition-mode draw_annotation / clear_annotations
+                    // are handled here, before the executor sees the
+                    // plan: they're overlay-only side effects with no
+                    // place in the action-dispatch switch. Same shape
+                    // as the streaming-mail-draft detector below.
+                    let annotationDrainOutcome = PaceAnnotationActionDrainer.drain(
+                        parseResult: rawActionParseResult,
+                        into: annotationOverlayController,
+                        screenCaptures: screenCaptures
+                    )
+                    let actionParseResult = annotationDrainOutcome.drainedParseResult
                     let streamedMailDraftForFinalization = PaceStreamingMailDraftDetector
                         .firstMailDraft(in: actionParseResult.executionPlan)
                     if actionExecutor.hasActiveStreamingMailDraft,
@@ -5445,24 +5506,18 @@ You can turn this off at any time in Settings → Cloud bridge.
 
                     if let pointCoordinate = parseResult.coordinate,
                        let targetScreenCapture {
-                        let screenshotWidth = CGFloat(targetScreenCapture.screenshotWidthInPixels)
-                        let screenshotHeight = CGFloat(targetScreenCapture.screenshotHeightInPixels)
-                        let displayWidth = CGFloat(targetScreenCapture.displayWidthInPoints)
-                        let displayHeight = CGFloat(targetScreenCapture.displayHeightInPoints)
-                        let displayFrame = targetScreenCapture.displayFrame
-
-                        let clampedX = max(0, min(pointCoordinate.x, screenshotWidth))
-                        let clampedY = max(0, min(pointCoordinate.y, screenshotHeight))
-                        let displayLocalX = clampedX * (displayWidth / screenshotWidth)
-                        let displayLocalY = clampedY * (displayHeight / screenshotHeight)
-                        let appKitY = displayHeight - displayLocalY
-                        let globalLocation = CGPoint(
-                            x: displayLocalX + displayFrame.origin.x,
-                            y: appKitY + displayFrame.origin.y
-                        )
+                        // Same screenshot-pixel → AppKit-global helper
+                        // used by the annotation drainer, so the cursor
+                        // path and the tuition-mode draw layer can't
+                        // drift apart.
+                        let globalLocation = PaceAnnotationCoordinateMapper
+                            .convertScreenshotPixelToAppKitGlobal(
+                                screenshotPixelPoint: pointCoordinate,
+                                on: targetScreenCapture
+                            )
 
                         detectedElementScreenLocation = globalLocation
-                        detectedElementDisplayFrame = displayFrame
+                        detectedElementDisplayFrame = targetScreenCapture.displayFrame
                         PaceAnalytics.trackElementPointed(elementLabel: parseResult.elementLabel)
                         print("🎯 Step \(stepIndex) pointing: (\(Int(pointCoordinate.x)), \(Int(pointCoordinate.y))) → \"\(parseResult.elementLabel ?? "element")\"")
                     } else {

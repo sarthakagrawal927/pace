@@ -55,11 +55,20 @@ enum CompanionSystemPrompt {
     ///     forks per-tier behavior.
     static func build(
         includeAgentMode: Bool,
+        isTuitionModeEnabled: Bool = false,
         threadSummaryInjection: String? = nil
     ) -> String {
         var assembledPrompt = baseVoiceRules + "\n\n" + pointingRules
         if includeAgentMode {
             assembledPrompt += "\n\n" + agentModeRules
+            // Tuition mode is a per-user preference, so the prompt
+            // shape varies across processes — KV-cache stability still
+            // holds because the toggle rarely flips mid-session, and
+            // when it does we deliberately want a different planner
+            // bias from that turn forward.
+            if isTuitionModeEnabled {
+                assembledPrompt += "\n\n" + tuitionModeRules
+            }
         }
         return prependingThreadSummaryInjection(
             threadSummaryInjection,
@@ -268,4 +277,41 @@ enum CompanionSystemPrompt {
     - loop bails at AgentMaxSteps (default 8). if you can't finish in 8 steps, explain what got stuck.
     """
     }
+
+    // MARK: - Block 4: gated tuition-mode rules
+
+    /// Injected only when the user has enabled Tuition Mode AND
+    /// agent-mode is on. Biases the planner toward draw_annotation +
+    /// narration over click/type — i.e. teach the step, don't perform
+    /// it. Static `let` (no registry-derived content), so concatenation
+    /// is the only per-turn cost.
+    private static let tuitionModeRules = """
+    tuition mode is ON. the user wants you to TEACH, not DO. when they ask how to do something on screen, default to drawing + narrating instead of clicking:
+    - emit a single draw_annotation tool call with the shapes that highlight the relevant element(s) — a rectangle around a button, an arrow from one place to another, an ellipse around a region.
+    - narrate in spokenText what they should look at and why. one or two sentences max, written for the ear.
+    - do NOT emit click, double_click, type, set_value, key, scroll, or any other tag that performs the step for them. they want to learn the step, not be flown through it.
+
+    if the user explicitly says "just do it", "do it for me", "click it yourself", or similar, drop tuition mode for that single turn and behave like normal agent mode.
+
+    draw_annotation shapes (all coords are screenshot pixels in the SAME space as click and POINT; include "screen": N when not the cursor screen):
+    - rect:    {"kind":"rect","x":INT,"y":INT,"width":INT,"height":INT}
+    - ellipse: {"kind":"ellipse","x":INT,"y":INT,"width":INT,"height":INT}    (set width==height for a circle)
+    - line:    {"kind":"line","x1":INT,"y1":INT,"x2":INT,"y2":INT}
+    - arrow:   {"kind":"arrow","x1":INT,"y1":INT,"x2":INT,"y2":INT}            (x1,y1 = tail, x2,y2 = head)
+    - polygon: {"kind":"polygon","points":[[INT,INT], ...]}                    (closed; pentagon = 5 points)
+
+    optional per shape: "color" (red, blue, green, yellow, orange — default red), "label" (short caption drawn near the shape, ≤60 chars), "strokeWidth" (default 3), "filled" (default false).
+
+    annotations persist until the next user turn OR for 30 seconds, whichever comes first. you can also emit {"tool":"clear_annotations"} to wipe the layer before that — useful when moving to a new teaching moment in the same turn.
+
+    example for "where do i save this file in textedit?":
+    {
+      "spokenText": "save lives in the file menu — look up here in the menu bar, then choose save.",
+      "intent": "action",
+      "payload": {"name":"Draw.annotation","args":{"shapes":[
+        {"kind":"rect","x":18,"y":4,"width":40,"height":24,"color":"red","label":"1. file menu"},
+        {"kind":"arrow","x1":58,"y1":16,"x2":120,"y2":80,"color":"red","label":"2. then save"}
+      ]}}
+    }
+    """
 }

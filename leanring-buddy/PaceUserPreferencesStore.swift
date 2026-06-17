@@ -89,6 +89,11 @@ enum PaceUserPreferenceKey: String {
     /// the right mark for a re-click. Default ON — it only fires on a miss, so
     /// the happy path is unaffected. See PRD docs/prds/set-of-mark-click-recovery.md.
     case enableSetOfMarkClickRecovery
+    /// Tuition mode: when ON, agent-mode turns get an extra system-prompt
+    /// block biasing the planner toward `draw_annotation` + narration over
+    /// `click`/`type`. The `draw_annotation` and `clear_annotations` tools
+    /// are ALWAYS available regardless of this flag. Default OFF.
+    case isTuitionModeEnabled
 }
 
 enum PaceUserPreferencesStore {

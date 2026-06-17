@@ -955,6 +955,13 @@ final class PaceActionExecutor {
             return runFlow(flowRequest)
         case .mcp(let mcpToolCall):
             return await callMCPTool(mcpToolCall)
+        case .drawAnnotation, .clearAnnotations:
+            // Tuition-mode annotation actions are drained out of the
+            // plan by `PaceAnnotationActionDrainer` in CompanionManager
+            // before it ever reaches the executor. If one slips through
+            // (e.g. a future direct caller), no-op silently rather than
+            // running an irrelevant local action.
+            return nil
         }
 
         return nil

@@ -187,7 +187,8 @@ nonisolated enum PaceToolPreflight {
         case .readClipboard, .openApplication, .openURL, .controlMusic, .adjustVolume, .adjustBrightness,
              .listCalendarEvents, .createCalendarEvent, .createReminder, .finder, .createNote, .appendNote,
              .searchNotes, .composeMail, .createThingsToDo, .runShortcut, .openMessages, .downloadFile,
-             .startTimer, .recordFlow, .runFlow, .mcp:
+             .startTimer, .recordFlow, .runFlow, .mcp,
+             .drawAnnotation, .clearAnnotations:
             return false
         }
     }
@@ -217,7 +218,8 @@ nonisolated enum PaceToolPreflight {
              .undoLastMutation, .pressKey, .snapWindow, .scroll,
              .readClipboard, .openApplication, .openURL,
              .adjustVolume, .adjustBrightness, .listCalendarEvents, .createCalendarEvent,
-             .createReminder, .finder, .downloadFile, .startTimer, .recordFlow, .runFlow:
+             .createReminder, .finder, .downloadFile, .startTimer, .recordFlow, .runFlow,
+             .drawAnnotation, .clearAnnotations:
             return false
         }
     }

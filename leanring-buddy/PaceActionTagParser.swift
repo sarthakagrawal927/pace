@@ -734,6 +734,11 @@ nonisolated enum PaceActionTagParser {
             let path = firstStringValue(for: ["path", "url"], in: arguments)
             guard let path, !path.isEmpty else { return nil }
             return .finder(PaceFinderRequest(path: path, action: .open))
+        case "draw.annotation", "annotate", "draw":
+            return parseDrawAnnotationRequest(from: arguments)
+                .map { .drawAnnotation($0) }
+        case "clear.annotations", "clear.drawing", "wipe.annotations", "draw.clear":
+            return .clearAnnotations
         default:
             return nil
         }
@@ -844,6 +849,12 @@ nonisolated enum PaceActionTagParser {
             if !hasNonEmptyString(for: ["path", "url"], in: arguments) {
                 issues.append("requires path")
             }
+        case "draw.annotation", "annotate", "draw":
+            if parseDrawAnnotationRequest(from: arguments) == nil {
+                issues.append("requires at least one valid shape")
+            }
+        case "clear.annotations", "clear.drawing", "wipe.annotations", "draw.clear":
+            break
         default:
             issues.append("unknown action")
         }
@@ -1309,6 +1320,11 @@ nonisolated enum PaceActionTagParser {
             return parseFlowToolCall(toolCall, action: .record)
         case .runFlow:
             return parseFlowToolCall(toolCall, action: .run)
+        case .drawAnnotation:
+            return parseDrawAnnotationRequest(from: mergeMCPArguments(from: toolCall))
+                .map { .drawAnnotation($0) }
+        case .clearAnnotations:
+            return .clearAnnotations
         }
     }
 
@@ -1487,6 +1503,12 @@ nonisolated enum PaceActionTagParser {
             if !hasNonEmptyString(for: ["name", "title", "flow", "label"], in: mergedArguments) {
                 issues.append("requires flow name")
             }
+        case .drawAnnotation:
+            if parseDrawAnnotationRequest(from: mergedArguments) == nil {
+                issues.append("requires at least one valid shape")
+            }
+        case .clearAnnotations:
+            break
         }
 
         return issues
@@ -1585,6 +1607,144 @@ nonisolated enum PaceActionTagParser {
             arguments[key] = value
         }
         return arguments
+    }
+
+    // MARK: - Tuition-mode draw_annotation parsing
+
+    /// Parse a `draw_annotation` tool call into a `PaceAnnotationRequest`.
+    /// Returns nil when `shapes` is missing, empty, or every entry fails
+    /// to parse into a recognized shape. Truncates anything beyond
+    /// `PaceAnnotationRequest.maximumShapeCount`.
+    private static func parseDrawAnnotationRequest(
+        from arguments: [String: PaceMCPJSONValue]
+    ) -> PaceAnnotationRequest? {
+        guard case .array(let rawShapeValues)? = arguments["shapes"],
+              !rawShapeValues.isEmpty else {
+            return nil
+        }
+
+        let truncatedShapeValues = Array(rawShapeValues.prefix(PaceAnnotationRequest.maximumShapeCount))
+        let parsedShapes = truncatedShapeValues.compactMap(parseSingleAnnotationShape(_:))
+        guard !parsedShapes.isEmpty else { return nil }
+
+        return PaceAnnotationRequest(
+            shapes: parsedShapes,
+            screenNumber: intValue(for: "screen", in: arguments)
+        )
+    }
+
+    /// Parse one shape entry from the `shapes` array. Returns nil when
+    /// the required geometry for the requested kind is missing or
+    /// invalid (e.g. polygon with <3 vertices).
+    private static func parseSingleAnnotationShape(_ shapeValue: PaceMCPJSONValue) -> PaceAnnotationShape? {
+        guard case .object(let shapeObject) = shapeValue else { return nil }
+
+        let style = parseAnnotationStyle(from: shapeObject)
+        let normalizedKind = (stringValue(for: "kind", in: shapeObject)
+            ?? stringValue(for: "type", in: shapeObject)
+            ?? "rect")
+            .lowercased()
+
+        switch normalizedKind {
+        case "rect", "rectangle", "box":
+            guard let xPixel = doubleValue(for: "x", in: shapeObject),
+                  let yPixel = doubleValue(for: "y", in: shapeObject),
+                  let widthPixels = doubleValue(for: "width", in: shapeObject),
+                  let heightPixels = doubleValue(for: "height", in: shapeObject),
+                  widthPixels > 0, heightPixels > 0 else { return nil }
+            return .rect(x: xPixel, y: yPixel, width: widthPixels, height: heightPixels, style: style)
+        case "ellipse", "circle", "oval":
+            // Circle is the special case where width==height; planner can
+            // pass either {kind:"circle",x,y,radius} or
+            // {kind:"circle",x,y,width,height}. Normalize radius into a
+            // bounding box centered on (x,y).
+            if let radius = doubleValue(for: "radius", in: shapeObject),
+               radius > 0,
+               let centerX = doubleValue(for: "x", in: shapeObject),
+               let centerY = doubleValue(for: "y", in: shapeObject) {
+                return .ellipse(
+                    x: centerX - radius,
+                    y: centerY - radius,
+                    width: radius * 2,
+                    height: radius * 2,
+                    style: style
+                )
+            }
+            guard let xPixel = doubleValue(for: "x", in: shapeObject),
+                  let yPixel = doubleValue(for: "y", in: shapeObject),
+                  let widthPixels = doubleValue(for: "width", in: shapeObject),
+                  let heightPixels = doubleValue(for: "height", in: shapeObject),
+                  widthPixels > 0, heightPixels > 0 else { return nil }
+            return .ellipse(x: xPixel, y: yPixel, width: widthPixels, height: heightPixels, style: style)
+        case "line":
+            guard let firstX = doubleValue(for: "x1", in: shapeObject),
+                  let firstY = doubleValue(for: "y1", in: shapeObject),
+                  let secondX = doubleValue(for: "x2", in: shapeObject),
+                  let secondY = doubleValue(for: "y2", in: shapeObject) else { return nil }
+            return .line(x1: firstX, y1: firstY, x2: secondX, y2: secondY, style: style)
+        case "arrow":
+            // The planner's x1/y1 is the tail; x2/y2 is the head (where
+            // the arrowhead is drawn). Same field names as `line` to
+            // keep the prompt simple.
+            guard let tailX = doubleValue(for: "x1", in: shapeObject),
+                  let tailY = doubleValue(for: "y1", in: shapeObject),
+                  let headX = doubleValue(for: "x2", in: shapeObject),
+                  let headY = doubleValue(for: "y2", in: shapeObject) else { return nil }
+            return .arrow(tailX: tailX, tailY: tailY, headX: headX, headY: headY, style: style)
+        case "polygon", "pentagon", "hexagon", "octagon":
+            guard case .array(let rawPointValues)? = shapeObject["points"] else { return nil }
+            let parsedPoints = rawPointValues.compactMap(parseAnnotationPointPair(_:))
+            // Pentagon = 5 points; we accept any closed polygon with ≥3
+            // vertices. Anything less isn't a polygon — degenerate
+            // shapes belong on the `line` path.
+            guard parsedPoints.count >= 3 else { return nil }
+            return .polygon(points: parsedPoints, style: style)
+        default:
+            return nil
+        }
+    }
+
+    /// Read one `[x, y]` pair from the polygon `points` array. Accepts
+    /// either a 2-element JSON array or an object with `x`/`y` fields.
+    private static func parseAnnotationPointPair(_ pointValue: PaceMCPJSONValue) -> CGPoint? {
+        switch pointValue {
+        case .array(let coordinateValues):
+            guard coordinateValues.count >= 2,
+                  case .number(let xCoordinate) = coordinateValues[0],
+                  case .number(let yCoordinate) = coordinateValues[1] else { return nil }
+            return CGPoint(x: xCoordinate, y: yCoordinate)
+        case .object(let pointObject):
+            guard let xCoordinate = doubleValue(for: "x", in: pointObject),
+                  let yCoordinate = doubleValue(for: "y", in: pointObject) else { return nil }
+            return CGPoint(x: xCoordinate, y: yCoordinate)
+        default:
+            return nil
+        }
+    }
+
+    /// Pull `color`, `label`, `strokeWidth`, `filled` from a shape
+    /// object. Every field is optional; defaults come from
+    /// `PaceAnnotationStyle.default` and the sanitizing helpers on
+    /// `PaceAnnotationStyle`.
+    private static func parseAnnotationStyle(
+        from shapeObject: [String: PaceMCPJSONValue]
+    ) -> PaceAnnotationStyle {
+        let color = PaceAnnotationColor.from(rawValue: stringValue(for: "color", in: shapeObject))
+        let label = PaceAnnotationStyle.sanitizedLabel(stringValue(for: "label", in: shapeObject))
+        let strokeWidth = PaceAnnotationStyle.clampedStrokeWidth(
+            doubleValue(for: "strokeWidth", in: shapeObject)
+                ?? doubleValue(for: "stroke_width", in: shapeObject)
+                ?? doubleValue(for: "stroke", in: shapeObject)
+        )
+        let filled = boolValue(for: "filled", in: shapeObject)
+            ?? boolValue(for: "fill", in: shapeObject)
+            ?? false
+        return PaceAnnotationStyle(
+            color: color,
+            label: label,
+            strokeWidth: strokeWidth,
+            filled: filled
+        )
     }
 
     private static func parseToolCallLocation(_ toolCall: ToolCallDTO) -> ScreenshotPixelLocation? {

@@ -71,6 +71,19 @@ enum DS {
         /// Kept distinct from the accent since it serves a different purpose
         /// (screen overlay vs in-app UI).
         static let overlayCursorBlue = Color(hex: "#3380FF")
+
+        // ── Tuition-mode annotation palette ──────────────────────────
+        //
+        // Bright, distinct hues that read clearly over any underlying
+        // screen content. Used by `PaceAnnotationShapeView` in
+        // OverlayWindow to color rects/ellipses/lines/arrows/polygons
+        // drawn by the planner's `draw_annotation` tool. Default is
+        // `annotationRed` — same as the planner's default color.
+        static let annotationRed    = Color(red: 0.95, green: 0.30, blue: 0.30)
+        static let annotationBlue   = Color(red: 0.30, green: 0.55, blue: 0.95)
+        static let annotationGreen  = Color(red: 0.30, green: 0.75, blue: 0.45)
+        static let annotationYellow = Color(red: 0.95, green: 0.80, blue: 0.30)
+        static let annotationOrange = Color(red: 0.95, green: 0.55, blue: 0.25)
     }
 }
 

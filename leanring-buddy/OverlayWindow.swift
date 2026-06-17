@@ -86,17 +86,31 @@ enum BuddyNavigationMode {
 // pointing, and response placement.
 struct BlueCursorView: View {
     let screenFrame: CGRect
+    /// 1-based index in the order `OverlayWindowManager.showOverlay`
+    /// walked the screens. Same numbering the planner uses for the
+    /// `screen` field in `click` / `draw_annotation` / `[POINT]`, so the
+    /// tuition-mode annotation layer can filter to "shapes on THIS
+    /// screen only".
+    let screenIndex: Int
     let isFirstAppearance: Bool
     @ObservedObject var companionManager: CompanionManager
+    @ObservedObject var annotationOverlayController: PaceAnnotationOverlayController
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var cursorPosition: CGPoint
     @State private var isCursorOnThisScreen: Bool
 
-    init(screenFrame: CGRect, isFirstAppearance: Bool, companionManager: CompanionManager) {
+    init(
+        screenFrame: CGRect,
+        screenIndex: Int,
+        isFirstAppearance: Bool,
+        companionManager: CompanionManager
+    ) {
         self.screenFrame = screenFrame
+        self.screenIndex = screenIndex
         self.isFirstAppearance = isFirstAppearance
         self.companionManager = companionManager
+        self.annotationOverlayController = companionManager.annotationOverlayController
 
         // Seed the cursor position from the avatar's current anchor so the
         // buddy doesn't flash at (0,0) before onAppear fires. If the avatar
@@ -200,6 +214,20 @@ struct BlueCursorView: View {
         ZStack {
             // Nearly transparent background (helps with compositing)
             Color.black.opacity(0.001)
+
+            // Tuition-mode annotation layer. Sits BELOW the cursor and
+            // bubbles so a teaching rectangle never visually obscures
+            // the blue arrow. `.allowsHitTesting(false)` keeps the
+            // overlay click-through — drawing a shape over a button
+            // never blocks the user clicking that button.
+            PaceAnnotationLayerView(
+                annotations: annotationOverlayController.activeAnnotations
+                    .filter { $0.screenIndex == screenIndex },
+                pixelToLocal: { appKitPoint in
+                    convertScreenPointToSwiftUICoordinates(appKitPoint)
+                }
+            )
+            .allowsHitTesting(false)
 
             // Welcome speech bubble (first launch only)
             if companionManager.areCursorAnnotationsEnabled
@@ -816,12 +844,16 @@ class OverlayWindowManager {
         let isFirstAppearance = !hasShownOverlayBefore
         hasShownOverlayBefore = true
 
-        // Create one overlay window per screen
-        for screen in screens {
+        // Create one overlay window per screen. `screenIndex` is the
+        // 1-based screen number matching the planner's `screen` field
+        // (and the `[POINT]` tag), so the annotation layer can filter
+        // its shapes to the right display.
+        for (zeroBasedScreenIndex, screen) in screens.enumerated() {
             let window = OverlayWindow(screen: screen)
 
             let contentView = BlueCursorView(
                 screenFrame: screen.frame,
+                screenIndex: zeroBasedScreenIndex + 1,
                 isFirstAppearance: isFirstAppearance,
                 companionManager: companionManager
             )
@@ -913,6 +945,231 @@ struct PaceUndoBanner: View {
         }
         .buttonStyle(.plain)
         .pointerCursor()
+    }
+}
+
+// MARK: - Tuition-mode annotation overlay
+//
+// `PaceAnnotationLayerView` and `PaceAnnotationShapeView` render the
+// teaching shapes that the planner's `draw_annotation` tool produces.
+// Geometry arrives in AppKit-global coordinates (already converted by
+// `PaceAnnotationActionDrainer`); this layer applies the same
+// AppKit-to-SwiftUI mapping the cursor uses, paints the shape, and
+// optionally renders a small caption pill.
+
+private struct PaceAnnotationLayerView: View {
+    let annotations: [PaceRenderedAnnotation]
+    /// AppKit-global → SwiftUI-local point conversion. Injected from
+    /// `BlueCursorView` so the layer doesn't need its own copy of
+    /// `screenFrame` math.
+    let pixelToLocal: (CGPoint) -> CGPoint
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            ForEach(annotations) { annotation in
+                PaceAnnotationShapeView(
+                    annotation: annotation,
+                    pixelToLocal: pixelToLocal
+                )
+                .transition(reduceMotion ? .identity : .opacity)
+            }
+        }
+        // ID change is the right trigger here: it fires when shapes are
+        // added/removed but not when, say, the cursor moves. Mapping
+        // through `id` keeps the transition lightweight.
+        .animation(
+            reduceMotion ? nil : .easeOut(duration: 0.2),
+            value: annotations.map(\.id)
+        )
+    }
+}
+
+private struct PaceAnnotationShapeView: View {
+    let annotation: PaceRenderedAnnotation
+    let pixelToLocal: (CGPoint) -> CGPoint
+
+    var body: some View {
+        ZStack {
+            shapePath
+            labelPill
+        }
+    }
+
+    @ViewBuilder
+    private var shapePath: some View {
+        let color = swiftUIColor(for: annotation.style.color)
+        let strokeWidth = CGFloat(annotation.style.strokeWidth)
+        switch annotation.geometry {
+        case .rect(let appKitRect):
+            // Map both corners of the AppKit-global rect into local
+            // SwiftUI coords. The y-axis flip means the rect's max-y
+            // corner becomes the SwiftUI rect's MIN-y corner.
+            let topLeftLocal = pixelToLocal(CGPoint(x: appKitRect.minX, y: appKitRect.maxY))
+            let bottomRightLocal = pixelToLocal(CGPoint(x: appKitRect.maxX, y: appKitRect.minY))
+            let localRect = normalizedLocalRect(topLeftLocal: topLeftLocal, bottomRightLocal: bottomRightLocal)
+            ZStack {
+                if annotation.style.filled {
+                    Rectangle()
+                        .fill(color.opacity(0.18))
+                        .frame(width: localRect.width, height: localRect.height)
+                        .position(x: localRect.midX, y: localRect.midY)
+                }
+                Rectangle()
+                    .stroke(color, lineWidth: strokeWidth)
+                    .frame(width: localRect.width, height: localRect.height)
+                    .position(x: localRect.midX, y: localRect.midY)
+            }
+        case .ellipse(let appKitRect):
+            let topLeftLocal = pixelToLocal(CGPoint(x: appKitRect.minX, y: appKitRect.maxY))
+            let bottomRightLocal = pixelToLocal(CGPoint(x: appKitRect.maxX, y: appKitRect.minY))
+            let localRect = normalizedLocalRect(topLeftLocal: topLeftLocal, bottomRightLocal: bottomRightLocal)
+            ZStack {
+                if annotation.style.filled {
+                    Ellipse()
+                        .fill(color.opacity(0.18))
+                        .frame(width: localRect.width, height: localRect.height)
+                        .position(x: localRect.midX, y: localRect.midY)
+                }
+                Ellipse()
+                    .stroke(color, lineWidth: strokeWidth)
+                    .frame(width: localRect.width, height: localRect.height)
+                    .position(x: localRect.midX, y: localRect.midY)
+            }
+        case .line(let start, let end):
+            let startLocal = pixelToLocal(start)
+            let endLocal = pixelToLocal(end)
+            Path { path in
+                path.move(to: startLocal)
+                path.addLine(to: endLocal)
+            }
+            .stroke(color, style: StrokeStyle(lineWidth: strokeWidth, lineCap: .round))
+        case .arrow(let tail, let head):
+            let tailLocal = pixelToLocal(tail)
+            let headLocal = pixelToLocal(head)
+            Path { path in
+                path.move(to: tailLocal)
+                path.addLine(to: headLocal)
+                // Two head segments at ±20° from the shaft, 14pt long.
+                // Drawn from `headLocal` back toward `tailLocal`.
+                let shaftAngle = atan2(headLocal.y - tailLocal.y, headLocal.x - tailLocal.x)
+                let arrowheadLength: CGFloat = 14
+                let arrowheadSpread: CGFloat = .pi / 9
+                let leftAngle = shaftAngle + .pi - arrowheadSpread
+                let rightAngle = shaftAngle + .pi + arrowheadSpread
+                path.move(to: headLocal)
+                path.addLine(to: CGPoint(
+                    x: headLocal.x + cos(leftAngle) * arrowheadLength,
+                    y: headLocal.y + sin(leftAngle) * arrowheadLength
+                ))
+                path.move(to: headLocal)
+                path.addLine(to: CGPoint(
+                    x: headLocal.x + cos(rightAngle) * arrowheadLength,
+                    y: headLocal.y + sin(rightAngle) * arrowheadLength
+                ))
+            }
+            .stroke(color, style: StrokeStyle(lineWidth: strokeWidth, lineCap: .round, lineJoin: .round))
+        case .polygon(let appKitVertices):
+            // Parser already rejects polygons with <3 vertices, but a
+            // belt-and-braces empty check keeps the SwiftUI body
+            // total in case the type ever loosens.
+            let localVertices = appKitVertices.map(pixelToLocal)
+            if localVertices.isEmpty {
+                EmptyView()
+            } else {
+                ZStack {
+                    if annotation.style.filled {
+                        Path { path in
+                            path.move(to: localVertices[0])
+                            for vertex in localVertices.dropFirst() {
+                                path.addLine(to: vertex)
+                            }
+                            path.closeSubpath()
+                        }
+                        .fill(color.opacity(0.18))
+                    }
+                    Path { path in
+                        path.move(to: localVertices[0])
+                        for vertex in localVertices.dropFirst() {
+                            path.addLine(to: vertex)
+                        }
+                        path.closeSubpath()
+                    }
+                    .stroke(color, style: StrokeStyle(lineWidth: strokeWidth, lineCap: .round, lineJoin: .round))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var labelPill: some View {
+        if let labelText = annotation.style.label {
+            let anchorLocal = labelAnchorLocalPoint()
+            Text(labelText)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(swiftUIColor(for: annotation.style.color).opacity(0.95))
+                )
+                .shadow(color: .black.opacity(0.3), radius: 1.5, y: 1)
+                .position(x: anchorLocal.x, y: anchorLocal.y)
+        }
+    }
+
+    /// Where the caption pill sits relative to the shape. Picked
+    /// per-kind so the label rarely overlaps the shape itself.
+    private func labelAnchorLocalPoint() -> CGPoint {
+        switch annotation.geometry {
+        case .rect(let appKitRect), .ellipse(let appKitRect):
+            // Above the top-left corner, offset up so the pill doesn't
+            // sit on the stroke.
+            let topLeftLocal = pixelToLocal(CGPoint(x: appKitRect.minX, y: appKitRect.maxY))
+            return CGPoint(x: topLeftLocal.x + 22, y: max(8, topLeftLocal.y - 10))
+        case .line(let start, let end), .arrow(let start, let end):
+            let startLocal = pixelToLocal(start)
+            let endLocal = pixelToLocal(end)
+            return CGPoint(
+                x: (startLocal.x + endLocal.x) / 2,
+                y: (startLocal.y + endLocal.y) / 2 - 12
+            )
+        case .polygon(let appKitVertices):
+            let localVertices = appKitVertices.map(pixelToLocal)
+            // Topmost vertex (smallest y in SwiftUI coords), label sits
+            // above it.
+            guard let topmost = localVertices.min(by: { $0.y < $1.y }) else {
+                return .zero
+            }
+            return CGPoint(x: topmost.x, y: max(8, topmost.y - 10))
+        }
+    }
+
+    /// Map the named planner palette to a concrete SwiftUI color.
+    /// Lives here rather than on `PaceAnnotationColor` so the value
+    /// type stays AppKit/SwiftUI-free.
+    private func swiftUIColor(for color: PaceAnnotationColor) -> Color {
+        switch color {
+        case .red: return DS.Colors.annotationRed
+        case .blue: return DS.Colors.annotationBlue
+        case .green: return DS.Colors.annotationGreen
+        case .yellow: return DS.Colors.annotationYellow
+        case .orange: return DS.Colors.annotationOrange
+        }
+    }
+
+    /// Compose a SwiftUI-local CGRect from the two AppKit-global
+    /// corners passed through `pixelToLocal`. Width/height end up
+    /// positive regardless of corner orientation — the y-axis flip
+    /// means the AppKit "top-left" is the SwiftUI "top-left" only when
+    /// signs line up.
+    private func normalizedLocalRect(topLeftLocal: CGPoint, bottomRightLocal: CGPoint) -> CGRect {
+        let minX = min(topLeftLocal.x, bottomRightLocal.x)
+        let minY = min(topLeftLocal.y, bottomRightLocal.y)
+        let width = abs(bottomRightLocal.x - topLeftLocal.x)
+        let height = abs(bottomRightLocal.y - topLeftLocal.y)
+        return CGRect(x: minX, y: minY, width: width, height: height)
     }
 }
 

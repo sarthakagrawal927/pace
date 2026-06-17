@@ -41,6 +41,14 @@ struct PaceGeneralSettingsTab: View {
                 )
             )
             paceSettingsToggleRow(
+                title: "Tuition mode",
+                subtitle: "Pace teaches instead of acts: it draws shapes on screen and explains the step, rather than clicking through for you. Turn off when you want it to just do the thing.",
+                isOn: Binding(
+                    get: { companionManager.isTuitionModeEnabled },
+                    set: { companionManager.setIsTuitionModeEnabled($0) }
+                )
+            )
+            paceSettingsToggleRow(
                 title: "Watch mode",
                 subtitle: companionManager.latestWatchModeSummary ?? "Watch for meaningful screen changes.",
                 isOn: Binding(

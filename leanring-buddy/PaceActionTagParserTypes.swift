@@ -145,6 +145,14 @@ nonisolated enum PaceParsedAction {
     case recordFlow(PaceFlowActionRequest)
     case runFlow(PaceFlowActionRequest)
     case mcp(PaceMCPToolCall)
+    /// Tuition-mode: render teaching shapes (rect, ellipse, line, arrow,
+    /// polygon) on the overlay. Drained out of the plan by
+    /// `PaceAnnotationActionDrainer` before the executor runs, so it never
+    /// reaches the action dispatch switch in `PaceActionExecutor`.
+    case drawAnnotation(PaceAnnotationRequest)
+    /// Tuition-mode: wipe all currently visible annotations. Same drain
+    /// path as `drawAnnotation`.
+    case clearAnnotations
 
     /// Audit-log operation slug — the verb part. Mirrors the case name.
     var auditOperationName: String {
@@ -181,6 +189,8 @@ nonisolated enum PaceParsedAction {
         case .recordFlow: return "record_flow"
         case .runFlow: return "run_flow"
         case .mcp: return "mcp_call"
+        case .drawAnnotation: return "draw_annotation"
+        case .clearAnnotations: return "clear_annotations"
         }
     }
 
@@ -328,6 +338,15 @@ nonisolated enum PaceParsedAction {
             return "Run recorded flow: \(flowRequest.name)"
         case .mcp(let mcpToolCall):
             return "Call MCP tool: \(mcpToolCall.approvalDescription)"
+        case .drawAnnotation(let annotationRequest):
+            let shapeCount = annotationRequest.shapes.count
+            let shapeNoun = shapeCount == 1 ? "shape" : "shapes"
+            if let screenNumber = annotationRequest.screenNumber {
+                return "Draw \(shapeCount) annotation \(shapeNoun) on screen \(screenNumber)"
+            }
+            return "Draw \(shapeCount) annotation \(shapeNoun)"
+        case .clearAnnotations:
+            return "Clear annotations"
         }
     }
 

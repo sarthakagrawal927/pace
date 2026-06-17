@@ -61,6 +61,8 @@ nonisolated enum PaceLocalToolKind: String, CaseIterable {
     case startTimer
     case recordFlow
     case runFlow
+    case drawAnnotation
+    case clearAnnotations
 }
 
 nonisolated struct PaceLocalToolDefinition {
@@ -393,6 +395,28 @@ nonisolated enum PaceToolRegistry {
             executionSummary: "Replays saved AX/key steps through the local executor.",
             observationSummary: "Reports replay start or missing flow.",
             exampleUtterance: "run my standup setup flow"
+        ),
+        PaceLocalToolDefinition(
+            kind: .drawAnnotation,
+            canonicalName: "draw_annotation",
+            aliases: ["annotate", "draw"],
+            schemaExample: #"{"tool":"draw_annotation","shapes":[{"kind":"rect","x":100,"y":80,"width":200,"height":60,"color":"red","label":"start here"}],"screen":1}"#,
+            description: "draw teaching shapes on the screen overlay. shapes: rect, ellipse, line, arrow, polygon. coords are screenshot pixels (same space as click). optional color (red, blue, green, yellow, orange — default red), label (≤60 chars), strokeWidth (default 3), filled (default false). annotations persist until the next user turn or 30 seconds.",
+            riskLevel: .readOnly,
+            executionSummary: "Renders annotation shapes on the transparent full-screen overlay.",
+            observationSummary: "No observation.",
+            exampleUtterance: "draw a circle around the save button and explain it"
+        ),
+        PaceLocalToolDefinition(
+            kind: .clearAnnotations,
+            canonicalName: "clear_annotations",
+            aliases: ["clear_drawing", "wipe_annotations"],
+            schemaExample: #"{"tool":"clear_annotations"}"#,
+            description: "remove all annotations currently drawn on the screen overlay.",
+            riskLevel: .readOnly,
+            executionSummary: "Clears the annotation overlay layer.",
+            observationSummary: "No observation.",
+            exampleUtterance: "clear the annotations"
         )
     ]
 
@@ -581,6 +605,10 @@ nonisolated enum PaceToolRegistry {
             return definition(forToolName: "run_flow")
         case .mcp:
             return nil
+        case .drawAnnotation:
+            return definition(forToolName: "draw_annotation")
+        case .clearAnnotations:
+            return definition(forToolName: "clear_annotations")
         }
     }
 

@@ -111,7 +111,8 @@ nonisolated enum PaceActionApprovalPolicy {
         case .click, .doubleClick, .clickCandidates, .type, .setTextValue, .editSelectedText,
              .undoLastMutation, .pressKey, .readClipboard, .snapWindow, .scroll, .openApplication,
              .openURL, .controlMusic, .adjustVolume, .adjustBrightness,
-             .listCalendarEvents, .finder, .searchNotes, .startTimer:
+             .listCalendarEvents, .finder, .searchNotes, .startTimer,
+             .drawAnnotation, .clearAnnotations:
             return false
         }
     }
@@ -141,7 +142,8 @@ nonisolated enum PaceActionApprovalPolicy {
         case .click, .doubleClick, .clickCandidates, .type,
              .undoLastMutation, .pressKey, .readClipboard, .snapWindow, .scroll,
              .openApplication, .openURL, .controlMusic, .adjustVolume, .adjustBrightness,
-             .listCalendarEvents, .finder, .searchNotes, .startTimer:
+             .listCalendarEvents, .finder, .searchNotes, .startTimer,
+             .drawAnnotation, .clearAnnotations:
             return false
         }
     }
@@ -193,13 +195,20 @@ nonisolated enum PaceActionApprovalPolicy {
         case .click, .doubleClick, .clickCandidates, .type, .setTextValue, .editSelectedText,
              .undoLastMutation, .pressKey, .readClipboard, .snapWindow, .scroll, .openApplication,
              .openURL, .controlMusic, .adjustVolume, .adjustBrightness,
-             .listCalendarEvents, .finder, .searchNotes, .startTimer:
+             .listCalendarEvents, .finder, .searchNotes, .startTimer,
+             .clearAnnotations:
+            // clearAnnotations: pure overlay cleanup, no speech needed.
             return true
         case .openMessages(let messageRequest):
             return messageRequest.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
         case .createCalendarEvent, .createReminder, .createNote, .appendNote,
              .composeMail, .createThingsToDo, .runShortcut, .downloadFile,
-             .recordFlow, .runFlow, .mcp:
+             .recordFlow, .runFlow, .mcp,
+             .drawAnnotation:
+            // drawAnnotation: the spoken narration IS the teaching
+            // value — the drawing alone isn't sufficient feedback. So
+            // do NOT suppress initial spoken feedback for this action,
+            // even though it's read-only.
             return false
         }
     }
