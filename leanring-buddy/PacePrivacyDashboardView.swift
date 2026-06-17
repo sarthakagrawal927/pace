@@ -26,6 +26,10 @@ import SwiftUI
 enum PaceOffDeviceTier: String, CaseIterable, Identifiable {
     case directAPI = "Direct API"
     case cloudBridge = "Cloud bridge"
+    /// MCP servers that route through a hosted gateway (e.g., Composio).
+    /// Distinguished from local-stdio MCP servers (filesystem, fetch,
+    /// applescript) which run on-device.
+    case mcpHosted = "MCP (hosted)"
 
     var id: String { rawValue }
 }
@@ -34,14 +38,45 @@ enum PaceOffDeviceTier: String, CaseIterable, Identifiable {
 /// dashboard renders. Extracted from the view so it can be unit-tested
 /// without SwiftUI.
 struct PacePrivacyDashboardAggregator {
-    /// Subsystem -> tier classification. Anything not present here is
-    /// treated as on-device for the dashboard.
+
+    /// MCP server slugs known to route off-device (their tool calls
+    /// hit the hosted gateway, not the local Mac). Add a new slug
+    /// here when adding any future hosted-MCP catalog entry —
+    /// `PaceActionExecutor` also reads this set to decide whether to
+    /// flip the off-device tint during a tool call.
+    static let knownOffDeviceMCPServerSlugs: Set<String> = ["composio"]
+
+    /// Subsystem -> tier classification. Anything not classified here
+    /// is treated as on-device for the dashboard. MCP calls require
+    /// the entry's `target` (server-prefixed) to decide whether the
+    /// hosted gateway is involved, so the overload that takes a
+    /// target is the one production code uses.
     static func tier(forSubsystem subsystem: String) -> PaceOffDeviceTier? {
+        tier(forSubsystem: subsystem, target: nil)
+    }
+
+    /// Tier classifier that also considers the entry's `target`. MCP
+    /// calls all share `subsystem == "mcp"` and the only thing that
+    /// distinguishes a local stdio server from a hosted one is the
+    /// server-slug prefix in the target — so we look at the target's
+    /// `<slug>.` prefix and check it against
+    /// `knownOffDeviceMCPServerSlugs`.
+    static func tier(forSubsystem subsystem: String, target: String?) -> PaceOffDeviceTier? {
         if subsystem.hasPrefix("planner.directAPI") {
             return .directAPI
         }
         if subsystem == "planner.cloudBridge" || subsystem.hasPrefix("cloudBridge") {
             return .cloudBridge
+        }
+        if subsystem == "mcp", let target {
+            let serverSlugFromTarget = target
+                .split(separator: ".", maxSplits: 1)
+                .first
+                .map(String.init)?
+                .lowercased() ?? ""
+            if knownOffDeviceMCPServerSlugs.contains(serverSlugFromTarget) {
+                return .mcpHosted
+            }
         }
         return nil
     }
@@ -92,7 +127,7 @@ struct PacePrivacyDashboardAggregator {
         var appleFoundationModelsEntryCount = 0
 
         for entry in filteredEntries {
-            if let tier = tier(forSubsystem: entry.subsystem) {
+            if let tier = tier(forSubsystem: entry.subsystem, target: entry.target) {
                 let bytesForEntry = entry.inputCharacterCount ?? 0
                 perTierByteTotals[tier, default: 0] += bytesForEntry
                 perTierCallCounts[tier, default: 0] += 1

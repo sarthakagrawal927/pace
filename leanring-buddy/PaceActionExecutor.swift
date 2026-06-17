@@ -735,6 +735,13 @@ final class PaceActionExecutor {
     /// neutral status instead.
     var runFlowCallback: (PaceRecordedFlow) -> Bool = { _ in false }
 
+    /// Callback wired by `CompanionManager` so the executor can flip
+    /// the off-device-turn tint while a hosted-MCP tool call (e.g.
+    /// Composio) is in flight. The closure takes the new flag value;
+    /// true at call start, false in the `defer`. Default no-op keeps
+    /// the executor testable without a CompanionManager.
+    var setOffDeviceTurnInFlightCallback: (Bool) -> Void = { _ in }
+
     init(
         actionsAreEnabledOverride: Bool? = nil,
         mcpClient: PaceMCPStdioClient = PaceMCPStdioClient(),
@@ -3225,6 +3232,23 @@ final class PaceActionExecutor {
                 toolName: toolObservationName,
                 summary: "Would call MCP tool: \(mcpToolCall.approvalDescription)"
             )
+        }
+
+        // Hosted-MCP detection: when this MCP server routes through a
+        // hosted gateway (e.g. Composio), the menu-bar capsule should
+        // tint amber for the duration of the call to match Direct API
+        // and Cloud Bridge behavior. Local stdio servers (filesystem,
+        // applescript, fetch) leave the tint alone.
+        let isHostedMCPServer = PacePrivacyDashboardAggregator
+            .knownOffDeviceMCPServerSlugs
+            .contains(mcpToolCall.serverName.lowercased())
+        if isHostedMCPServer {
+            setOffDeviceTurnInFlightCallback(true)
+        }
+        defer {
+            if isHostedMCPServer {
+                setOffDeviceTurnInFlightCallback(false)
+            }
         }
 
         do {

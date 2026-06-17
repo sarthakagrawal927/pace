@@ -3490,6 +3490,15 @@ You can turn this off at any time in Settings → Cloud bridge.
             guard let self else { return false }
             return self.runFlowFromExecutorTool(storedFlow)
         }
+        // Hosted-MCP gateways (Composio etc.) flip the existing
+        // off-device tint while their call is in flight, so the
+        // menu-bar capsule shows amber the same way it does for
+        // Direct API and Cloud Bridge planner turns.
+        actionExecutor.setOffDeviceTurnInFlightCallback = { [weak self] isOffDeviceCallInFlight in
+            Task { @MainActor [weak self] in
+                self?.isOffDeviceTurnInFlight = isOffDeviceCallInFlight
+            }
+        }
         startPermissionPolling()
         startLMStudioReachabilityPolling()
         bindVoiceStateObservation()

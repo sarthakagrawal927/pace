@@ -39,10 +39,33 @@ struct PaceMCPServerCatalogTests {
 
     @Test func bundledCatalogIncludesExpectedSlugs() {
         let bundledSlugs = Set(PaceMCPServerCatalog.bundledCatalog.map(\.slug))
+        // GitHub / Slack / Linear were retired in favor of Composio
+        // (single OAuth, ~700 SaaS tools). Their slugs live on in
+        // `supersededBySlug` so the Settings tab can hint at the
+        // migration when a legacy entry is still installed.
         let expectedSlugs: Set<String> = [
-            "filesystem", "fetch", "github", "applescript", "slack", "linear"
+            "filesystem", "fetch", "applescript", "composio"
         ]
         #expect(bundledSlugs == expectedSlugs)
+    }
+
+    @Test func supersededSlugsPointAtComposio() {
+        // Document the migration map so the Settings hint banner can't
+        // accidentally lose a supersede-by entry.
+        let supersededSlugs = Set(PaceMCPServerCatalog.supersededBySlug.keys)
+        #expect(supersededSlugs == Set(["github", "slack", "linear"]))
+        for replacementSlug in PaceMCPServerCatalog.supersededBySlug.values {
+            #expect(replacementSlug == "composio")
+        }
+    }
+
+    @Test func composioEntryUsesEmptyKeySentinelForKeychainSubstitution() {
+        let composioEntry = PaceMCPServerCatalog.entry(forSlug: "composio")!
+        // The empty-string env value is the sentinel
+        // `PaceMCPClient`/`PaceMCPSecretStore` look for at spawn time.
+        // Any non-empty default here would leak into the spawned
+        // subprocess without the user noticing.
+        #expect(composioEntry.environment["COMPOSIO_API_KEY"] == "")
     }
 
     @Test func everyCatalogEntryHasNonEmptyCommandAndDisplayName() {
@@ -110,15 +133,17 @@ struct PaceMCPServerCatalogTests {
         let configFileURL = makeTemporaryConfigFileURL()
         defer { try? FileManager.default.removeItem(at: configFileURL.deletingLastPathComponent()) }
 
-        let githubEntry = PaceMCPServerCatalog.entry(forSlug: "github")!
-        try PaceMCPCatalogInstaller.install(githubEntry, into: configFileURL)
-        try PaceMCPCatalogInstaller.install(githubEntry, into: configFileURL)
+        let composioEntry = PaceMCPServerCatalog.entry(forSlug: "composio")!
+        try PaceMCPCatalogInstaller.install(composioEntry, into: configFileURL)
+        try PaceMCPCatalogInstaller.install(composioEntry, into: configFileURL)
 
         let installedServers = try readMCPServersDictionary(from: configFileURL)
         // Map exact equality on dictionary keys
-        #expect(installedServers.keys.contains("github"))
-        let environment = installedServers["github"]?["env"] as? [String: String] ?? [:]
-        #expect(environment["GITHUB_PERSONAL_ACCESS_TOKEN"] == "ghp_replace_me")
+        #expect(installedServers.keys.contains("composio"))
+        // The Keychain-substitution sentinel survives JSON round-trip
+        // as an empty string — the actual key never touches the file.
+        let environment = installedServers["composio"]?["env"] as? [String: String] ?? [:]
+        #expect(environment["COMPOSIO_API_KEY"] == "")
     }
 
     // MARK: - Uninstall
@@ -160,8 +185,8 @@ struct PaceMCPServerCatalogTests {
         let configFileURL = makeTemporaryConfigFileURL()
         defer { try? FileManager.default.removeItem(at: configFileURL.deletingLastPathComponent()) }
 
-        let slackEntry = PaceMCPServerCatalog.entry(forSlug: "slack")!
-        try PaceMCPCatalogInstaller.install(slackEntry, into: configFileURL)
+        let composioEntry = PaceMCPServerCatalog.entry(forSlug: "composio")!
+        try PaceMCPCatalogInstaller.install(composioEntry, into: configFileURL)
 
         let parentDirectory = configFileURL.deletingLastPathComponent()
         let directoryContents = try FileManager.default.contentsOfDirectory(atPath: parentDirectory.path)

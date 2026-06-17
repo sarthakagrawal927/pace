@@ -251,6 +251,19 @@ nonisolated struct PaceMCPStdioClient {
         }
 
         let callStartedAt = Date()
+        // Estimate the bytes leaving this Mac as the serialized JSON
+        // size of the tool args. Cheap to compute, defensible enough
+        // for the Privacy Dashboard headline. The tool name and server
+        // slug are also sent but they're tiny compared to args, so
+        // skip those.
+        let estimatedInputCharacterCount: Int = {
+            guard !toolCall.arguments.isEmpty,
+                  let argumentsData = try? JSONEncoder().encode(toolCall.arguments),
+                  let argumentsString = String(data: argumentsData, encoding: .utf8) else {
+                return 0
+            }
+            return argumentsString.count
+        }()
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 func auditMCPCall(outcome: String, outputCharacterCount: Int? = nil, detail: String? = nil) {
@@ -260,6 +273,7 @@ nonisolated struct PaceMCPStdioClient {
                         target: "\(toolCall.serverName).\(toolCall.toolName)",
                         durationMilliseconds: Int(Date().timeIntervalSince(callStartedAt) * 1000),
                         outcome: outcome,
+                        inputCharacterCount: estimatedInputCharacterCount,
                         outputCharacterCount: outputCharacterCount,
                         detail: detail
                     )
@@ -299,7 +313,18 @@ private func runSynchronousToolCall(
 
     var environment = ProcessInfo.processInfo.environment
     for (key, value) in serverConfiguration.env {
-        environment[key] = value
+        if value.isEmpty,
+           let storedSecret = PaceMCPSecretStore.loadSecret(
+               server: toolCall.serverName,
+               key: key
+           ) {
+            // Empty value is the sentinel marker the catalog uses to
+            // say "fill this from Keychain at spawn time" — see
+            // PaceMCPSecretStore. Never logs the secret value.
+            environment[key] = storedSecret
+        } else {
+            environment[key] = value
+        }
     }
     process.environment = environment
 
