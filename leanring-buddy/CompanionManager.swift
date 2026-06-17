@@ -5317,6 +5317,11 @@ You can turn this off at any time in Settings → Cloud bridge.
         // body doesn't have to read CompanionManager state for them.
         let plannerClientForThisTurn: any BuddyPlannerClient = researchTurnPlannerOverride ?? plannerClient
         let capturedResearchConfiguration = researchTurnConfiguration
+        // Whether this turn took the research route; flips the
+        // system-prompt build to `buildForResearchTurn` so the
+        // headless CLI gets a research-shaped prompt instead of
+        // Pace's agent-mode tool docs.
+        let isResearchTurn: Bool = (researchTurnPlannerOverride != nil)
 
         currentResponseTask = Task {
             voiceState = .processing
@@ -5387,11 +5392,24 @@ You can turn this off at any time in Settings → Cloud bridge.
                         .stringValue(forKey: "EnableActions")?
                         .lowercased() == "true"
                     let threadSummaryInjectionForTurn = threadMemory.injectionPrefix()
-                    let systemPromptForTurn = CompanionSystemPrompt.build(
-                        includeAgentMode: isAgentModeEnabled,
-                        isTuitionModeEnabled: isTuitionModeEnabled,
-                        threadSummaryInjection: threadSummaryInjectionForTurn
-                    )
+                    // Research turns route through PaceLocalCLIPlannerClient
+                    // (claude/codex CLI). The CLI has its own web tools
+                    // and doesn't need Pace's local action-tag dialect —
+                    // shipping the agent-mode tool docs would just
+                    // confuse the headless CLI into returning Pace
+                    // action JSON instead of a spoken research answer.
+                    let systemPromptForTurn: String
+                    if isResearchTurn {
+                        systemPromptForTurn = CompanionSystemPrompt.buildForResearchTurn(
+                            threadSummaryInjection: threadSummaryInjectionForTurn
+                        )
+                    } else {
+                        systemPromptForTurn = CompanionSystemPrompt.build(
+                            includeAgentMode: isAgentModeEnabled,
+                            isTuitionModeEnabled: isTuitionModeEnabled,
+                            threadSummaryInjection: threadSummaryInjectionForTurn
+                        )
+                    }
                     // Mark this turn as off-device for the amber-tint
                     // capsule when the active planner is anything other
                     // than the on-device tiers (DirectAPI, alwaysBridge).

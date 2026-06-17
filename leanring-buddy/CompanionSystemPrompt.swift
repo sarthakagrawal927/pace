@@ -93,6 +93,38 @@ enum CompanionSystemPrompt {
         )
     }
 
+    /// Prompt for `.research` turns running through
+    /// `PaceLocalCLIPlannerClient` against the user's authenticated
+    /// `claude` or `codex` CLI. Three differences from the regular
+    /// `build(...)` prompt:
+    ///
+    /// 1. **No agent-mode tool docs.** The CLI has its own built-in
+    ///    web tools (`WebSearch`, `WebFetch`, file IO, etc.); we'd
+    ///    only confuse it by listing Pace's local-execution tool
+    ///    dialect on top. Saves ~700 tokens of prefill per call on
+    ///    Opus (~$0.01 per turn).
+    /// 2. **Explicit "use your own tools" instruction.** The CLI is
+    ///    headless under `-p`, and some headless configurations
+    ///    restrict tool access by default — tell it to use what it
+    ///    has rather than refuse for lack of permissions Pace
+    ///    doesn't actually need to grant.
+    /// 3. **Spoken-answer shape.** Pace will speak the model's
+    ///    response, so research output must stay tight: one or two
+    ///    short paragraphs, no markdown bullets, no headers, no
+    ///    code blocks unless absolutely necessary.
+    ///
+    /// - Parameter threadSummaryInjection: see `build(includeAgentMode:
+    ///   threadSummaryInjection:)`.
+    static func buildForResearchTurn(
+        threadSummaryInjection: String? = nil
+    ) -> String {
+        let assembledPrompt = baseVoiceRules + "\n\n" + researchTurnRules
+        return prependingThreadSummaryInjection(
+            threadSummaryInjection,
+            to: assembledPrompt
+        )
+    }
+
     /// Stable prefix layout: the thread summary block always sits
     /// BEFORE the persona / tool / pointing rules so the v10 schema
     /// fixtures and prompt-cache stability can pin both ends.
@@ -315,5 +347,30 @@ enum CompanionSystemPrompt {
         {"kind":"arrow","x1":58,"y1":16,"x2":120,"y2":80,"color":"red","label":"2. then save"}
       ]}}
     }
+    """
+
+    // MARK: - Block 5: research-turn rules
+
+    /// Appended to `baseVoiceRules` ONLY for `.research`-classified
+    /// turns running through `PaceLocalCLIPlannerClient`. The CLI
+    /// has its own web tools — we tell it to use them and return a
+    /// concise spoken answer, NOT a Pace action payload.
+    private static let researchTurnRules = """
+    research mode — the user just spoke a research question. you are running headless under pace, which will read your reply aloud through TTS. answer the question by doing real research, not by guessing.
+
+    use your own built-in tools to investigate:
+      - web search for finding sources, recent news, comparisons, prices.
+      - web fetch for reading specific URLs the user named or that your search surfaced.
+      - file/grep/glob tools if the user is asking about local code or a project on this mac.
+
+    if you can't search the web (no tool access in this session), say so plainly in one sentence — don't pretend to know things you can't verify.
+
+    output rules — pace will read your reply aloud, so:
+      - return ONLY natural prose. one or two short paragraphs maximum.
+      - no markdown headers, no bullet lists, no tables, no inline code unless absolutely necessary for the answer.
+      - no action JSON, no tool_calls block, no [POINT:...] tag — pace will NOT execute any local actions on this turn. you are answering the question, not asking pace to do something.
+      - write for the ear: read your reply out loud in your head before sending. if it would sound stilted, rewrite.
+      - if you used sources, weave the most important one into the prose ("according to the anthropic docs..."). don't dump a links list at the end.
+      - if the user's question is ambiguous, ask ONE clarifying question instead of guessing — pace will surface it as the spoken reply.
     """
 }
