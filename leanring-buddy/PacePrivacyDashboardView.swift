@@ -319,16 +319,34 @@ struct PacePrivacyDashboardView: View {
             Text("Time").font(.system(size: 11, weight: .semibold)).frame(width: 90, alignment: .leading)
             Text("Tier").font(.system(size: 11, weight: .semibold)).frame(width: 110, alignment: .leading)
             Text("Target").font(.system(size: 11, weight: .semibold)).frame(maxWidth: .infinity, alignment: .leading)
-            Text("Sent").font(.system(size: 11, weight: .semibold)).frame(width: 70, alignment: .trailing)
-            Text("Recv").font(.system(size: 11, weight: .semibold)).frame(width: 70, alignment: .trailing)
-            Text("Outcome").font(.system(size: 11, weight: .semibold)).frame(width: 90, alignment: .leading)
+            Text("Sent").font(.system(size: 11, weight: .semibold)).frame(width: 60, alignment: .trailing)
+            Text("Recv").font(.system(size: 11, weight: .semibold)).frame(width: 60, alignment: .trailing)
+            Text("Tokens").font(.system(size: 11, weight: .semibold)).frame(width: 80, alignment: .trailing)
+            Text("Cost").font(.system(size: 11, weight: .semibold)).frame(width: 70, alignment: .trailing)
+            Text("Outcome").font(.system(size: 11, weight: .semibold)).frame(width: 80, alignment: .leading)
         }
         .foregroundColor(.secondary)
         .padding(.vertical, 6)
     }
 
     private func auditTableRow(entry: PaceAPIAuditEntry) -> some View {
-        let tier = PacePrivacyDashboardAggregator.tier(forSubsystem: entry.subsystem)
+        // Target-aware tier lookup so Composio (subsystem=mcp,
+        // target=composio.*) shows up as `.mcpHosted` instead of
+        // falling through to "mcp" as a raw subsystem string. Same
+        // overload the aggregation loop uses.
+        let tier = PacePrivacyDashboardAggregator.tier(
+            forSubsystem: entry.subsystem,
+            target: entry.target
+        )
+        let tokenDisplay = PaceProviderCostEstimator.formatTokenCounts(
+            inputTokenCount: entry.inputTokenCount,
+            outputTokenCount: entry.outputTokenCount
+        )
+        let costDisplay: String? = PaceProviderCostEstimator.estimatedCostInDollars(
+            target: entry.target,
+            inputTokenCount: entry.inputTokenCount,
+            outputTokenCount: entry.outputTokenCount
+        ).map { PaceProviderCostEstimator.formatCostInDollars($0) }
         return HStack(spacing: 8) {
             Text(entry.at.formatted(date: .omitted, time: .standard))
                 .font(.system(size: 11, design: .monospaced))
@@ -343,26 +361,37 @@ struct PacePrivacyDashboardView: View {
                 .truncationMode(.middle)
             Text(PacePrivacyByteFormatter.format(bytes: entry.inputCharacterCount ?? 0))
                 .font(.system(size: 11))
-                .frame(width: 70, alignment: .trailing)
+                .frame(width: 60, alignment: .trailing)
             Text(PacePrivacyByteFormatter.format(bytes: entry.outputCharacterCount ?? 0))
                 .font(.system(size: 11))
+                .frame(width: 60, alignment: .trailing)
+            Text(tokenDisplay ?? "—")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(tokenDisplay == nil ? .secondary : .primary)
+                .frame(width: 80, alignment: .trailing)
+            Text(costDisplay ?? "—")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(costDisplay == nil ? .secondary : .primary)
                 .frame(width: 70, alignment: .trailing)
             Text(entry.outcome)
                 .font(.system(size: 11))
                 .foregroundColor(entry.outcome == "ok" ? .secondary : .orange)
-                .frame(width: 90, alignment: .leading)
+                .frame(width: 80, alignment: .leading)
         }
         .padding(.vertical, 4)
     }
 
     private var filteredOffDeviceEntries: [PaceAPIAuditEntry] {
+        // Same target-aware tier check as the row renderer — Composio
+        // calls would otherwise be filtered OUT of this list because
+        // the no-target overload returns nil for `subsystem == "mcp"`.
         let offDeviceEntries = auditEntries.filter {
-            PacePrivacyDashboardAggregator.tier(forSubsystem: $0.subsystem) != nil
+            PacePrivacyDashboardAggregator.tier(forSubsystem: $0.subsystem, target: $0.target) != nil
         }
         let tierFiltered: [PaceAPIAuditEntry]
         if let auditTierFilter {
             tierFiltered = offDeviceEntries.filter {
-                PacePrivacyDashboardAggregator.tier(forSubsystem: $0.subsystem) == auditTierFilter
+                PacePrivacyDashboardAggregator.tier(forSubsystem: $0.subsystem, target: $0.target) == auditTierFilter
             }
         } else {
             tierFiltered = offDeviceEntries
