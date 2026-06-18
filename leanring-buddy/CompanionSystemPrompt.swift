@@ -125,6 +125,86 @@ enum CompanionSystemPrompt {
         )
     }
 
+    /// Plan-then-execute wrapper for the in-process bundled MLX
+    /// planner. The 4B model benefits materially from an explicit
+    /// "intent → plan → action" scaffold before it commits to a
+    /// response — accuracy on multi-step + ambiguous turns goes up
+    /// without measurably hurting single-action latency, because
+    /// the <think> block is short (3-7 word intent + optional steps)
+    /// AND is stripped before TTS via the existing
+    /// StreamingSentenceTTSPipeline thinking-block stripper.
+    ///
+    /// Wrapping (rather than replacing) the existing prompt keeps
+    /// the v10 tool contract, pointing rules, and persona intact —
+    /// the plan-then-execute addition is a structural overlay on
+    /// top of the same downstream behavior.
+    ///
+    /// Used by `PaceMLXPlannerClient` only. The LM Studio path
+    /// (qwen3-30b-a3b) doesn't need this scaffold; the larger model
+    /// plans implicitly with no scaffolding cost.
+    static func wrapWithPlanThenExecuteScaffoldForBundledMLX(_ basePrompt: String) -> String {
+        return basePrompt + "\n\n" + planThenExecuteScaffoldForBundledMLX
+    }
+
+    /// The plan-then-execute scaffold itself. Pure constant so the
+    /// wrapper helper above is trivially unit-testable AND so the
+    /// scaffold text is diff-able as a behavior contract (small
+    /// wording changes here measurably shift the 4B model's
+    /// accuracy on the FM-fixture eval).
+    static let planThenExecuteScaffoldForBundledMLX: String = """
+    BUNDLED-MLX PLAN-THEN-EXECUTE PROTOCOL
+
+    Before every spoken response, write a brief <think> block:
+
+    <think>
+    intent: <what the user wants, 3-7 words>
+    plan: <single-action | numbered steps if multi-step>
+    risk: <none | flag anything irreversible>
+    </think>
+
+    Rules for the <think> block:
+    - Keep each line to ≤12 words.
+    - Skip the `plan:` and `risk:` lines when the request is a single
+      no-risk action (e.g. "what time is it", "set a timer for 5 min").
+    - The block is stripped before TTS — it's your scratchpad, NOT for
+      the user. Do not reference its contents in the spoken response.
+
+    After the </think> tag, produce the spoken response and any tool
+    calls per the standard contract above. The spoken response should
+    be 1-2 short sentences for natural-sounding TTS — same brevity bar
+    as every other Pace turn.
+
+    Example (single action):
+
+      User: "open my downloads folder"
+
+      <think>
+      intent: open Downloads folder in Finder.
+      </think>
+
+      Opening Downloads now.
+      {"tool":"open_app","name":"Finder"}
+
+    Example (multi-step):
+
+      User: "find my screenshot from yesterday and email it to alex"
+
+      <think>
+      intent: locate yesterday's screenshot, attach to mail draft for Alex.
+      plan: 1) search Spotlight for yesterday's screenshot 2) compose
+      mail to Alex with that file.
+      risk: none — email is a draft, not sent.
+      </think>
+
+      Looking for that screenshot now.
+      <tool_calls>
+      [
+        [{"tool":"finder","action":"search","query":"screenshot yesterday"}],
+        [{"tool":"compose_mail","to":"alex","subject":"Screenshot","body":"<attached>"}]
+      ]
+      </tool_calls>
+    """
+
     /// Stable prefix layout: the thread summary block always sits
     /// BEFORE the persona / tool / pointing rules so the v10 schema
     /// fixtures and prompt-cache stability can pin both ends.

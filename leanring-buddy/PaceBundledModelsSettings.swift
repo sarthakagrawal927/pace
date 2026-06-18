@@ -41,7 +41,7 @@ nonisolated enum PaceBundledModelsSettings {
     // are the SHIPPING surface. Future releases bump those keys to
     // point at Pace-tuned models (e.g. `pace-ai/pace-planner-v1`)
     // without touching this source file.
-    nonisolated static let compileTimeFallbackPlannerModelIdentifier = "mlx-community/Qwen3-4B-Instruct-4bit"
+    nonisolated static let compileTimeFallbackPlannerModelIdentifier = "mlx-community/Qwen3-4B-Instruct-2507-bf16"
     nonisolated static let compileTimeFallbackEmbedderModelIdentifier = "mlx-community/nomic-embed-text-v1.5"
     nonisolated static let compileTimeFallbackVLMModelIdentifier = "mlx-community/Qwen3-VL-4B-Instruct-4bit"
 

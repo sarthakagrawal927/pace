@@ -134,10 +134,24 @@ final class PaceMLXPlannerClient: BuddyPlannerClient {
             conversationHistory: conversationHistory,
             userPrompt: userPrompt
         )
+        // Wrap the incoming system prompt with the plan-then-execute
+        // scaffold. The bundled MLX 4B model materially benefits
+        // from explicit intent → plan → action structuring before
+        // committing to a response. The <think> block content is
+        // automatically stripped before TTS by the existing
+        // streaming pipeline.
+        let wrappedSystemPrompt: String
+        if systemPrompt.isEmpty {
+            wrappedSystemPrompt = CompanionSystemPrompt.planThenExecuteScaffoldForBundledMLX
+        } else {
+            wrappedSystemPrompt = CompanionSystemPrompt.wrapWithPlanThenExecuteScaffoldForBundledMLX(
+                systemPrompt
+            )
+        }
         let generationParameters = GenerateParameters(temperature: generationTemperature)
         let chatSession = ChatSession(
             modelContainer,
-            instructions: systemPrompt.isEmpty ? nil : systemPrompt,
+            instructions: wrappedSystemPrompt,
             generateParameters: generationParameters
         )
 

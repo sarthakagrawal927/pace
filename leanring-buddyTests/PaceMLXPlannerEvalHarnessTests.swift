@@ -132,7 +132,15 @@ struct PaceMLXPlannerEvalHarnessTests {
         // outputs gibberish, fails to load, etc.) — not to gate on
         // a tight pass-rate ceiling. Pace's canonical regression
         // suite is scripts/eval-planners.py against LM Studio.
-        let minimumExpectedPassingRows = 3
+        //
+        // Release gate (Qwen3-4B-Instruct-2507-bf16 + plan-then-execute
+        // scaffold): 4/5 fixtures. Bumped from 3/5 with the bf16
+        // release-target switch — bf16 + the plan-then-execute prompt
+        // is materially more accurate than 4-bit + raw prompt, so the
+        // bar moves with the default. If you swap to a smaller / less
+        // capable model and this trips, lower it deliberately —
+        // re-running the eval to confirm the new floor.
+        let minimumExpectedPassingRows = 4
         #expect(passingRowCount >= minimumExpectedPassingRows,
                 "MLX planner passed fewer than \(minimumExpectedPassingRows) fixtures — investigate before flipping the bundled-MLX default ON")
     }

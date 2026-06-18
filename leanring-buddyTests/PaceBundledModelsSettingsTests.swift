@@ -50,12 +50,12 @@ struct PaceBundledModelsSettingsTests {
 
     // MARK: - Default model identifiers
 
-    @Test func compileTimeFallbackPlannerIsQwen3_4BInstruct() async throws {
+    @Test func compileTimeFallbackPlannerIsQwen3_4BInstruct2507BF16() async throws {
         // Pinning the fallback in tests catches accidental swaps in
         // code review. The runtime default reads from Info.plist
-        // first — see `defaultPlannerModelIdentifierPrefersInfoPlist`
+        // first — see `defaultPlannerIdentifierMatchesShippingDefault`
         // below.
-        #expect(PaceBundledModelsSettings.compileTimeFallbackPlannerModelIdentifier == "mlx-community/Qwen3-4B-Instruct-4bit")
+        #expect(PaceBundledModelsSettings.compileTimeFallbackPlannerModelIdentifier == "mlx-community/Qwen3-4B-Instruct-2507-bf16")
     }
 
     @Test func compileTimeFallbackEmbedderIsNomicEmbedTextV1Point5() async throws {
@@ -80,8 +80,12 @@ struct PaceBundledModelsSettingsTests {
         // BEFORE the release goes out. This test acts as a pin so
         // bumps are deliberate (the test fails until updated).
         let shippingDefaults: Set<String> = [
-            "mlx-community/Qwen3-4B-Instruct-4bit",
+            "mlx-community/Qwen3-4B-Instruct-2507-bf16",
             // Add future pace-tuned identifiers here as they ship.
+            // ADDING AN ENTRY HERE IS THE DELIBERATE "I ran the eval
+            // gate against this model AND it beat the prior shipping
+            // default" review step. Do not bump without re-running
+            // scripts/eval-planners.py and PaceMLXPlannerEvalHarnessTests.
         ]
         #expect(shippingDefaults.contains(PaceBundledModelsSettings.defaultPlannerModelIdentifier))
     }

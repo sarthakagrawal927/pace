@@ -106,7 +106,7 @@
 	<key>BundledMLXEmbedderModelIdentifier</key>
 	<string>nomic-ai/nomic-embed-text-v1.5</string>
 	<key>BundledMLXPlannerModelIdentifier</key>
-	<string>mlx-community/Qwen3-4B-Instruct-4bit</string>
+	<string>mlx-community/Qwen3-4B-Instruct-2507-bf16</string>
 	<key>BundledMLXVLMModelIdentifier</key>
 	<string>mlx-community/Qwen3-VL-4B-Instruct-4bit</string>
 	<key>ScreenAnalysisProvider</key>

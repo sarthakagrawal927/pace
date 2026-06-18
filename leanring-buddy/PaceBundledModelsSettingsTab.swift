@@ -157,7 +157,7 @@ struct PaceBundledModelsSettingsTab: View {
                     Text("In-process MLX planner")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(DS.Colors.textPrimary)
-                    Text("Run the planner via mlx-swift in-process. Drops the LM Studio install dependency for new users. Quality is lower than qwen3-30b-a3b — opt in when you don't need the bigger model.")
+                    Text("Run the planner via mlx-swift in-process. Drops the LM Studio install dependency for new users. Default ships with Qwen3-4B-Instruct-2507 bf16 + a plan-then-execute prompt scaffold — high-precision, opt-in.")
                         .font(.system(size: 12))
                         .foregroundColor(DS.Colors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -172,7 +172,7 @@ struct PaceBundledModelsSettingsTab: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(DS.Colors.textSecondary)
                 TextField(
-                    "mlx-community/Qwen3-4B-Instruct-4bit",
+                    "mlx-community/Qwen3-4B-Instruct-2507-bf16",
                     text: $plannerModelIdentifier
                 )
                 .textFieldStyle(.roundedBorder)
@@ -182,7 +182,7 @@ struct PaceBundledModelsSettingsTab: View {
                     .buttonStyle(.bordered)
                     .disabled(!isUsingMLXPlanner)
             }
-            Text("On first use, ~2-3 GB is downloaded into the HuggingFace cache (~/.cache/huggingface). Subsequent launches load from cache.")
+            Text("On first use, ~8 GB is downloaded into the HuggingFace cache (~/.cache/huggingface). bf16 trades disk + RAM for materially better accuracy than the 4-bit variant; on 16 GB Macs prefer the 4-bit identifier instead. Subsequent launches load from cache.")
                 .font(.system(size: 11))
                 .foregroundColor(DS.Colors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
