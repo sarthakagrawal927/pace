@@ -2,23 +2,21 @@
 //  PaceMLXEmbeddingClient.swift
 //  leanring-buddy
 //
-//  In-process MLX embedding model — runs a BERT-class embedder
-//  (default: nomic-embed-text-v1.5 MLX) directly via
-//  `mlx-swift-examples` MLXEmbedders, no LM Studio HTTP hop.
-//  Slots into the existing `PaceTextEmbedding` protocol so the
-//  chained-fallback wiring (`PaceChainedTextEmbeddingClient`)
-//  consumes it without any changes.
+//  In-process MLX embedder — runs an encoder model
+//  (default: nomic-embed-text-v1.5) via `mlx-swift-examples`
+//  MLXEmbedders, no LM Studio HTTP hop.
 //
-//  Compiles cleanly with OR without the `MLXEmbedders` SPM module:
-//  guarded by `#if canImport(MLXEmbedders)`. When the SPM dep is
-//  absent, `isRuntimeAvailable == false` and every embed call
-//  throws — the chained client routes around to Apple NL.
+//  Conforms to `PaceTextEmbedding`, slotting into the existing
+//  `PaceChainedTextEmbeddingClient` chain without any contract
+//  changes.
 //
 
 import Foundation
 
 #if canImport(MLXEmbedders)
+import MLX
 import MLXEmbedders
+import Tokenizers
 #endif
 
 nonisolated enum PaceMLXEmbeddingError: LocalizedError {
@@ -40,7 +38,7 @@ nonisolated enum PaceMLXEmbeddingError: LocalizedError {
 
 final class PaceMLXEmbeddingClient: PaceTextEmbedding {
 
-    static var isRuntimeAvailable: Bool {
+    nonisolated static var isRuntimeAvailable: Bool {
         #if canImport(MLXEmbedders)
         return true
         #else
@@ -48,20 +46,17 @@ final class PaceMLXEmbeddingClient: PaceTextEmbedding {
         #endif
     }
 
-    /// HuggingFace model identifier for the bundled embedder. The
-    /// nomic-embed family is the same lineage Pace's LM Studio path
-    /// runs today, so swapping in-process should give comparable
-    /// recall on the LoCoMo benchmark.
+    /// HuggingFace model identifier (default: nomic-embed-text-v1.5).
     private let modelIdentifier: String
 
-    init(modelIdentifier: String = "mlx-community/nomic-embed-text-v1.5") {
+    init(modelIdentifier: String = "nomic-ai/nomic-embed-text-v1.5") {
         self.modelIdentifier = modelIdentifier
     }
 
     func embed(_ texts: [String]) async throws -> [[Float]] {
         guard !texts.isEmpty else { return [] }
         #if canImport(MLXEmbedders)
-        let modelContainer: EmbeddingModelContainer
+        let modelContainer: MLXEmbedders.ModelContainer
         do {
             modelContainer = try await Self.sharedModelContainer(modelIdentifier: modelIdentifier)
         } catch {
@@ -70,13 +65,16 @@ final class PaceMLXEmbeddingClient: PaceTextEmbedding {
             )
         }
 
+        let inputTextsCopy = texts
         do {
-            let vectors = try await modelContainer.perform { context in
-                return try await context.embed(texts: texts)
+            let vectors: [[Float]] = await modelContainer.perform { (model, tokenizer, pooling) in
+                Self.computeEmbeddingVectors(
+                    forTexts: inputTextsCopy,
+                    model: model,
+                    tokenizer: tokenizer,
+                    pooling: pooling
+                )
             }
-            // mlx-swift-examples returns [[Float]] already; just
-            // pass through. The shape check below catches any future
-            // API drift where the count doesn't match.
             guard vectors.count == texts.count else {
                 throw PaceMLXEmbeddingError.embeddingFailed(
                     underlyingErrorDescription: "got \(vectors.count) vectors for \(texts.count) texts"
@@ -97,17 +95,61 @@ final class PaceMLXEmbeddingClient: PaceTextEmbedding {
     }
 
     #if canImport(MLXEmbedders)
-    private static var cachedModelContainer: EmbeddingModelContainer?
+    /// Tokenize → pad-to-max → forward → pool → normalize. Mirrors
+    /// the canonical usage pattern in mlx-swift-examples' Embedders
+    /// README; the only Pace-specific decision is the pad-to-16
+    /// minimum which keeps the encoder happy on very short queries.
+    nonisolated static func computeEmbeddingVectors(
+        forTexts texts: [String],
+        model: EmbeddingModel,
+        tokenizer: Tokenizer,
+        pooling: Pooling
+    ) -> [[Float]] {
+        let tokenizedInputs: [[Int]] = texts.map { text in
+            tokenizer.encode(text: text, addSpecialTokens: true)
+        }
+        let paddingTokenId = tokenizer.eosTokenId ?? 0
+        let maxTokenCount = tokenizedInputs.reduce(into: 16) { runningMax, tokens in
+            runningMax = max(runningMax, tokens.count)
+        }
+        let paddedInputs = stacked(
+            tokenizedInputs.map { tokens in
+                let paddingCount = maxTokenCount - tokens.count
+                let paddedTokens = tokens + Array(repeating: paddingTokenId, count: paddingCount)
+                return MLXArray(paddedTokens)
+            }
+        )
+        let attentionMask = (paddedInputs .!= paddingTokenId)
+        let tokenTypeIds = MLXArray.zeros(like: paddedInputs)
+        let pooledOutput = pooling(
+            model(
+                paddedInputs,
+                positionIds: nil,
+                tokenTypeIds: tokenTypeIds,
+                attentionMask: attentionMask
+            ),
+            normalize: true,
+            applyLayerNorm: true
+        )
+        // `eval()` is mutating-void in current mlx-swift — call it
+        // for its side effect of materialising the lazy graph, then
+        // iterate the array along its leading axis (one row per
+        // input text).
+        pooledOutput.eval()
+        return pooledOutput.map { $0.asArray(Float.self) }
+    }
+
+    private static var cachedModelContainer: MLXEmbedders.ModelContainer?
     private static let modelLoadLock = NSLock()
 
-    private static func sharedModelContainer(modelIdentifier: String) async throws -> EmbeddingModelContainer {
+    private static func sharedModelContainer(modelIdentifier: String) async throws -> MLXEmbedders.ModelContainer {
         modelLoadLock.lock()
         let cached = cachedModelContainer
         modelLoadLock.unlock()
         if let cached { return cached }
 
-        let configuration = EmbeddingConfiguration(id: modelIdentifier)
-        let loaded = try await EmbeddingModelFactory.shared.loadContainer(configuration: configuration)
+        let configuration = MLXEmbedders.ModelConfiguration(id: modelIdentifier)
+        let loaded = try await MLXEmbedders.loadModelContainer(configuration: configuration)
 
         modelLoadLock.lock()
         cachedModelContainer = loaded

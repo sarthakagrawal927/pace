@@ -9,6 +9,9 @@
 /* Begin PBXBuildFile section */
 		2DD12CCA2FC82FE8009F8723 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB082F6500080039DA55 /* WhisperKit */; };
 		AA00BB032F6500030039DA55 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB022F6500020039DA55 /* Sparkle */; };
+		BB00CC052F6500050039DA55 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = BB00CC022F6500020039DA55 /* MLXLLM */; };
+		BB00CC062F6500060039DA55 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = BB00CC032F6500030039DA55 /* MLXLMCommon */; };
+		BB00CC072F6500070039DA55 /* MLXEmbedders in Frameworks */ = {isa = PBXBuildFile; productRef = BB00CC042F6500040039DA55 /* MLXEmbedders */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -72,6 +75,9 @@
 			files = (
 				2DD12CCA2FC82FE8009F8723 /* WhisperKit in Frameworks */,
 				AA00BB032F6500030039DA55 /* Sparkle in Frameworks */,
+				BB00CC052F6500050039DA55 /* MLXLLM in Frameworks */,
+				BB00CC062F6500060039DA55 /* MLXLMCommon in Frameworks */,
+				BB00CC072F6500070039DA55 /* MLXEmbedders in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -134,6 +140,9 @@
 			packageProductDependencies = (
 				AA00BB022F6500020039DA55 /* Sparkle */,
 				AA00BB082F6500080039DA55 /* WhisperKit */,
+				BB00CC022F6500020039DA55 /* MLXLLM */,
+				BB00CC032F6500030039DA55 /* MLXLMCommon */,
+				BB00CC042F6500040039DA55 /* MLXEmbedders */,
 			);
 			productName = "leanring-buddy";
 			productReference = 28F22CBF2F56440300A0FC59 /* Pace.app */;
@@ -220,6 +229,7 @@
 			packageReferences = (
 				AA00BB012F6500010039DA55 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				AA00BB072F6500070039DA55 /* XCRemoteSwiftPackageReference "WhisperKit" */,
+				BB00CC012F6500010039DA55 /* XCRemoteSwiftPackageReference "mlx-swift-examples" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 28F22CC02F56440300A0FC59 /* Products */;
@@ -629,6 +639,14 @@
 				minimumVersion = 1.0.0;
 			};
 		};
+		BB00CC012F6500010039DA55 /* XCRemoteSwiftPackageReference "mlx-swift-examples" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift-examples";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 2.29.1;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -641,6 +659,21 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AA00BB072F6500070039DA55 /* XCRemoteSwiftPackageReference "WhisperKit" */;
 			productName = WhisperKit;
+		};
+		BB00CC022F6500020039DA55 /* MLXLLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BB00CC012F6500010039DA55 /* XCRemoteSwiftPackageReference "mlx-swift-examples" */;
+			productName = MLXLLM;
+		};
+		BB00CC032F6500030039DA55 /* MLXLMCommon */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BB00CC012F6500010039DA55 /* XCRemoteSwiftPackageReference "mlx-swift-examples" */;
+			productName = MLXLMCommon;
+		};
+		BB00CC042F6500040039DA55 /* MLXEmbedders */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BB00CC012F6500010039DA55 /* XCRemoteSwiftPackageReference "mlx-swift-examples" */;
+			productName = MLXEmbedders;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
