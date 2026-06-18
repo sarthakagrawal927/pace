@@ -328,6 +328,17 @@ enum BuddyPlannerClientFactory {
     private static func makeLocalOrFoundationModelsPlanner(
         requestsStructuredActionOutput: Bool = true
     ) -> any BuddyPlannerClient {
+        // Bundled MLX trumps the configured LM Studio path when the
+        // user has opted in AND the runtime is linked. Power users
+        // keep LM Studio's larger model by leaving the toggle off.
+        if PaceBundledModelsSettings.isUsingMLXInProcessPlanner() {
+            let mlxPlanner = PaceMLXPlannerClient(
+                modelIdentifier: PaceBundledModelsSettings.plannerModelIdentifier()
+            )
+            print("🧠 Planner: using \(mlxPlanner.displayName) [bundled MLX]")
+            return mlxPlanner
+        }
+
         let configuredProviderRawValue = AppBundleConfiguration
             .stringValue(forKey: "PlannerProvider")?
             .lowercased()

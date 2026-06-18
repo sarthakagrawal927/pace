@@ -67,14 +67,28 @@ final class PaceChainedTextEmbeddingClient: PaceTextEmbedding {
 }
 
 extension PaceChainedTextEmbeddingClient {
-    /// Default factory: LM Studio primary, Apple NL fallback. Wired
-    /// into `CompanionManager`'s memory-recall path so semantic
-    /// retrieval keeps working even when the user has never installed
-    /// LM Studio. Keep this the only place that hard-codes the
-    /// preference order so the choice stays trivially auditable.
+    /// Default factory. Preference order:
+    ///   1. Bundled MLX (when SPM runtime is linked AND the user has
+    ///      opted into in-process embeddings) — zero LM Studio
+    ///      dependency, runs entirely in-process.
+    ///   2. LM Studio HTTP — the gold-quality nomic embedding when
+    ///      it's reachable; failure tips to the next fallback.
+    ///   3. Apple NL — always-available baseline that ships with
+    ///      every Mac. Lower quality but free.
+    ///
+    /// Keep this the only place that hard-codes the preference
+    /// order so the choice stays trivially auditable.
     static func makePaceDefault() -> PaceChainedTextEmbeddingClient {
-        PaceChainedTextEmbeddingClient(
-            primary: LMStudioEmbeddingClient(),
+        let primaryClient: any PaceTextEmbedding = {
+            if PaceBundledModelsSettings.isUsingMLXInProcessEmbedder() {
+                return PaceMLXEmbeddingClient(
+                    modelIdentifier: PaceBundledModelsSettings.embedderModelIdentifier()
+                )
+            }
+            return LMStudioEmbeddingClient()
+        }()
+        return PaceChainedTextEmbeddingClient(
+            primary: primaryClient,
             fallback: PaceAppleNLEmbeddingClient()
         )
     }
