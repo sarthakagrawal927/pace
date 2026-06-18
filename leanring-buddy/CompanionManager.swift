@@ -591,6 +591,14 @@ final class CompanionManager: ObservableObject {
     /// denied permission silently degrades to "never focused" so a
     /// missing permission can't lock Pace out of talking.
     let focusModeMonitor = PaceFocusModeMonitor()
+    /// Thermal-state advisor. Subscribes to
+    /// `ProcessInfo.thermalStateDidChangeNotification` and exposes a
+    /// typed `currentRecommendation` (unrestricted → dampen race →
+    /// dampen background loops → suspend background). Used as a gate
+    /// at the speculative-race site, watch-mode scheduler, and
+    /// prewarm task so a hot MacBook doesn't get hotter from Pace's
+    /// own concurrent workload.
+    let thermalStateAdvisor = PaceThermalStateAdvisor()
 
     /// Phase 3 recall: semantically ranks the unified index for the
     /// LOCAL CONTEXT block. Gated by `useUnifiedMemoryRecall` (default
@@ -3481,6 +3489,10 @@ You can turn this off at any time in Settings → Cloud bridge.
         // monitor always reports "not focused," matching the pre-
         // Focus-integration behaviour.
         focusModeMonitor.start()
+        // Subscribe to thermal-state changes. Gates the speculative
+        // race, watch mode cadence, and prewarm task so we don't
+        // pour fuel on a hot machine.
+        thermalStateAdvisor.start()
         // Resume the prior conversation across quit/relaunch. "Always,
         // until reset" — no staleness expiry; the file is only cleared on
         // an explicit thread reset or when the feature is disabled.
@@ -5459,7 +5471,16 @@ You can turn this off at any time in Settings → Cloud bridge.
                     // byte-identical to pre-race behavior.
                     let appleFoundationModelsIsAvailableForRace =
                         textOnlyPlannerClient is AppleFoundationModelsPlannerClient
+                    // Thermal gate: under `.fair` pressure or worse the
+                    // race's "extra planner call for ~150 ms TTFSW"
+                    // trade stops paying off — the OS will throttle us
+                    // externally anyway, and the second call mostly
+                    // burns battery + adds fan noise.
+                    let thermalAllowsSpeculativeRace = PaceThermalStateAdvisor.shouldRunSpeculativeRace(
+                        underRecommendation: thermalStateAdvisor.currentRecommendation
+                    )
                     let useSpeculativeRace = isFirstStep
+                        && thermalAllowsSpeculativeRace
                         && speculativeRaceShouldFire(
                             intent: intentPrediction.intent,
                             appleFoundationModelsIsAvailable: appleFoundationModelsIsAvailableForRace
