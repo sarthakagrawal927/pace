@@ -46,13 +46,25 @@ enum BuddyTranscriptionProviderFactory {
     static func makeDefaultProvider() -> any BuddyTranscriptionProvider {
         makeProvider(
             configuredProviderName: AppBundleConfiguration.stringValue(forKey: "TranscriptionProvider"),
-            isWhisperKitRuntimeAvailable: WhisperKitTranscriptionProvider.isRuntimeAvailable
+            isWhisperKitRuntimeAvailable: WhisperKitTranscriptionProvider.isRuntimeAvailable,
+            isWhisperKitModelInstalledOnDisk: isWhisperKitModelInstalledOnDisk()
         )
+    }
+
+    /// Cheap filesystem probe — the WhisperKit pipeline itself takes
+    /// ~1s to construct, which we don't want to pay at factory time
+    /// just to decide the default. Reading the file existence is
+    /// O(stat) and gives us the same signal: if the model isn't on
+    /// disk, WhisperKit's `download: false` initializer would throw
+    /// at first use, so we may as well not select it.
+    static func isWhisperKitModelInstalledOnDisk() -> Bool {
+        FileManager.default.fileExists(atPath: WhisperKitTranscriptionProvider.modelFolderURL.path)
     }
 
     static func makeProvider(
         configuredProviderName: String?,
-        isWhisperKitRuntimeAvailable: Bool
+        isWhisperKitRuntimeAvailable: Bool,
+        isWhisperKitModelInstalledOnDisk: Bool
     ) -> any BuddyTranscriptionProvider {
         let normalizedProviderName = configuredProviderName?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -64,14 +76,28 @@ enum BuddyTranscriptionProviderFactory {
         let provider: any BuddyTranscriptionProvider
         switch normalizedProviderName {
         case "whisperkit", "whisper":
-            if isWhisperKitRuntimeAvailable {
+            // Explicit user opt-in to WhisperKit.
+            if isWhisperKitRuntimeAvailable && isWhisperKitModelInstalledOnDisk {
                 provider = WhisperKitTranscriptionProvider()
             } else {
-                print("⚠️ Transcription: WhisperKit requested but runtime is unavailable; falling back to Apple Speech")
+                print("⚠️ Transcription: WhisperKit requested but runtime/model is unavailable; falling back to Apple Speech")
                 provider = AppleSpeechTranscriptionProvider(displayName: "Apple Speech (WhisperKit fallback)")
             }
-        case "applespeech", "apple", .none:
+        case "applespeech", "apple":
+            // Explicit user opt-in to Apple Speech.
             provider = AppleSpeechTranscriptionProvider()
+        case .none:
+            // No explicit preference. Auto-prefer WhisperKit when the
+            // model is already on disk — that's the install-time
+            // signal that the user provisioned the better backend and
+            // expects it to be used. Falls through to Apple Speech
+            // when WhisperKit is absent (zero-setup default).
+            if isWhisperKitRuntimeAvailable && isWhisperKitModelInstalledOnDisk {
+                print("🎙️ Transcription: auto-selecting WhisperKit (model detected on disk)")
+                provider = WhisperKitTranscriptionProvider()
+            } else {
+                provider = AppleSpeechTranscriptionProvider()
+            }
         default:
             print("⚠️ Transcription: unknown provider '\(configuredProviderName ?? "nil")'; falling back to Apple Speech")
             provider = AppleSpeechTranscriptionProvider()
