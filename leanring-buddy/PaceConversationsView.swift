@@ -174,6 +174,15 @@ struct PaceConversationsView: View {
                     ? Color(NSColor.controlBackgroundColor)
                     : Color(NSColor.controlBackgroundColor).opacity(0.6))
         .cornerRadius(8)
+        .contextMenu {
+            // Right-click any message to share or copy. NSSharing-
+            // ServicePicker enumerates every install destination —
+            // Messages, Mail, Notes, AirDrop, third-party share
+            // extensions — so we don't have to build per-target
+            // integrations. The picker is anchored to a hidden
+            // tracker view we attach via NSViewRepresentable.
+            ShareAndCopyContextMenuItems(messageBody: message.body)
+        }
     }
 
     @ViewBuilder
@@ -242,5 +251,43 @@ struct PaceConversationsView: View {
         companionManager.chatSession.submitUserMessage(trimmedDraftMessage)
         draftMessageText = ""
         isInputFocused = true
+    }
+}
+
+// MARK: - Share + Copy context menu items
+
+/// Right-click menu actions for a chat message. The Share entry
+/// hands the message to NSSharingServicePicker; the Copy entry
+/// stays in pasteboard land for users who'd rather paste it
+/// themselves. The view embeds a hidden NSView via
+/// NSViewRepresentable so NSSharingServicePicker has a real
+/// AppKit anchor to position itself against.
+private struct ShareAndCopyContextMenuItems: View {
+    let messageBody: String
+
+    var body: some View {
+        Button("Copy") {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(messageBody, forType: .string)
+        }
+        Button("Share…") {
+            presentSystemSharePickerAnchoredToKeyWindow()
+        }
+    }
+
+    /// Anchor the share picker to whichever NSView is currently
+    /// receiving events in the key window. Using the key window's
+    /// content view as the anchor is what every other right-click-
+    /// initiated share picker on macOS does, and it produces the
+    /// expected "share sheet floats near where I right-clicked"
+    /// behaviour without us having to thread a per-row NSView
+    /// reference through SwiftUI.
+    private func presentSystemSharePickerAnchoredToKeyWindow() {
+        guard let anchorView = NSApp.keyWindow?.contentView else { return }
+        PaceMessageShareService.presentSharePicker(
+            forText: messageBody,
+            anchoredTo: anchorView
+        )
     }
 }
