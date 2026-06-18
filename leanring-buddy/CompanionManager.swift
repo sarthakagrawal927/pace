@@ -579,6 +579,11 @@ final class CompanionManager: ObservableObject {
     /// nothing reads it yet. Phase 3 cuts recall over to it behind a flag.
     private let memoryIndex = PaceMemoryIndex()
     private let memoryStore = PaceMemoryStore()
+    /// One-way mirror into the system CoreSpotlight index so memories
+    /// are discoverable from Cmd+Space and other Spotlight surfaces.
+    /// Best-effort: any framework failure is silently absorbed by the
+    /// indexer — Spotlight mirroring never blocks a user-facing turn.
+    private let spotlightMemoryIndexer = PaceSpotlightMemoryIndexer()
 
     /// Phase 3 recall: semantically ranks the unified index for the
     /// LOCAL CONTEXT block. Gated by `useUnifiedMemoryRecall` (default
@@ -604,9 +609,13 @@ final class CompanionManager: ObservableObject {
     }
 
     /// Persist the whole index. Best-effort; the file is small for one
-    /// user and the store swallows any write failure.
+    /// user and the store swallows any write failure. Also mirrors the
+    /// active subset into CoreSpotlight on every save so the system
+    /// search index stays consistent with what's actually persisted.
     private func persistUnifiedMemory() {
-        memoryStore.save(memoryIndex.allEntries())
+        let allEntries = memoryIndex.allEntries()
+        memoryStore.save(allEntries)
+        spotlightMemoryIndexer.syncMirror(toMatch: allEntries)
     }
 
     /// Dual-write a completed conversation turn into the unified index.
