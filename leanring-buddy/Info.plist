@@ -69,6 +69,8 @@
 	<string>Pace uses calendar access only when you ask it to check your schedule.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Pace uses the camera only for the optional posture watch. Frames are analyzed on-device and never stored or sent anywhere.</string>
+	<key>NSFocusStatusUsageDescription</key>
+	<string>Pace checks your macOS Focus state so proactive nudges (morning brief, posture, fatigue) stay silent during Do Not Disturb, Work, Sleep, and other Focus modes.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Pace uses contacts access only to address local mail drafts by name and retrieve contact context locally when access is already granted.</string>
 	<key>NSMicrophoneUsageDescription</key>

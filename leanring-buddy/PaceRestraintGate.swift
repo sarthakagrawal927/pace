@@ -51,6 +51,40 @@ nonisolated struct PaceRestraintContext: Equatable {
     /// context value alone; callers that don't care should pass
     /// `.balanced` (the PRD default).
     let profile: PaceProactivityProfile
+    /// True when macOS reports a system Focus is active (Do Not
+    /// Disturb / Work / Sleep / Personal / Driving / etc.). Treated
+    /// as queue-until-idle, same semantics as `isOnActiveCall` —
+    /// the user has signalled "do not interrupt me," so a proactive
+    /// nudge waits until the Focus ends. Defaults to false so
+    /// existing call sites that haven't been updated keep their
+    /// pre-Focus-integration behaviour.
+    let isInUserFocusMode: Bool
+
+    init(
+        now: Date,
+        lastProactiveUtteranceAt: Date?,
+        lastEpisodicRecallAt: Date?,
+        lastUserInputAt: Date?,
+        frontmostAppBundleIdentifier: String?,
+        isOnActiveCall: Bool,
+        wakeWordConfidence: Double?,
+        intent: PaceIntent,
+        proactiveSource: PaceProactiveSource,
+        profile: PaceProactivityProfile,
+        isInUserFocusMode: Bool = false
+    ) {
+        self.now = now
+        self.lastProactiveUtteranceAt = lastProactiveUtteranceAt
+        self.lastEpisodicRecallAt = lastEpisodicRecallAt
+        self.lastUserInputAt = lastUserInputAt
+        self.frontmostAppBundleIdentifier = frontmostAppBundleIdentifier
+        self.isOnActiveCall = isOnActiveCall
+        self.wakeWordConfidence = wakeWordConfidence
+        self.intent = intent
+        self.proactiveSource = proactiveSource
+        self.profile = profile
+        self.isInUserFocusMode = isInUserFocusMode
+    }
 }
 
 nonisolated enum PaceRestraintDecision: Equatable {
@@ -126,6 +160,16 @@ nonisolated enum PaceRestraintGate {
         // arrives during a Zoom still speak the moment the call ends.
         if context.isOnActiveCall || frontmostAppLooksLikeActiveCall(context.frontmostAppBundleIdentifier) {
             return .queueUntilIdle(reason: "active call")
+        }
+
+        // macOS Focus modes (Do Not Disturb, Work, Sleep, Personal,
+        // Driving, etc.) — the user has explicitly signalled "do not
+        // interrupt me." Same queue-until-idle semantics as active
+        // call so the morning brief / fatigue nudge / posture nudge
+        // still speaks the moment the Focus ends, instead of being
+        // permanently dropped.
+        if context.isInUserFocusMode {
+            return .queueUntilIdle(reason: "macOS Focus active")
         }
 
         // Recent user input: queue the nudge for the .talkative /

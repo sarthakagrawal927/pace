@@ -584,6 +584,13 @@ final class CompanionManager: ObservableObject {
     /// Best-effort: any framework failure is silently absorbed by the
     /// indexer — Spotlight mirroring never blocks a user-facing turn.
     private let spotlightMemoryIndexer = PaceSpotlightMemoryIndexer()
+    /// macOS Focus state monitor. Feeds `isInUserFocusMode` into every
+    /// `PaceRestraintContext` we build, so proactive surfaces (morning
+    /// brief, posture, failure narrations) defer cleanly while the
+    /// user has a system Focus active. Starts itself in `start()`;
+    /// denied permission silently degrades to "never focused" so a
+    /// missing permission can't lock Pace out of talking.
+    let focusModeMonitor = PaceFocusModeMonitor()
 
     /// Phase 3 recall: semantically ranks the unified index for the
     /// LOCAL CONTEXT block. Gated by `useUnifiedMemoryRecall` (default
@@ -1704,7 +1711,8 @@ You can turn this off at any time in Settings → Cloud bridge.
             wakeWordConfidence: nil,
             intent: .pureKnowledge,
             proactiveSource: .morningTriage,
-            profile: proactivityProfile
+            profile: proactivityProfile,
+            isInUserFocusMode: focusModeMonitor.isCurrentlyInUserFocus
         )
     }
 
@@ -2160,7 +2168,8 @@ You can turn this off at any time in Settings → Cloud bridge.
             // filter we care about here.
             intent: .pureKnowledge,
             proactiveSource: .watchNudge,
-            profile: proactivityProfile
+            profile: proactivityProfile,
+            isInUserFocusMode: focusModeMonitor.isCurrentlyInUserFocus
         )
     }
 
@@ -3466,6 +3475,12 @@ You can turn this off at any time in Settings → Cloud bridge.
     func start() {
         refreshAllPermissions()
         loadPersistedToolCallDebugRecords()
+        // Begin observing macOS Focus state. Idempotent — only the
+        // first call triggers the one-shot INFocusStatus permission
+        // ask; the rest are no-ops. Denied permission means the
+        // monitor always reports "not focused," matching the pre-
+        // Focus-integration behaviour.
+        focusModeMonitor.start()
         // Resume the prior conversation across quit/relaunch. "Always,
         // until reset" — no staleness expiry; the file is only cleared on
         // an explicit thread reset or when the feature is disabled.
