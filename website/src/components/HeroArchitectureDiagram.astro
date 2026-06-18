@@ -1,0 +1,212 @@
+---
+// Patent-illustration-style schematic of Pace's on-device pipeline.
+// Thin lines, monospace labels, blueprint feel. Sits behind the hero
+// headline at low opacity — visible enough to read up close, quiet
+// enough not to fight the copy.
+//
+// Drawn entirely in SVG so it stays crisp at 4K. Coordinate system
+// is 1600×900 (viewBox) — Tailwind aspect lock + width:100% keeps
+// it bleeding edge-to-edge.
+//
+// Why this rather than a screenshot: nobody pretends a schematic
+// is a photograph. The whole point of patent drawings is they're
+// explanatory, not photorealistic. Pace's on-device pipeline is
+// the part of the product you can't see in a screenshot anyway —
+// this diagram is the part of Pace screenshots can't show.
+---
+
+<svg
+  class="pace-arch-diagram"
+  viewBox="0 0 1600 900"
+  xmlns="http://www.w3.org/2000/svg"
+  aria-hidden="true"
+  preserveAspectRatio="xMidYMid meet"
+>
+  <defs>
+    <!-- Subtle blueprint grid. 32px squares, ultra-faint white. -->
+    <pattern id="paceArchGrid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M 32 0 L 0 0 0 32" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="0.5" />
+    </pattern>
+    <!-- Larger 160px squares overlay for hierarchy. -->
+    <pattern id="paceArchGridLarge" width="160" height="160" patternUnits="userSpaceOnUse">
+      <path d="M 160 0 L 0 0 0 160" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="0.5" />
+    </pattern>
+    <marker id="paceArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(255,255,255,0.45)" />
+    </marker>
+    <marker id="paceArrowAccent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4f8bff" />
+    </marker>
+  </defs>
+
+  <!-- Grid background -->
+  <rect width="1600" height="900" fill="url(#paceArchGrid)" />
+  <rect width="1600" height="900" fill="url(#paceArchGridLarge)" />
+
+  <!-- ====== Top-left annotation (the "patent figure" label) ====== -->
+  <g font-family="ui-monospace, 'JetBrains Mono', monospace" fill="rgba(255,255,255,0.4)">
+    <text x="40" y="42" font-size="11" letter-spacing="2">FIG. 1 — PACE ON-DEVICE PIPELINE</text>
+    <text x="40" y="60" font-size="10" letter-spacing="1">v1.0 / macOS 14+ / Apple Silicon</text>
+    <line x1="40" y1="72" x2="280" y2="72" stroke="rgba(255,255,255,0.15)" stroke-width="0.5" />
+  </g>
+
+  <!-- ====== Microphone input (top-left) ====== -->
+  <g transform="translate(120, 140)">
+    <circle cx="0" cy="0" r="36" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="1.2" />
+    <circle cx="0" cy="0" r="26" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1" />
+    <rect x="-6" y="-18" width="12" height="22" rx="6" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="1.2" />
+    <line x1="0" y1="4" x2="0" y2="14" stroke="rgba(255,255,255,0.7)" stroke-width="1.2" />
+    <line x1="-10" y1="14" x2="10" y2="14" stroke="rgba(255,255,255,0.7)" stroke-width="1.2" />
+    <text x="0" y="62" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="rgba(255,255,255,0.55)" letter-spacing="1">MIC INPUT</text>
+    <text x="0" y="78" text-anchor="middle" font-family="ui-monospace, monospace" font-size="9" fill="rgba(255,255,255,0.35)">16 kHz · float32 · mono</text>
+  </g>
+
+  <!-- ====== Audio waveform between mic and ASR ====== -->
+  <g transform="translate(180, 140)">
+    <line x1="0" y1="0" x2="180" y2="0" stroke="rgba(255,255,255,0.15)" stroke-width="1" stroke-dasharray="2 4" />
+    <!-- Stylized waveform riding the dashed line -->
+    <path
+      d="M 10 0 L 18 -8 L 26 6 L 34 -14 L 42 10 L 50 -4 L 58 -18 L 66 14 L 74 -10 L 82 6 L 90 -8 L 98 16 L 106 -12 L 114 4 L 122 -6 L 130 12 L 138 -16 L 146 8 L 154 -4 L 162 10 L 170 0"
+      fill="none"
+      stroke="#4f8bff"
+      stroke-width="1.3"
+      stroke-linecap="round"
+      opacity="0.85"
+    />
+  </g>
+
+  <!-- ====== Block 1: WhisperKit ASR ====== -->
+  <g transform="translate(380, 100)">
+    <rect width="240" height="100" rx="3" fill="rgba(0,0,0,0.4)" stroke="rgba(255,255,255,0.5)" stroke-width="1.2" />
+    <text x="120" y="32" text-anchor="middle" font-family="'Instrument Serif', serif" font-size="22" fill="white" font-style="italic">WhisperKit</text>
+    <text x="120" y="52" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="rgba(255,255,255,0.5)" letter-spacing="1">large-v3-turbo / ANE</text>
+    <line x1="20" y1="64" x2="220" y2="64" stroke="rgba(255,255,255,0.15)" stroke-width="0.5" />
+    <text x="120" y="80" text-anchor="middle" font-family="ui-monospace, monospace" font-size="9" fill="rgba(255,255,255,0.4)">9× realtime · 1.5 GB on disk</text>
+    <text x="120" y="92" text-anchor="middle" font-family="ui-monospace, monospace" font-size="9" fill="rgba(255,255,255,0.4)">partials @ 1.2 s cadence</text>
+  </g>
+
+  <!-- Wire ASR → Planner -->
+  <g stroke="rgba(255,255,255,0.45)" stroke-width="1.2" fill="none">
+    <path d="M 620 150 L 700 150 L 700 350 L 760 350" marker-end="url(#paceArrow)" />
+  </g>
+  <text x="700" y="252" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="rgba(255,255,255,0.5)" transform="rotate(-90 700 252)" letter-spacing="1">transcript</text>
+
+  <!-- ====== Block 2: Screen context (parallel branch) ====== -->
+  <g transform="translate(120, 350)">
+    <!-- Screen icon -->
+    <rect x="0" y="0" width="100" height="70" rx="4" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="1.2" />
+    <line x1="0" y1="58" x2="100" y2="58" stroke="rgba(255,255,255,0.3)" stroke-width="1" />
+    <rect x="35" y="70" width="30" height="6" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1" />
+    <text x="50" y="98" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="rgba(255,255,255,0.55)" letter-spacing="1">SCREEN</text>
+    <text x="50" y="114" text-anchor="middle" font-family="ui-monospace, monospace" font-size="9" fill="rgba(255,255,255,0.35)">ScreenCaptureKit · JPEG</text>
+  </g>
+
+  <!-- ====== Block 3: VLM ====== -->
+  <g transform="translate(380, 320)">
+    <rect width="240" height="100" rx="3" fill="rgba(0,0,0,0.4)" stroke="rgba(255,255,255,0.5)" stroke-width="1.2" />
+    <text x="120" y="32" text-anchor="middle" font-family="'Instrument Serif', serif" font-size="22" fill="white" font-style="italic">Qwen3-VL-4B</text>
+    <text x="120" y="52" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="rgba(255,255,255,0.5)" letter-spacing="1">+ Vision OCR · + AX tree</text>
+    <line x1="20" y1="64" x2="220" y2="64" stroke="rgba(255,255,255,0.15)" stroke-width="0.5" />
+    <text x="120" y="80" text-anchor="middle" font-family="ui-monospace, monospace" font-size="9" fill="rgba(255,255,255,0.4)">element map · bbox + text</text>
+    <text x="120" y="92" text-anchor="middle" font-family="ui-monospace, monospace" font-size="9" fill="rgba(255,255,255,0.4)">4-bit · in-process MLX</text>
+  </g>
+  <!-- Wire screen → VLM -->
+  <g stroke="rgba(255,255,255,0.45)" stroke-width="1.2" fill="none">
+    <path d="M 220 385 L 380 370" marker-end="url(#paceArrow)" />
+  </g>
+
+  <!-- ====== Block 4: Planner (centerpiece) ====== -->
+  <g transform="translate(760, 280)">
+    <rect width="380" height="180" rx="3" fill="rgba(11,11,13,0.85)" stroke="#4f8bff" stroke-width="1.5" />
+    <text x="190" y="38" text-anchor="middle" font-family="'Instrument Serif', serif" font-size="28" fill="#4f8bff" font-style="italic">Planner</text>
+    <text x="190" y="60" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="rgba(255,255,255,0.6)" letter-spacing="1">Qwen3-4B-Instruct-2507 · bf16</text>
+    <line x1="30" y1="74" x2="350" y2="74" stroke="rgba(79,139,255,0.3)" stroke-width="0.5" />
+
+    <text x="44" y="98" font-family="ui-monospace, monospace" font-size="10" fill="rgba(255,255,255,0.55)">&lt;think&gt;</text>
+    <text x="56" y="116" font-family="ui-monospace, monospace" font-size="10" fill="rgba(255,255,255,0.75)">intent: open inbox, snap left</text>
+    <text x="56" y="132" font-family="ui-monospace, monospace" font-size="10" fill="rgba(255,255,255,0.75)">plan:   open_url; window:snap</text>
+    <text x="56" y="148" font-family="ui-monospace, monospace" font-size="10" fill="rgba(255,255,255,0.75)">risk:   none — reversible</text>
+    <text x="44" y="164" font-family="ui-monospace, monospace" font-size="10" fill="rgba(255,255,255,0.55)">&lt;/think&gt;</text>
+  </g>
+
+  <!-- Wire VLM → Planner (joins the transcript stream) -->
+  <g stroke="rgba(255,255,255,0.45)" stroke-width="1.2" fill="none">
+    <path d="M 620 370 L 760 370" marker-end="url(#paceArrow)" />
+  </g>
+
+  <!-- ====== Block 5: Action Executor ====== -->
+  <g transform="translate(1240, 280)">
+    <rect width="240" height="180" rx="3" fill="rgba(0,0,0,0.4)" stroke="rgba(255,255,255,0.5)" stroke-width="1.2" />
+    <text x="120" y="38" text-anchor="middle" font-family="'Instrument Serif', serif" font-size="22" fill="white" font-style="italic">Action Executor</text>
+    <text x="120" y="58" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="rgba(255,255,255,0.5)" letter-spacing="1">AX first · CGEvent fallback</text>
+    <line x1="20" y1="74" x2="220" y2="74" stroke="rgba(255,255,255,0.15)" stroke-width="0.5" />
+    <text x="120" y="98" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="rgba(255,255,255,0.55)">click · type · scroll</text>
+    <text x="120" y="116" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="rgba(255,255,255,0.55)">window · keys · clipboard</text>
+    <text x="120" y="134" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="rgba(255,255,255,0.55)">open_url · open_app</text>
+    <text x="120" y="152" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="rgba(255,255,255,0.55)">EventKit · AppleScript</text>
+    <text x="120" y="170" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="rgba(255,255,255,0.55)">MCP · App Intents</text>
+  </g>
+
+  <!-- Planner → Executor (the accent-coloured spine) -->
+  <g stroke="#4f8bff" stroke-width="1.5" fill="none">
+    <path d="M 1140 370 L 1240 370" marker-end="url(#paceArrowAccent)" />
+  </g>
+
+  <!-- ====== Block 6: TTS feedback loop ====== -->
+  <g transform="translate(760, 540)">
+    <rect width="380" height="76" rx="3" fill="rgba(0,0,0,0.4)" stroke="rgba(255,255,255,0.5)" stroke-width="1.2" />
+    <text x="190" y="32" text-anchor="middle" font-family="'Instrument Serif', serif" font-size="20" fill="white" font-style="italic">TTSKit · Qwen3 TTS</text>
+    <text x="190" y="54" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="rgba(255,255,255,0.5)" letter-spacing="1">streamed sentence-by-sentence · ANE</text>
+  </g>
+  <!-- Planner → TTS -->
+  <g stroke="rgba(255,255,255,0.45)" stroke-width="1.2" fill="none">
+    <path d="M 950 460 L 950 540" marker-end="url(#paceArrow)" />
+  </g>
+
+  <!-- ====== Memory loop ====== -->
+  <g transform="translate(1240, 540)">
+    <rect width="240" height="76" rx="3" fill="rgba(0,0,0,0.4)" stroke="rgba(255,255,255,0.5)" stroke-width="1.2" />
+    <text x="120" y="32" text-anchor="middle" font-family="'Instrument Serif', serif" font-size="20" fill="white" font-style="italic">Memory</text>
+    <text x="120" y="54" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="rgba(255,255,255,0.5)" letter-spacing="1">verbatim + summary · local JSON</text>
+  </g>
+  <!-- Executor → Memory -->
+  <g stroke="rgba(255,255,255,0.35)" stroke-width="1" fill="none" stroke-dasharray="3 4">
+    <path d="M 1360 460 L 1360 540" marker-end="url(#paceArrow)" />
+  </g>
+  <!-- Memory → Planner (the recall feedback) -->
+  <g stroke="rgba(255,255,255,0.35)" stroke-width="1" fill="none" stroke-dasharray="3 4">
+    <path d="M 1240 578 L 950 578 L 950 460" />
+  </g>
+
+  <!-- ====== "No network" boundary box around the whole thing ====== -->
+  <g stroke="rgba(52,211,153,0.45)" stroke-width="1" fill="none" stroke-dasharray="6 6">
+    <rect x="80" y="80" width="1440" height="600" rx="6" />
+  </g>
+  <g font-family="ui-monospace, monospace" fill="rgba(52,211,153,0.7)">
+    <text x="1520" y="74" text-anchor="end" font-size="11" letter-spacing="2">YOUR MAC ────────────────────────────────────────────</text>
+  </g>
+
+  <!-- ====== Bottom annotations ====== -->
+  <g font-family="ui-monospace, monospace" fill="rgba(255,255,255,0.35)">
+    <line x1="40" y1="730" x2="1560" y2="730" stroke="rgba(255,255,255,0.1)" stroke-width="0.5" />
+    <text x="40" y="752" font-size="10" letter-spacing="1.5">[A] Push-to-talk ⌃⌥ · 16 kHz capture · partials &lt;1.2 s</text>
+    <text x="40" y="770" font-size="10" letter-spacing="1.5">[B] Per-screen VLM cache · pixel-hash invalidation</text>
+    <text x="40" y="788" font-size="10" letter-spacing="1.5">[C] Plan-then-execute scaffold · ~420 ms TTFSW</text>
+    <text x="40" y="806" font-size="10" letter-spacing="1.5">[D] AX first · undo banner on every reversible mutation</text>
+    <text x="40" y="824" font-size="10" letter-spacing="1.5">[E] Streamed sentence dispatch · barge-in via VAD</text>
+
+    <text x="1560" y="752" text-anchor="end" font-size="10" letter-spacing="1.5">ON-DEVICE FRAMEWORKS:</text>
+    <text x="1560" y="770" text-anchor="end" font-size="10" letter-spacing="1.5">ScreenCaptureKit · Vision · AVAudioEngine</text>
+    <text x="1560" y="788" text-anchor="end" font-size="10" letter-spacing="1.5">Speech · EventKit · Contacts · NaturalLanguage</text>
+    <text x="1560" y="806" text-anchor="end" font-size="10" letter-spacing="1.5">Intents · CoreSpotlight · AppKit · SwiftUI</text>
+    <text x="1560" y="824" text-anchor="end" font-size="10" letter-spacing="1.5">mlx-swift · MLXLLM · MLXVLM · MLXEmbedders · TTSKit</text>
+  </g>
+</svg>
+
+<style>
+  .pace-arch-diagram {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+</style>
