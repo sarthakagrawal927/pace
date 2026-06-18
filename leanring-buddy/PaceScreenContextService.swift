@@ -713,10 +713,61 @@ final class PaceScreenContextService {
         let descriptionLine = trimmedDescription.isEmpty
             ? ""
             : "\nsummary: \(trimmedDescription)"
+
+        // NSDataDetector pass over the visible-on-screen text. Adds a
+        // small typed-entity block ahead of the element list so the
+        // planner can reference "PHONE: …" / "URL: …" / "DATE: …"
+        // directly instead of re-extracting them from raw OCR. The
+        // detector runs deterministically with zero LLM cost; the
+        // entities block stays compact (one line per entity, max ~10).
+        let detectedEntities = Self.detectScreenEntities(
+            fromElements: analysis.elements,
+            description: analysis.description
+        )
+        let detectedEntitiesBlock: String = {
+            guard let renderedBlock = PaceOCRDataDetector.renderEntitiesForPlannerPrompt(detectedEntities) else {
+                return ""
+            }
+            return "\non-screen data:\n\(renderedBlock)\n"
+        }()
         return """
-        === \(screenLabel) (\(elementCountSummary) elements) ===\(descriptionLine)
+        === \(screenLabel) (\(elementCountSummary) elements) ===\(descriptionLine)\(detectedEntitiesBlock)
         \(elementSummaryText)
         """
+    }
+
+    /// Concatenate the screen's visible text (element labels + text +
+    /// description) and run `NSDataDetector` once over the merged
+    /// string. Caps the entity list at 10 so a busy screen (e.g. a
+    /// contacts directory) doesn't bloat the planner prompt. Returned
+    /// entities are de-duplicated by `normalizedValue` so the same
+    /// phone number appearing in three places counts once.
+    nonisolated private static func detectScreenEntities(
+        fromElements elements: [LocalVLMScreenElement],
+        description: String
+    ) -> [PaceDetectedEntity] {
+        let textBlobsToScan = elements.compactMap { element -> String? in
+            let candidate = (element.text ?? "") + " " + element.label
+            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        let mergedScannableText = (textBlobsToScan + [description])
+            .joined(separator: "\n")
+        let allDetectedEntities = PaceOCRDataDetector.detectEntities(in: mergedScannableText)
+
+        // Dedupe by normalizedValue. Preserve first-seen order so the
+        // top-of-screen entity stays at the top of the rendered list
+        // — a small but real signal for which one the user means.
+        var seenNormalizedValues: Set<String> = []
+        var dedupedEntities: [PaceDetectedEntity] = []
+        for entity in allDetectedEntities {
+            if !seenNormalizedValues.contains(entity.normalizedValue) {
+                seenNormalizedValues.insert(entity.normalizedValue)
+                dedupedEntities.append(entity)
+            }
+            if dedupedEntities.count >= 10 { break }
+        }
+        return dedupedEntities
     }
 
     /// SHA256 of the JPEG byte stream. Stable across runs, ~5ms for a
