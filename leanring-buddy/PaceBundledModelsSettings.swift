@@ -32,9 +32,44 @@ nonisolated enum PaceBundledModelsSettings {
     private static let bundledEmbedderModelKey = "pace.bundledModels.embedderModelIdentifier"
     private static let bundledVLMModelKey = "pace.bundledModels.vlmModelIdentifier"
 
-    nonisolated static let defaultPlannerModelIdentifier = "mlx-community/Qwen3-4B-Instruct-4bit"
-    nonisolated static let defaultEmbedderModelIdentifier = "mlx-community/nomic-embed-text-v1.5"
-    nonisolated static let defaultVLMModelIdentifier = "mlx-community/Qwen3-VL-4B-Instruct-4bit"
+    // Compile-time fallback identifiers. Used when:
+    //   - The corresponding Info.plist key is missing (e.g. running
+    //     from a dev build that hasn't been updated yet)
+    //   - The Info.plist value is blank
+    //
+    // The Info.plist keys (BundledMLXPlannerModelIdentifier etc.)
+    // are the SHIPPING surface. Future releases bump those keys to
+    // point at Pace-tuned models (e.g. `pace-ai/pace-planner-v1`)
+    // without touching this source file.
+    nonisolated static let compileTimeFallbackPlannerModelIdentifier = "mlx-community/Qwen3-4B-Instruct-4bit"
+    nonisolated static let compileTimeFallbackEmbedderModelIdentifier = "mlx-community/nomic-embed-text-v1.5"
+    nonisolated static let compileTimeFallbackVLMModelIdentifier = "mlx-community/Qwen3-VL-4B-Instruct-4bit"
+
+    // The default-identifier accessors prefer the Info.plist
+    // manifest, falling back to the compile-time constants when
+    // unset. This lets a Sparkle release push a new bundled-model
+    // default by updating the Info.plist alone — no code change to
+    // this file.
+    nonisolated static var defaultPlannerModelIdentifier: String {
+        modelIdentifierFromInfoPlist(key: "BundledMLXPlannerModelIdentifier")
+            ?? compileTimeFallbackPlannerModelIdentifier
+    }
+    nonisolated static var defaultEmbedderModelIdentifier: String {
+        modelIdentifierFromInfoPlist(key: "BundledMLXEmbedderModelIdentifier")
+            ?? compileTimeFallbackEmbedderModelIdentifier
+    }
+    nonisolated static var defaultVLMModelIdentifier: String {
+        modelIdentifierFromInfoPlist(key: "BundledMLXVLMModelIdentifier")
+            ?? compileTimeFallbackVLMModelIdentifier
+    }
+
+    nonisolated private static func modelIdentifierFromInfoPlist(key: String) -> String? {
+        guard let rawValue = Bundle.main.object(forInfoDictionaryKey: key) as? String else {
+            return nil
+        }
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 
     /// True when the user has opted in AND the runtime is linked.
     /// The runtime check uses `PaceMLXPlannerClient.isRuntimeAvailable`
