@@ -1,6 +1,7 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Nav from "../components/Nav.astro";
+import ScrollProgress from "../components/ScrollProgress.astro";
 import MouseSpotlight from "../components/MouseSpotlight.astro";
 import CursorFollower from "../components/CursorFollower.astro";
 import SpecMarquee from "../components/SpecMarquee.astro";
@@ -12,7 +13,7 @@ import Comparison from "../components/Comparison.astro";
 import Pricing from "../components/Pricing.astro";
 import SocialProof from "../components/SocialProof.astro";
 import FAQ from "../components/FAQ.astro";
-import Footer from "../components/Footer.astro";
+import LiveByteCounter from "../components/LiveByteCounter.astro";
 
 const description = "Talk to your Mac. Pace listens, reads your screen, and clicks for you — all on your own silicon. No accounts, no cloud, no monthly bill. One-time $29.";
 ---
@@ -21,6 +22,7 @@ const description = "Talk to your Mac. Pace listens, reads your screen, and clic
   <!-- Global decoration layers: ambient spotlight tracking the
        mouse + a custom blue cursor that mirrors Pace's actual
        in-app cursor. Both no-op on touch / coarse-pointer devices. -->
+  <ScrollProgress />
   <MouseSpotlight />
   <CursorFollower />
   <PageEnhancements />
@@ -36,5 +38,5 @@ const description = "Talk to your Mac. Pace listens, reads your screen, and clic
     <Pricing />
     <FAQ />
   </main>
-  <Footer />
+  <LiveByteCounter />
 </BaseLayout>

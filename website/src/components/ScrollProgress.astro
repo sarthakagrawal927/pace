@@ -1,0 +1,66 @@
+---
+// Thin top-edge progress bar that tracks how far the visitor has
+// scrolled. Subtle premium detail every great editorial site uses
+// (NYT, The Verge, Stripe). 3px tall, accent colour, fixed top.
+//
+// Implementation note: tied to scrollY / documentHeight, throttled
+// to requestAnimationFrame. No deps.
+---
+
+<div class="pace-scroll-progress" aria-hidden="true">
+  <div class="pace-scroll-progress-fill" data-pace-progress-fill></div>
+</div>
+
+<script is:inline>
+  (function attachPaceScrollProgress() {
+    const fillEl = document.querySelector("[data-pace-progress-fill]");
+    if (!fillEl) return;
+
+    let queuedFrame = false;
+
+    function updateProgress() {
+      queuedFrame = false;
+      const totalScrollable =
+        document.documentElement.scrollHeight - window.innerHeight;
+      const fraction = totalScrollable > 0
+        ? Math.min(1, Math.max(0, window.scrollY / totalScrollable))
+        : 0;
+      fillEl.style.transform = `scaleX(${fraction})`;
+    }
+
+    window.addEventListener("scroll", () => {
+      if (!queuedFrame) {
+        queuedFrame = true;
+        requestAnimationFrame(updateProgress);
+      }
+    }, { passive: true });
+
+    updateProgress();
+  })();
+</script>
+
+<style>
+  .pace-scroll-progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: transparent;
+    z-index: 1000;
+    pointer-events: none;
+  }
+  .pace-scroll-progress-fill {
+    height: 100%;
+    background: linear-gradient(
+      90deg,
+      var(--color-accent) 0%,
+      color-mix(in oklab, var(--color-accent) 70%, white) 100%
+    );
+    transform-origin: left center;
+    transform: scaleX(0);
+    box-shadow: 0 0 12px rgba(79, 139, 255, 0.6);
+    transition: transform 100ms linear;
+    will-change: transform;
+  }
+</style>

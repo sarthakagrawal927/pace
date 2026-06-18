@@ -1,0 +1,158 @@
+---
+// The closing punchline reworked as a live counter. Tracks the
+// user's seconds-on-page, multiplies by a plausible cloud-voice-
+// assistant upload rate, and renders the running total Pace would
+// have sent if it were cloud-backed. Pace's actual number stays
+// at zero — that's the joke.
+//
+// Cloud rate estimate: 16 kbit/s for compressed Opus audio + a
+// few KB/s for screen-context uploads + telemetry. Industry
+// average for voice-screen assistants is somewhere in the 30-60
+// KB/s range; I'm rounding down to 32 KB/s to keep the claim
+// defensible — actual products in this category are typically
+// worse than the number we're going to show.
+//
+// Math:
+//   bytes_per_sec = 32_000   (conservative for a voice+vision agent)
+//   seconds_on_page = Date.now()/1000 - load_time
+//   total = bytes_per_sec × seconds_on_page
+//
+// Renders both as raw bytes and KB so the comparison is concrete.
+---
+
+<footer class="px-6 pt-32 pb-16 border-t border-[var(--color-border-subtle)] mt-20">
+  <div class="max-w-5xl mx-auto">
+    <!-- ───── Live counter section ───── -->
+    <div class="mb-28 md:mb-36">
+      <p
+        class="text-center text-sm font-mono uppercase tracking-[0.3em] text-[var(--color-text-muted)] mb-12"
+      >
+        While you've been here · <span data-pace-seconds-elapsed>0</span>s
+      </p>
+
+      <div class="grid md:grid-cols-2 gap-10 md:gap-16 items-center">
+        <!-- Left: the comparison number — what a cloud-backed
+             assistant WOULD have shipped in this time -->
+        <div class="text-center md:text-right">
+          <p class="text-xs font-mono uppercase tracking-widest text-[var(--color-text-muted)] mb-4">
+            A cloud voice assistant uploads
+          </p>
+          <div
+            class="pace-display text-[var(--color-text-secondary)] tabular-nums"
+            style="font-size: clamp(3.5rem, 9vw, 6.5rem); line-height: 0.9;"
+          >
+            <span data-pace-cloud-bytes>0</span>
+            <span class="text-[var(--color-text-muted)] text-3xl md:text-5xl ml-2">KB</span>
+          </div>
+          <p class="pace-margin-note text-sm mt-3">
+            estimated at ~32 KB/s · audio + screen + telemetry
+          </p>
+        </div>
+
+        <!-- Right: Pace's number (always zero, big and green) -->
+        <div class="text-center md:text-left">
+          <p class="text-xs font-mono uppercase tracking-widest text-[var(--color-text-muted)] mb-4">
+            Pace uploaded
+          </p>
+          <div
+            class="pace-display text-[var(--color-positive)] tabular-nums"
+            style="font-size: clamp(6rem, 16vw, 13rem); line-height: 0.85;"
+          >
+            0
+          </div>
+          <p class="pace-margin-note text-sm mt-3">
+            same number tomorrow · and the day after that
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ───── Signed letter ───── -->
+    <div class="max-w-2xl mx-auto pace-prose mb-20">
+      <p
+        class="pace-margin-note text-[var(--color-text-muted)] mb-6 not-italic font-mono text-xs uppercase tracking-wider"
+      >
+        A note from me
+      </p>
+      <p>
+        I built Pace because every assistant I tried either lived in someone
+        else's data center or couldn't actually <em>do</em> anything. I wanted
+        Siri's reach with a local model's privacy and a real agent's hands.
+        Nobody was making it, so I did.
+      </p>
+      <p>
+        If you try it and the third turn feels worse than I promised, email
+        me directly. I'll refund you. That's the whole quality bar — if it's
+        not working for you, you shouldn't be paying for it.
+      </p>
+      <p class="pace-display text-2xl text-white mt-8 not-italic">
+        — <em>Sarthak</em>
+      </p>
+      <p class="text-sm text-[var(--color-text-muted)] mt-1">
+        <a href="mailto:hi@sarthakagrawal.dev" class="underline hover:text-white"
+          >hi@sarthakagrawal.dev</a
+        >
+      </p>
+    </div>
+
+    <!-- ───── Bottom chrome ───── -->
+    <div
+      class="border-t border-[var(--color-border-subtle)] pt-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 text-sm text-[var(--color-text-muted)]"
+    >
+      <div class="flex items-center gap-2 text-white">
+        <span class="inline-flex items-end gap-[3px] h-5 w-6 text-[var(--color-accent)]" aria-hidden="true">
+          <span class="pace-bar h-3"></span>
+          <span class="pace-bar h-5"></span>
+          <span class="pace-bar h-4"></span>
+          <span class="pace-bar h-3"></span>
+        </span>
+        <span class="font-semibold">Pace</span>
+        <span class="text-[var(--color-text-muted)] ml-2 hidden md:inline">·</span>
+        <span class="text-[var(--color-text-muted)] text-xs hidden md:inline">
+          made for macOS in California
+        </span>
+      </div>
+
+      <div class="flex items-center gap-6 text-xs">
+        <a href="/privacy" class="hover:text-white transition-colors">Privacy</a>
+        <a href="/terms" class="hover:text-white transition-colors">Terms</a>
+        <a href="mailto:hi@sarthakagrawal.dev" class="hover:text-white transition-colors">Email</a>
+        <span>© 2026</span>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script is:inline>
+  (function attachPaceLiveCounters() {
+    const cloudBytesEl = document.querySelector("[data-pace-cloud-bytes]");
+    const secondsElapsedEl = document.querySelector("[data-pace-seconds-elapsed]");
+    if (!cloudBytesEl || !secondsElapsedEl) return;
+
+    const cloudBytesPerSecond = 32000;
+    const pageLoadTimestamp = performance.now();
+    let lastRenderedSeconds = -1;
+
+    function formatKBFromBytes(bytes) {
+      const kilobytes = bytes / 1024;
+      if (kilobytes < 10) return kilobytes.toFixed(2);
+      if (kilobytes < 1000) return kilobytes.toFixed(1);
+      // Use locale-aware grouping over 1000 — feels more legible
+      // than 19483.7 KB
+      return Math.round(kilobytes).toLocaleString("en-US");
+    }
+
+    function tick() {
+      const elapsedSeconds = Math.floor((performance.now() - pageLoadTimestamp) / 1000);
+      if (elapsedSeconds !== lastRenderedSeconds) {
+        lastRenderedSeconds = elapsedSeconds;
+        secondsElapsedEl.textContent = String(elapsedSeconds);
+        const cloudUploadedBytes = elapsedSeconds * cloudBytesPerSecond;
+        cloudBytesEl.textContent = formatKBFromBytes(cloudUploadedBytes);
+      }
+      requestAnimationFrame(tick);
+    }
+
+    requestAnimationFrame(tick);
+  })();
+</script>

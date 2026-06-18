@@ -9,7 +9,41 @@ interface Props {
 
 const { title, description, pathname = "/" } = Astro.props;
 const canonicalURL = new URL(pathname, Astro.site ?? "https://pace.app").toString();
-const ogImageURL = new URL("/og-image.png", Astro.site ?? "https://pace.app").toString();
+const ogImageURL = new URL("/og-image.svg", Astro.site ?? "https://pace.app").toString();
+
+// JSON-LD structured data — gives Google + LLM crawlers a clean
+// machine-readable picture of what Pace is, what it costs, and how
+// to find it. Cheap SEO win.
+const productSchema = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "Pace",
+  applicationCategory: "UtilitiesApplication",
+  operatingSystem: "macOS 14+",
+  description,
+  url: canonicalURL,
+  image: ogImageURL,
+  offers: {
+    "@type": "Offer",
+    price: "29.00",
+    priceCurrency: "USD",
+    availability: "https://schema.org/InStock",
+  },
+  publisher: {
+    "@type": "Person",
+    name: "Sarthak Agrawal",
+    email: "hi@sarthakagrawal.dev",
+  },
+  featureList: [
+    "On-device voice control",
+    "Local vision model for screen reading",
+    "On-device speech recognition (WhisperKit / Apple Speech)",
+    "Plan-then-execute LLM scaffold",
+    "App Intents · Shortcuts · Spotlight integration",
+    "Persistent local memory",
+    "No cloud, no accounts, no subscription",
+  ],
+};
 ---
 
 <!doctype html>
@@ -48,6 +82,9 @@ const ogImageURL = new URL("/og-image.png", Astro.site ?? "https://pace.app").to
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap"
     />
+
+    <!-- JSON-LD structured data for SEO + LLM crawlers. -->
+    <script type="application/ld+json" set:html={JSON.stringify(productSchema)} />
   </head>
   <body class="min-h-screen">
     <slot />
