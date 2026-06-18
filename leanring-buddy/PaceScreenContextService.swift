@@ -660,13 +660,59 @@ final class PaceScreenContextService {
             )
         }
         guard !perScreenPromptSections.isEmpty else { return transcript }
+
+        // IDE-aware code context. When the frontmost app is a
+        // recognised IDE and we can read its window title, prepend a
+        // tiny block naming the IDE + focused file. The planner uses
+        // this to answer "what does this function do" / "summarize
+        // this file" / "rename this variable" without having to
+        // extract the filename from raw OCR'd code.
+        let ideContextBlock: String = {
+            let frontmostBundleIdentifier = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            let frontmostWindowTitle = Self.frontmostWindowTitleForFrontmostApp()
+            guard let detectedContext = PaceIDEContextDetector.detect(
+                frontmostBundleIdentifier: frontmostBundleIdentifier,
+                frontmostWindowTitle: frontmostWindowTitle
+            ) else {
+                return ""
+            }
+            return "Editor context:\n\(PaceIDEContextDetector.renderForPlannerPrompt(detectedContext))\n\n"
+        }()
+
         return """
-        On-device screen analysis (auto-extracted by a local vision model + native OCR):
+        \(ideContextBlock)On-device screen analysis (auto-extracted by a local vision model + native OCR):
 
         \(perScreenPromptSections.joined(separator: "\n\n"))
 
         User said: \(transcript)
         """
+    }
+
+    /// Read the window title of the frontmost app's keyWindow via
+    /// `CGWindowListCopyWindowInfo`. ~1 ms; no AX permission required
+    /// because window-title metadata is exposed by the window server
+    /// for all on-screen windows. Returns nil for apps that don't
+    /// expose their window name (rare — most apps including every
+    /// IDE we care about set it).
+    nonisolated static func frontmostWindowTitleForFrontmostApp() -> String? {
+        guard let frontmostProcessIdentifier = NSWorkspace.shared.frontmostApplication?.processIdentifier else {
+            return nil
+        }
+        let windowInfoListOption: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windowInfoList = CGWindowListCopyWindowInfo(windowInfoListOption, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+        for windowInfo in windowInfoList {
+            guard let ownerProcessIdentifier = windowInfo[kCGWindowOwnerPID as String] as? Int32 else { continue }
+            guard ownerProcessIdentifier == frontmostProcessIdentifier else { continue }
+            // Skip windows with no title — they're usually system
+            // overlays or background helpers, not the user's main
+            // document.
+            guard let windowTitle = windowInfo[kCGWindowName as String] as? String,
+                  !windowTitle.isEmpty else { continue }
+            return windowTitle
+        }
+        return nil
     }
 
     /// Render one screen's element map into the planner-prompt block.
