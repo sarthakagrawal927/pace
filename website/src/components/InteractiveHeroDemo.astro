@@ -1,0 +1,372 @@
+---
+// The page's signature interactive moment. Click the on-page PTT
+// button — or press ⌃⌥ on your keyboard, the real Pace shortcut —
+// to watch the schematic light up and the callout cycle through
+// three different example turns.
+//
+// State machine: idle → listening → thinking → executing → done →
+// (idle for next iteration). Driven by inline JS that swaps a
+// data-attribute on the root element; CSS reads that attribute
+// and animates accordingly. No framework, no client-side rendering
+// overhead beyond ~80 lines of script.
+//
+// Why this exists: every other Mac voice-agent landing page tells
+// you what the product does. This one lets you trigger it.
+
+const exampleTurns = [
+  {
+    transcript: "open my inbox and snap it left",
+    intent: "open inbox, snap window left",
+    plan: "open_url; window:snap_left",
+    risk: "none — reversible",
+    spoken: "Opening Mail and snapping left.",
+    actions: [
+      { tool: "open_url", key: "url", value: '"mail.app"' },
+      { tool: "window", key: "action", value: '"snap_left"' },
+    ],
+  },
+  {
+    transcript: "what time is my next meeting",
+    intent: "read calendar, return next event",
+    plan: "single read — calendar.next",
+    risk: "none",
+    spoken: "Stand-up at 9:30. About forty minutes from now.",
+    actions: [
+      { tool: "calendar", key: "action", value: '"next_event"' },
+    ],
+  },
+  {
+    transcript: "remember I use firefox as my browser",
+    intent: "persist browser preference",
+    plan: "memory.set preferred_browser",
+    risk: "none — reversible",
+    spoken: "Got it. Firefox is your default from now on.",
+    actions: [
+      { tool: "memory", key: "key", value: '"preferred_browser"' },
+      { tool: "memory", key: "value", value: '"Firefox"' },
+    ],
+  },
+];
+
+// Stringify once for safe embedding in the inline <script>. JSON
+// is safe inside a `data-` attribute because nothing in our
+// payload contains the closing `"`-greater-than sequence.
+const exampleTurnsJSON = JSON.stringify(exampleTurns);
+---
+
+<div class="pace-interactive-demo" data-pace-state="idle">
+  <!-- The PTT button itself — looks like a key chip cluster. The
+       JS below toggles `data-pace-state` to drive the animation. -->
+  <button class="pace-ptt-button" type="button" aria-label="Trigger a demo Pace turn">
+    <span class="pace-ptt-key-chip">⌃</span>
+    <span class="pace-ptt-plus">+</span>
+    <span class="pace-ptt-key-chip">⌥</span>
+    <span class="pace-ptt-divider"></span>
+    <span class="pace-ptt-label">Press to demo</span>
+    <span class="pace-ptt-state" data-pace-state-text>idle</span>
+  </button>
+
+  <p class="pace-ptt-hint-text">
+    or hit <kbd>⌃⌥</kbd> on this page — same shortcut Pace uses on your Mac
+  </p>
+</div>
+
+<!-- Pre-rendered turn data for the JS to read. Avoids inlining a
+     fragile string-template inside the script. -->
+<div hidden data-pace-turns set:html={exampleTurnsJSON}></div>
+
+<script is:inline>
+  (function attachPaceInteractiveDemo() {
+    const root = document.querySelector(".pace-interactive-demo");
+    if (!root) return;
+
+    const stateTextEl = root.querySelector("[data-pace-state-text]");
+    const ptt = root.querySelector(".pace-ptt-button");
+    const turnsJSON = document.querySelector("[data-pace-turns]")?.textContent;
+    if (!turnsJSON) return;
+
+    let exampleTurns;
+    try {
+      exampleTurns = JSON.parse(turnsJSON);
+    } catch {
+      return;
+    }
+    if (!Array.isArray(exampleTurns) || exampleTurns.length === 0) return;
+
+    // The callout in the schematic — we mutate its DOM as the
+    // demo progresses so the visitor sees the turn unfold in the
+    // exact place the schematic claims it happens.
+    const callout = document.querySelector(".pace-callout");
+    if (!callout) return;
+
+    // Cache the original callout HTML so we can restore it on
+    // return-to-idle and not destroy the static design.
+    const idleCalloutHTML = callout.innerHTML;
+
+    let turnIndex = 0;
+    let demoActive = false;
+
+    function setState(stateName) {
+      root.setAttribute("data-pace-state", stateName);
+      if (stateTextEl) stateTextEl.textContent = stateName;
+      // The schematic frame reads the same data-attribute so the
+      // wire animations can accelerate during demo. (Wired below
+      // via the .pace-schematic-frame[data-pace-active] selector.)
+      const frame = document.querySelector(".pace-schematic-frame");
+      if (frame) frame.setAttribute("data-pace-active", stateName);
+    }
+
+    function renderTurnCallout(turn, phase) {
+      // Phase: "listening" → only transcript visible
+      //        "thinking" → transcript + <think> block streaming
+      //        "executing" → transcript + think + actions
+      //        "done" → transcript + think + actions + ✓
+      let html = "";
+
+      html += '<div class="text-[10px] font-mono uppercase tracking-widest text-[var(--color-text-muted)] mb-2 flex items-center gap-2">';
+      html += '<span class="w-1.5 h-1.5 rounded-full bg-[var(--color-accent)] inline-block animate-pulse"></span>';
+      html += "Live turn · " + phase;
+      html += "</div>";
+
+      html += '<p class="text-sm text-white leading-relaxed mb-3">"' + turn.transcript + '"</p>';
+
+      if (phase !== "listening") {
+        html += '<div class="pl-2 border-l border-[var(--color-border-subtle)] mb-3">';
+        html += '<div class="font-mono text-[10px] text-[var(--color-text-muted)]">&lt;think&gt;</div>';
+        html += '<div class="font-mono text-[10.5px] text-white/80 leading-relaxed">';
+        html += '<span class="text-[var(--color-text-muted)]">intent:</span> ' + turn.intent + "<br>";
+        html += '<span class="text-[var(--color-text-muted)]">plan:</span>   ' + turn.plan + "<br>";
+        html += '<span class="text-[var(--color-text-muted)]">risk:</span>   ' + turn.risk;
+        html += "</div>";
+        html += '<div class="font-mono text-[10px] text-[var(--color-text-muted)]">&lt;/think&gt;</div>';
+        html += "</div>";
+      }
+
+      if (phase === "executing" || phase === "done") {
+        html += '<div class="text-[12px] text-[var(--color-accent)] mb-2">' + turn.spoken + "</div>";
+        html += '<div class="font-mono text-[10.5px] text-white/70 bg-black/50 border border-[var(--color-border-subtle)] rounded-md px-2.5 py-2 leading-relaxed">';
+        for (const action of turn.actions) {
+          html += "<div>";
+          html += '<span class="text-[var(--color-text-muted)]">{tool:</span> ';
+          html += '<span class="text-[var(--color-accent)]">' + action.tool + "</span>";
+          html += '<span class="text-[var(--color-text-muted)]">, ' + action.key + ":</span> ";
+          html += '<span class="text-[var(--color-positive)]">' + action.value + "</span>";
+          html += '<span class="text-[var(--color-text-muted)]">}</span>';
+          html += "</div>";
+        }
+        html += "</div>";
+      }
+
+      if (phase === "done") {
+        html += '<div class="mt-2 flex items-center gap-1.5 text-[11px] text-[var(--color-positive)]">';
+        html += "<span>✓</span><span>0 bytes off-device</span>";
+        html += "</div>";
+      }
+
+      callout.innerHTML = html;
+    }
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    async function runDemoTurn() {
+      if (demoActive) return;
+      demoActive = true;
+
+      const turn = exampleTurns[turnIndex % exampleTurns.length];
+      turnIndex += 1;
+
+      setState("listening");
+      renderTurnCallout(turn, "listening");
+      await sleep(1100);
+
+      setState("thinking");
+      renderTurnCallout(turn, "thinking");
+      await sleep(1400);
+
+      setState("executing");
+      renderTurnCallout(turn, "executing");
+      await sleep(1200);
+
+      setState("done");
+      renderTurnCallout(turn, "done");
+      await sleep(2000);
+
+      setState("idle");
+      callout.innerHTML = idleCalloutHTML;
+      demoActive = false;
+    }
+
+    ptt.addEventListener("click", runDemoTurn);
+
+    // Page-wide keyboard shortcut. ⌃⌥ on Mac, Ctrl+Alt elsewhere —
+    // mirrors Pace's actual PTT shortcut so the gag lands for
+    // anyone who knows the app.
+    let ctrlHeld = false;
+    let altHeld = false;
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Control" || event.ctrlKey) ctrlHeld = true;
+      if (event.key === "Alt" || event.altKey) altHeld = true;
+      if (ctrlHeld && altHeld && !demoActive) {
+        runDemoTurn();
+        // Don't preempt browser shortcuts that legitimately use this combo.
+      }
+    });
+    window.addEventListener("keyup", (event) => {
+      if (event.key === "Control") ctrlHeld = false;
+      if (event.key === "Alt") altHeld = false;
+    });
+  })();
+</script>
+
+<style>
+  .pace-interactive-demo {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .pace-ptt-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 18px 10px 14px;
+    background: linear-gradient(180deg, rgba(11, 11, 13, 0.95), rgba(0, 0, 0, 0.95));
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 12px;
+    color: white;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+      border-color 200ms ease,
+      transform 200ms ease,
+      box-shadow 300ms ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .pace-ptt-button::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: 12px;
+    padding: 1px;
+    background: linear-gradient(
+      135deg,
+      transparent 30%,
+      rgba(79, 139, 255, 0.4) 50%,
+      transparent 70%
+    );
+    -webkit-mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    opacity: 0;
+    transition: opacity 250ms ease;
+  }
+  .pace-ptt-button:hover {
+    transform: translateY(-1px);
+    box-shadow:
+      0 8px 20px -4px rgba(0, 0, 0, 0.6),
+      0 0 24px -6px rgba(79, 139, 255, 0.3);
+  }
+  .pace-ptt-button:hover::before {
+    opacity: 1;
+  }
+  .pace-ptt-button:active {
+    transform: translateY(0);
+  }
+
+  .pace-ptt-key-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 28px;
+    padding: 0 8px;
+    background: var(--color-surface-raised);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: white;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset;
+    transition: all 200ms ease;
+  }
+
+  .pace-ptt-plus {
+    color: var(--color-text-muted);
+    font-size: 12px;
+  }
+
+  .pace-ptt-divider {
+    width: 1px;
+    height: 18px;
+    background: var(--color-border-subtle);
+    margin: 0 4px;
+  }
+
+  .pace-ptt-label {
+    font-weight: 500;
+  }
+
+  .pace-ptt-state {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.05);
+    min-width: 70px;
+    text-align: center;
+    transition: all 250ms ease;
+  }
+
+  /* State-driven button appearance */
+  .pace-interactive-demo[data-pace-state="listening"] .pace-ptt-key-chip {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    box-shadow:
+      0 0 0 4px rgba(79, 139, 255, 0.2),
+      0 0 16px -2px rgba(79, 139, 255, 0.6);
+  }
+  .pace-interactive-demo[data-pace-state="listening"] .pace-ptt-state {
+    color: var(--color-accent);
+    background: rgba(79, 139, 255, 0.1);
+  }
+  .pace-interactive-demo[data-pace-state="thinking"] .pace-ptt-state {
+    color: #fbbf24;
+    background: rgba(251, 191, 36, 0.1);
+  }
+  .pace-interactive-demo[data-pace-state="executing"] .pace-ptt-state {
+    color: var(--color-accent);
+    background: rgba(79, 139, 255, 0.1);
+  }
+  .pace-interactive-demo[data-pace-state="done"] .pace-ptt-state {
+    color: var(--color-positive);
+    background: rgba(52, 211, 153, 0.1);
+  }
+
+  .pace-ptt-hint-text {
+    font-size: 12px;
+    color: var(--color-text-muted);
+    font-family: var(--font-sans);
+  }
+  .pace-ptt-hint-text kbd {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 4px;
+    padding: 1px 6px;
+    color: var(--color-text-secondary);
+  }
+</style>

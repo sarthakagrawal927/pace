@@ -1,0 +1,130 @@
+---
+// Two ambient enhancements that benefit every section, attached
+// here so they live in one place rather than scattered across
+// component files:
+//
+//   1. Scroll-reveal — section headings and key blocks animate
+//      in as they enter the viewport (IntersectionObserver). Adds
+//      cinema to the scroll without scroll-jacking or stickiness.
+//
+//   2. Magnetic buttons — `.pace-magnetic` elements get a subtle
+//      pull toward the cursor when within ~80px. Linear / Vercel /
+//      Lovable use this on CTAs; it's a polish detail that signals
+//      "real design work happened here" without being gimmicky.
+//
+// Both are no-ops when prefers-reduced-motion is set, and the
+// magnetic effect drops on touch devices (no real cursor).
+---
+
+<script is:inline>
+  (function attachPaceEnhancements() {
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    // ── 1. Scroll-reveal via IntersectionObserver ───────────────
+    if (!reduceMotion && "IntersectionObserver" in window) {
+      const revealSelector = "section, .pace-testimonial-card";
+      const revealableElements = document.querySelectorAll(revealSelector);
+      revealableElements.forEach((element) => {
+        element.classList.add("pace-reveal-target");
+      });
+
+      const revealObserver = new IntersectionObserver(
+        (entries, observer) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("pace-revealed");
+              observer.unobserve(entry.target);
+            }
+          }
+        },
+        {
+          // Fire when the element is 15% into the viewport from the
+          // bottom — feels natural, doesn't trigger on partial
+          // peeks before the user actually arrives at the section.
+          rootMargin: "0px 0px -15% 0px",
+          threshold: 0.05,
+        }
+      );
+
+      revealableElements.forEach((element) => {
+        revealObserver.observe(element);
+      });
+    }
+
+    // ── 2. Magnetic CTAs ────────────────────────────────────────
+    const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
+    if (!reduceMotion && !isCoarsePointer) {
+      const magneticElements = document.querySelectorAll(".pace-magnetic");
+      magneticElements.forEach((element) => {
+        const pullStrength = 0.25;
+        const pullRadius = 80;
+
+        function handleMouseMove(event) {
+          const rect = element.getBoundingClientRect();
+          const centerX = rect.left + rect.width / 2;
+          const centerY = rect.top + rect.height / 2;
+          const dx = event.clientX - centerX;
+          const dy = event.clientY - centerY;
+          const distance = Math.hypot(dx, dy);
+          if (distance < pullRadius) {
+            // Pull toward the cursor, scaled by proximity.
+            const proximity = 1 - distance / pullRadius;
+            const pullX = dx * pullStrength * proximity;
+            const pullY = dy * pullStrength * proximity;
+            element.style.transform = `translate(${pullX}px, ${pullY}px)`;
+          } else if (element.style.transform) {
+            element.style.transform = "";
+          }
+        }
+
+        function handleMouseLeave() {
+          element.style.transform = "";
+        }
+
+        // Attach to window so we get a pull from up to 80px away,
+        // not only when the cursor enters the element bounds.
+        window.addEventListener("mousemove", handleMouseMove, { passive: true });
+        element.addEventListener("mouseleave", handleMouseLeave);
+      });
+    }
+  })();
+</script>
+
+<style is:global>
+  /* Scroll-reveal: each `.pace-reveal-target` starts faded down,
+     and lifts to its final position when `.pace-revealed` is
+     added. Keep this short and unanimated by default — the
+     animation only fires once per element via IO unobserve. */
+  .pace-reveal-target {
+    opacity: 0;
+    transform: translateY(24px);
+    transition:
+      opacity 700ms cubic-bezier(0.16, 1, 0.3, 1),
+      transform 800ms cubic-bezier(0.16, 1, 0.3, 1);
+    will-change: opacity, transform;
+  }
+  .pace-revealed {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* Magnetic buttons get an extra-smooth transform-back when the
+     cursor leaves their pull radius. */
+  .pace-magnetic {
+    transition:
+      background 120ms ease,
+      transform 250ms cubic-bezier(0.16, 1, 0.3, 1);
+    will-change: transform;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pace-reveal-target {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
+    .pace-magnetic {
+      transition: none;
+    }
+  }
+</style>
