@@ -643,12 +643,20 @@ final class CompanionManager: ObservableObject {
         recordedAt: Date
     ) {
         let combinedTurnText = "User: \(userTranscript)\nPace: \(assistantResponse)"
+        // Extract structured entities at write time (NLTagger named
+        // entities + NSDataDetector typed contacts/dates) so the
+        // recall side can match deterministically on people, places,
+        // organizations, phones, emails, urls, and dates — without
+        // re-tokenising the same string on every voice turn.
+        let structuredFields = PaceMemoryEntryEnricher.extractStructuredFields(
+            fromEntryText: combinedTurnText
+        )
         memoryIndex.upsert(
             PaceMemoryEntry(
                 id: turnId,
                 kind: .conversationTurn,
                 text: combinedTurnText,
-                structured: nil,
+                structured: structuredFields,
                 source: .paceHistory,
                 createdAt: recordedAt,
                 updatedAt: recordedAt,
