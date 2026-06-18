@@ -27,6 +27,12 @@ struct PaceBundledModelsSettingsTab: View {
     @State private var plannerModelIdentifier: String = ""
     @State private var embedderModelIdentifier: String = ""
 
+    // Prefetch state — drives the "Download now" UX so users can
+    // warm the model on wifi before the first PTT pays the cost.
+    @State private var isPlannerPrefetchInFlight: Bool = false
+    @State private var plannerPrefetchProgressFraction: Double = 0
+    @State private var lastPlannerPrefetchOutcome: String? = nil
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             runtimeStatusSection
@@ -106,6 +112,66 @@ struct PaceBundledModelsSettingsTab: View {
                 .font(.system(size: 11))
                 .foregroundColor(DS.Colors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            // Prefetch button — lets the user warm the model on
+            // wifi instead of paying the multi-GB download wait on
+            // their first PTT.
+            HStack(spacing: 10) {
+                Button(action: triggerPlannerPrefetch) {
+                    HStack(spacing: 6) {
+                        if isPlannerPrefetchInFlight {
+                            ProgressView()
+                                .scaleEffect(0.5)
+                                .frame(width: 12, height: 12)
+                        } else {
+                            Image(systemName: "arrow.down.circle")
+                        }
+                        Text(isPlannerPrefetchInFlight ? "Downloading…" : "Download now")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(isPlannerPrefetchInFlight || !PaceMLXPlannerClient.isRuntimeAvailable)
+                if isPlannerPrefetchInFlight {
+                    ProgressView(value: plannerPrefetchProgressFraction)
+                        .frame(maxWidth: 220)
+                    Text(String(format: "%.0f%%", plannerPrefetchProgressFraction * 100))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.Colors.textSecondary)
+                }
+                Spacer()
+            }
+            if let lastPlannerPrefetchOutcome {
+                Text(lastPlannerPrefetchOutcome)
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func triggerPlannerPrefetch() {
+        guard !isPlannerPrefetchInFlight else { return }
+        isPlannerPrefetchInFlight = true
+        plannerPrefetchProgressFraction = 0
+        lastPlannerPrefetchOutcome = nil
+        let modelIdentifierSnapshot = PaceBundledModelsSettings.plannerModelIdentifier()
+        Task { @MainActor in
+            do {
+                try await PaceMLXPlannerClient.prefetchModel(
+                    modelIdentifier: modelIdentifierSnapshot,
+                    progressHandler: { progress in
+                        Task { @MainActor in
+                            plannerPrefetchProgressFraction = progress.fractionCompleted
+                        }
+                    }
+                )
+                lastPlannerPrefetchOutcome = "Downloaded — model ready for first PTT"
+                plannerPrefetchProgressFraction = 1.0
+            } catch {
+                lastPlannerPrefetchOutcome = "Download failed: \(error.localizedDescription)"
+            }
+            isPlannerPrefetchInFlight = false
         }
     }
 

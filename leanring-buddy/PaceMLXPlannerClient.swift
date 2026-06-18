@@ -77,6 +77,28 @@ final class PaceMLXPlannerClient: BuddyPlannerClient {
         self.displayName = "MLX in-process (\(Self.shortenedModelLabel(forIdentifier: modelIdentifier)))"
     }
 
+    /// Pre-fetch the configured model container — surfaces progress
+    /// via the Hub package's NSProgress so callers can render a
+    /// real percentage instead of an indeterminate spinner. Safe to
+    /// call multiple times; subsequent calls return the cached
+    /// container immediately. Throws on any load failure so the
+    /// Settings UI can show a useful message instead of "downloading…
+    /// (forever)".
+    static func prefetchModel(
+        modelIdentifier: String,
+        progressHandler: @Sendable @escaping (Progress) -> Void = { _ in }
+    ) async throws {
+        #if canImport(MLXLLM)
+        _ = try await Self.sharedModelContainer(
+            modelIdentifier: modelIdentifier,
+            progressHandler: progressHandler
+        )
+        #else
+        _ = (modelIdentifier, progressHandler)
+        throw PaceMLXPlannerError.runtimeNotLinked
+        #endif
+    }
+
     nonisolated static func shortenedModelLabel(forIdentifier modelIdentifier: String) -> String {
         // "mlx-community/Qwen3-4B-Instruct-4bit" → "Qwen3-4B"
         let lastSegment = modelIdentifier.split(separator: "/").last.map(String.init) ?? modelIdentifier
@@ -166,13 +188,19 @@ final class PaceMLXPlannerClient: BuddyPlannerClient {
     private static var cachedModelContainer: ModelContainer?
     private static let modelLoadLock = NSLock()
 
-    private static func sharedModelContainer(modelIdentifier: String) async throws -> ModelContainer {
+    private static func sharedModelContainer(
+        modelIdentifier: String,
+        progressHandler: @Sendable @escaping (Progress) -> Void = { _ in }
+    ) async throws -> ModelContainer {
         modelLoadLock.lock()
         let cached = cachedModelContainer
         modelLoadLock.unlock()
         if let cached { return cached }
 
-        let loaded = try await MLXLMCommon.loadModelContainer(id: modelIdentifier)
+        let loaded = try await MLXLMCommon.loadModelContainer(
+            id: modelIdentifier,
+            progressHandler: progressHandler
+        )
 
         modelLoadLock.lock()
         cachedModelContainer = loaded
