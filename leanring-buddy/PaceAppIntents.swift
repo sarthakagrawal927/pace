@@ -118,6 +118,43 @@ struct PaceShowPanelIntent: AppIntent {
 }
 
 @available(macOS 13.0, *)
+struct PaceTranscribeAudioFileIntent: AppIntent {
+    static var title: LocalizedStringResource = "Pace: Transcribe Audio File"
+    static var description = IntentDescription(
+        "Transcribe an audio file (m4a, mp3, wav, aiff, caf, flac) on your Mac. Fully on-device — the file is decoded locally and the audio never leaves the machine."
+    )
+    static var openAppWhenRun: Bool = false
+
+    @Parameter(
+        title: "Audio File",
+        description: "The audio file to transcribe.",
+        supportedTypeIdentifiers: [
+            "public.audio",
+            "public.mp3",
+            "public.mpeg-4-audio",
+            "com.microsoft.waveform-audio",
+            "public.aifc-audio",
+        ]
+    )
+    var audioFile: IntentFile
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<String> {
+        let fileData = audioFile.data
+        // The IntentFile bridge gives us the bytes; we land them in a
+        // sandboxed temporary location so the transcriber's AVAudioFile
+        // path works regardless of where the original lives.
+        let temporaryFileURL = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("pace-intent-\(UUID().uuidString)-\(audioFile.filename)")
+        try fileData.write(to: temporaryFileURL, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: temporaryFileURL) }
+        let transcript = try await PaceAudioFileTranscriber.transcribeAudioFile(at: temporaryFileURL)
+        return .result(value: transcript)
+    }
+}
+
+@available(macOS 13.0, *)
 struct PaceSetWatchModeIntent: AppIntent {
     static var title: LocalizedStringResource = "Pace: Set Watch Mode"
     static var description = IntentDescription(
@@ -192,6 +229,15 @@ struct PaceAppShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Set Watch Mode",
             systemImageName: "eye"
+        )
+        AppShortcut(
+            intent: PaceTranscribeAudioFileIntent(),
+            phrases: [
+                "Transcribe with \(.applicationName)",
+                "Transcribe audio using \(.applicationName)",
+            ],
+            shortTitle: "Transcribe Audio",
+            systemImageName: "waveform"
         )
     }
 }
