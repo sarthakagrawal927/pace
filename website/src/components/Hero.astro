@@ -21,7 +21,7 @@
 import HeroArchitectureDiagram from "./HeroArchitectureDiagram.astro";
 ---
 
-<section class="relative px-6 pt-16 md:pt-24 pb-10 overflow-hidden">
+<section class="pace-no-reveal relative px-6 pt-16 md:pt-24 pb-10 overflow-hidden">
   <!-- Ambient aurora glow under the centerpiece — Lovable / Linear
        trick. Single colour (the accent), low opacity, radial. -->
   <div class="pace-hero-aurora" aria-hidden="true"></div>
@@ -29,7 +29,7 @@ import HeroArchitectureDiagram from "./HeroArchitectureDiagram.astro";
 
   <div class="relative max-w-7xl mx-auto">
     <!-- ───── Top status row ───── -->
-    <div class="flex items-center justify-between mb-12 md:mb-16 pace-fade-up">
+    <div class="flex items-center justify-between mb-12 md:mb-16">
       <p class="text-xs font-mono uppercase tracking-[0.25em] text-[var(--color-text-muted)]">
         Pace · v1 · for macOS
       </p>
@@ -43,7 +43,7 @@ import HeroArchitectureDiagram from "./HeroArchitectureDiagram.astro";
     </div>
 
     <!-- ───── Editorial headline ───── -->
-    <div class="max-w-5xl pace-fade-up" style="animation-delay: 60ms">
+    <div class="max-w-5xl">
       <h1 class="pace-headline-display text-white">
         I got tired of <span class="accent">Siri.</span>
         <br />
@@ -65,8 +65,8 @@ import HeroArchitectureDiagram from "./HeroArchitectureDiagram.astro";
       </div>
     </div>
 
-    <!-- ───── THE schematic centerpiece ───── -->
-    <div class="mt-20 md:mt-28 pace-fade-up" style="animation-delay: 180ms">
+    <!-- ───── THE schematic centerpiece (below LCP headline) ───── -->
+    <div class="pace-hero-deferred mt-20 md:mt-28">
       <!-- Frame labels — patent figure caption -->
       <div class="flex items-center justify-between mb-4">
         <div class="flex items-center gap-3">

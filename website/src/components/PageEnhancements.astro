@@ -22,7 +22,7 @@
 
     // ── 1. Scroll-reveal via IntersectionObserver ───────────────
     if (!reduceMotion && "IntersectionObserver" in window) {
-      const revealSelector = "section, .pace-testimonial-card";
+      const revealSelector = "section:not(.pace-no-reveal), .pace-testimonial-card";
       const revealableElements = document.querySelectorAll(revealSelector);
       revealableElements.forEach((element) => {
         element.classList.add("pace-reveal-target");

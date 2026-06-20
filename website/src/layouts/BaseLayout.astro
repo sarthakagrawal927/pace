@@ -70,18 +70,30 @@ const productSchema = {
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={ogImageURL} />
 
-    <!-- Inter for body; Instrument Serif for editorial display
-         headlines — the serif is what shifts the whole page from
-         "generic dark Tailwind landing" to "someone designed this
-         on purpose." Free via Google Fonts. -->
-    <link rel="preconnect" href="https://rsms.me/" />
-    <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+    <!-- Inter + Instrument Serif — non-blocking so LCP text paints on
+         first HTML+CSS, not after two font stylesheets resolve. -->
+    <link rel="preconnect" href="https://rsms.me/" crossorigin />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap"
+      href="https://rsms.me/inter/inter.css"
+      media="print"
+      onload="this.media='all'"
     />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap"
+      media="print"
+      onload="this.media='all'"
+    />
+    <noscript>
+      <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap"
+      />
+    </noscript>
 
     <!-- JSON-LD structured data for SEO + LLM crawlers. -->
     <script type="application/ld+json" set:html={JSON.stringify(productSchema)} />

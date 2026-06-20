@@ -341,8 +341,14 @@ h3 {
 /* Headline display sizing — editorial Instrument Serif. Bigger
    than typical Tailwind heroes because the serif carries weight
    differently than Inter does. */
+.pace-hero-deferred {
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 480px;
+}
+
 .pace-headline-display {
-  font-family: var(--font-display);
+  /* System serif paints immediately; Instrument Serif swaps in when loaded. */
+  font-family: Georgia, "Iowan Old Style", "Palatino", serif;
   font-size: clamp(3rem, 8.5vw, 8rem);
   line-height: 0.95;
   letter-spacing: -0.015em;
