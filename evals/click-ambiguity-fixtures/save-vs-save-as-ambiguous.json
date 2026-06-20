@@ -1,0 +1,9 @@
+{
+  "name": "save-vs-save-as-ambiguous",
+  "candidates": [
+    { "label": "Save", "confidence": 0.52 },
+    { "label": "Save As", "confidence": 0.48 }
+  ],
+  "expectAmbiguous": true,
+  "expectedOfferedLabels": ["Save", "Save As"]
+}

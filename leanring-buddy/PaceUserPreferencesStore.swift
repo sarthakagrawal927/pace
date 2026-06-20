@@ -193,6 +193,9 @@ enum PaceSmokeTestStateStore {
         case lastApprovalAllowed = "PaceSmoke.lastApprovalAllowed"
         case lastClarificationState = "PaceSmoke.lastClarificationState"
         case lastClarifiedTranscript = "PaceSmoke.lastClarifiedTranscript"
+        case lastClickTargetClarificationState = "PaceSmoke.lastClickTargetClarificationState"
+        case lastClickTargetResolution = "PaceSmoke.lastClickTargetResolution"
+        case lastClickAllFailSummary = "PaceSmoke.lastClickAllFailSummary"
     }
 
     // MARK: Writers (the smoke hook installer calls these)
@@ -223,5 +226,17 @@ enum PaceSmokeTestStateStore {
 
     static func recordLastClarifiedTranscript(_ transcript: String) {
         UserDefaults.standard.set(transcript, forKey: SmokeKey.lastClarifiedTranscript.rawValue)
+    }
+
+    static func recordLastClickTargetClarificationState(_ stateName: String) {
+        UserDefaults.standard.set(stateName, forKey: SmokeKey.lastClickTargetClarificationState.rawValue)
+    }
+
+    static func recordLastClickTargetResolution(_ label: String) {
+        UserDefaults.standard.set(label, forKey: SmokeKey.lastClickTargetResolution.rawValue)
+    }
+
+    static func recordLastClickAllFailSummary(_ summary: String) {
+        UserDefaults.standard.set(summary, forKey: SmokeKey.lastClickAllFailSummary.rawValue)
     }
 }

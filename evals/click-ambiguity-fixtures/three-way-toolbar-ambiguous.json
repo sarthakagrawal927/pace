@@ -1,0 +1,10 @@
+{
+  "name": "three-way-toolbar-ambiguous",
+  "candidates": [
+    { "label": "Share", "confidence": 0.44 },
+    { "label": "Share Link", "confidence": 0.42 },
+    { "label": "Share to Messages", "confidence": 0.40 }
+  ],
+  "expectAmbiguous": true,
+  "expectedOfferedLabels": ["Share", "Share Link", "Share to Messages"]
+}

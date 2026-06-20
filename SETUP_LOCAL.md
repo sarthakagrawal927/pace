@@ -47,6 +47,8 @@ curl -s http://localhost:1234/v1/models | grep -E "ui-venus|qwen3-vl|gemma-3-12b
 
 ## 2. Flip the Info.plist switches
 
+> The complete switch reference (including the in-process MLX / TTS-sidecar / transcription-provider knobs) lives in [`docs/info-plist-switches.md`](docs/info-plist-switches.md). The table below covers the core local-mode knobs.
+
 `leanring-buddy/Info.plist` now has these knobs:
 
 | Key | Default | Set to | Effect |

@@ -58,16 +58,19 @@ nonisolated enum PaceBundledModelsSettings {
     // default by updating the Info.plist alone — no code change to
     // this file.
     nonisolated static var defaultPlannerModelIdentifier: String {
-        modelIdentifierFromInfoPlist(key: "BundledMLXPlannerModelIdentifier")
+        let infoPlistDefault = modelIdentifierFromInfoPlist(key: "BundledMLXPlannerModelIdentifier")
             ?? compileTimeFallbackPlannerModelIdentifier
+        return PaceRemoteModelManifest.resolvedPlannerModelIdentifier(fallback: infoPlistDefault)
     }
     nonisolated static var defaultEmbedderModelIdentifier: String {
-        modelIdentifierFromInfoPlist(key: "BundledMLXEmbedderModelIdentifier")
+        let infoPlistDefault = modelIdentifierFromInfoPlist(key: "BundledMLXEmbedderModelIdentifier")
             ?? compileTimeFallbackEmbedderModelIdentifier
+        return PaceRemoteModelManifest.resolvedEmbedderModelIdentifier(fallback: infoPlistDefault)
     }
     nonisolated static var defaultVLMModelIdentifier: String {
-        modelIdentifierFromInfoPlist(key: "BundledMLXVLMModelIdentifier")
+        let infoPlistDefault = modelIdentifierFromInfoPlist(key: "BundledMLXVLMModelIdentifier")
             ?? compileTimeFallbackVLMModelIdentifier
+        return PaceRemoteModelManifest.resolvedVLMModelIdentifier(fallback: infoPlistDefault)
     }
 
     nonisolated private static func modelIdentifierFromInfoPlist(key: String) -> String? {

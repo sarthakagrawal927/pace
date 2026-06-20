@@ -41,6 +41,21 @@ wait_for_default() {
     return 1
 }
 
+wait_for_default_contains() {
+    local key="$1"
+    local expected_substring="$2"
+    for _attempt in {1..30}; do
+        local actual_value
+        actual_value="$(read_default "$key")"
+        if [[ "$actual_value" == *"$expected_substring"* ]]; then
+            return 0
+        fi
+        sleep 0.2
+    done
+    echo "expected $key to contain '$expected_substring', got $(read_default "$key")" >&2
+    return 1
+}
+
 cancel_approval_if_visible() {
     osascript >/dev/null 2>&1 <<'APPLESCRIPT' || true
 tell application "System Events"
@@ -89,6 +104,9 @@ defaults delete com.pace.app PaceSmoke.lastCursorAnnotationsEnabled 2>/dev/null 
 defaults delete com.pace.app PaceSmoke.lastApprovalAllowed 2>/dev/null || true
 defaults delete com.pace.app PaceSmoke.lastClarificationState 2>/dev/null || true
 defaults delete com.pace.app PaceSmoke.lastClarifiedTranscript 2>/dev/null || true
+defaults delete com.pace.app PaceSmoke.lastClickTargetClarificationState 2>/dev/null || true
+defaults delete com.pace.app PaceSmoke.lastClickTargetResolution 2>/dev/null || true
+defaults delete com.pace.app PaceSmoke.lastClickAllFailSummary 2>/dev/null || true
 defaults delete com.pace.app PaceSmoke.ready 2>/dev/null || true
 
 pkill -x Pace 2>/dev/null || true
@@ -112,6 +130,15 @@ wait_for_default PaceSmoke.lastClarificationState shown
 
 post_notification "com.pace.smoke.resolveClarification"
 wait_for_default PaceSmoke.lastClarifiedTranscript "rewrite the selected text"
+
+post_notification "com.pace.smoke.showClickTargetClarification"
+wait_for_default PaceSmoke.lastClickTargetClarificationState shown
+
+post_notification "com.pace.smoke.resolveClickTargetClarification"
+wait_for_default PaceSmoke.lastClickTargetResolution Save
+
+post_notification "com.pace.smoke.simulateClickAllFailObservation"
+wait_for_default_contains PaceSmoke.lastClickAllFailSummary "Click failed after trying 1 of 1 candidate"
 
 post_notification "com.pace.smoke.requestApproval"
 wait_for_approval_cancel

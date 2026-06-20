@@ -1323,7 +1323,7 @@ struct PaceActionTagParserTests {
         }
 
         #expect(urlString == "https://raycast.com")
-        #expect(parseResult?.spokenText == "opening https://raycast.com.")
+        #expect(parseResult?.spokenText == "opening Raycast.")
     }
 
     @Test func fastActionParserRecognizesMusicAndSystemAdjustments() async throws {

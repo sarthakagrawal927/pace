@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-06-19. Latest test count: 1035 passing (`bash scripts/test-pace.sh`).
+Last updated: 2026-06-20. Latest test count: **1075/1075 passing** (`bash scripts/test-pace.sh`).
 
 ## Current Scope
 
@@ -90,6 +90,24 @@ v4 + Lightning CSS, deployed to Cloudflare Pages.
   `PaceTranscribeAudioFileIntent`).
 - **`PaceLazyEmbeddingScheduler`** extracted from CompanionManager.
 
+### PRD closure sweep (v0.3.14)
+
+- **Click ambiguity fixtures** — `evals/click-ambiguity-fixtures/` +
+  `PaceClickAmbiguityFixtureTests` (CI gate for HUD disambiguation rule).
+- **v10 generic field streaming** — `PaceStreamingPlannerFieldDetector`
+  streams dictate/edit/`AX.setValue` text during planner output (alongside
+  existing Mail.draft streaming).
+- **Executor smoke runner** — `scripts/smoke-executor-surface.sh` chains
+  dry-run unit tests, v10 schema fixtures, runtime hooks, and
+  `scripts/smoke-real-apps.sh` (Notes/Safari/Mail mailto).
+- **Remote model manifest** — optional `RemoteModelManifestURL` +
+  `PaceRemoteModelManifest` (24h cache, overrides bundled defaults when set).
+- **v10 eval gate** — `scripts/eval-v10-gate.sh` (unit + schema + FM sweep).
+- **Landing pre-launch (repo)** — OG PNG, commerce config with mailto fallback,
+  honest early-access social proof (no fictional names).
+- **Pace-tuned model scaffold** — `docs/plans/pace-tuned-model-v1.md`,
+  `scripts/train-pace-tuned-model.sh`, `evals/pace-tuned-export/`.
+
 ### Landing site (new this cycle)
 
 - `website/` — Astro 5 + Tailwind v4 + Lightning CSS, single page, 52 KB
@@ -103,27 +121,15 @@ v4 + Lightning CSS, deployed to Cloudflare Pages.
 
 ## Planned Next
 
-1. **First pace-tuned model.** Distill from qwen3-30b-a3b into a 4B
-   LoRA on Pace's eval fixtures + collected anonymized turns (opt-in).
-   Ship via Info.plist manifest bump + Sparkle release. Forces the
-   eval-gate pin update as the deliberate review step.
-2. **Click executor manual ambiguity evals → unit tests.** Convert the
-   queued manual eval set into fixture-driven tests. See
-   `docs/prds/click-executor-improvements.md`.
-3. **Visual target ambiguity HUD path.** Wire the executor top-K
-   candidate output into a panel option-list clarification. See
-   `docs/prds/hud-intent-disambiguator.md`.
-4. **Executor real-app AX/performance smoke flow.** Mail / Safari /
-   Notes / Slack / VSCode / Cursor smokes via
-   `scripts/smoke-runtime-hooks.sh`.
-5. **Landing-site pre-launch audit.** Three testimonials, founder
-   signature, PNG OG image, Stripe/Gumroad checkout URLs in pricing CTAs.
-6. **Remote model manifest** (optional). Lets a new model ship between
-   Sparkle releases via a Pace-controlled JSON endpoint. UX
-   decisions pending (auto-swap vs prompt vs explicit check).
-7. **Continued `CompanionManager.swift` decomposition.** Agent loop body
-   is the next natural extract (the persisted-state cluster already
-   moved out as `PaceLazyEmbeddingScheduler` this cycle).
+1. **First pace-tuned model.** Dataset export → LoRA train → eval gate. Scaffold:
+   `docs/plans/pace-tuned-model-v1.md`, `scripts/train-pace-tuned-model.sh`,
+   `evals/pace-tuned-export/`. Blocked on opt-in turn collection, not code.
+2. **Stripe checkout URL.** Set `PUBLIC_PACE_CHECKOUT_URL` at Cloudflare Pages
+   build when live (mailto fallback ships today).
+3. **Permissioned public testimonials.** Replace private-beta theme cards in
+   `SocialProof.astro` when 3+ real quotes exist.
+4. **Voice Mail latency demo.** Manual `<700ms` check with Mail prewarm
+   (see `scripts/smoke-executor-surface.sh` checklist).
 
 ## Pricing posture
 

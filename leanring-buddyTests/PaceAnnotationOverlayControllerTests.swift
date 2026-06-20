@@ -111,11 +111,11 @@ struct PaceAnnotationOverlayControllerTests {
         try await Task.sleep(nanoseconds: 300_000_000) // 600ms total elapsed; orig would have fired at 500ms
         #expect(overlayController.activeAnnotations.count == 2)
 
-        // Now wait past the FRESH window's expiry. Fresh window
-        // started at 300ms-into-test; we're now at 600ms, so the
-        // fresh timer should fire around 800ms. Wait until 950ms+
-        // to give the MainActor task room to run.
-        try await Task.sleep(nanoseconds: 450_000_000)
+        // Now wait past the FRESH window's expiry, polling so a busy
+        // test runner doesn't flake on MainActor timer delivery.
+        for _ in 0..<40 where !overlayController.activeAnnotations.isEmpty {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
         await Task.yield()
         #expect(overlayController.activeAnnotations.isEmpty)
     }

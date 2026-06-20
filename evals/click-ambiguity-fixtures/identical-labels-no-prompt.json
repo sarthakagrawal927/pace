@@ -1,0 +1,8 @@
+{
+  "name": "identical-labels-no-prompt",
+  "candidates": [
+    { "label": "Save", "confidence": 0.51 },
+    { "label": "Save", "confidence": 0.49 }
+  ],
+  "expectAmbiguous": false
+}

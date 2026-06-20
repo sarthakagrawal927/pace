@@ -59,6 +59,12 @@ DESTINATION='platform=macOS,arch=arm64'
 if [[ -z "${DEVELOPER_DIR:-}" ]]; then
     if [[ -d "/Applications/Xcode.app/Contents/Developer" ]]; then
         export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+    else
+        # Fall back to a versioned Xcode beta (e.g. Xcode-27.0.0-Beta.app).
+        beta_xcode="$(/usr/bin/find /Applications -maxdepth 1 -name 'Xcode*.app' -type d 2>/dev/null | /usr/bin/sort | /usr/bin/tail -1)"
+        if [[ -n "$beta_xcode" && -d "$beta_xcode/Contents/Developer" ]]; then
+            export DEVELOPER_DIR="$beta_xcode/Contents/Developer"
+        fi
     fi
 fi
 

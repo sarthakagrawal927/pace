@@ -46,6 +46,10 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         print("🎯 Pace: Starting...")
         print("🎯 Pace: Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")")
 
+        Task {
+            await PaceRemoteModelManifest.refreshIfNeeded()
+        }
+
         // Single-instance enforcement is fundamentally hostile to macOS's
         // own "restart the app to apply the new permission" flow for
         // Screen Recording / Accessibility: macOS launches a fresh process

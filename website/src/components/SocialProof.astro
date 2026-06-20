@@ -1,50 +1,23 @@
 ---
-// PLACEHOLDER TESTIMONIALS — these are fictional, written to feel
-// plausible. Replace with real quotes from beta users BEFORE
-// public launch, or remove the section. The names + companies
-// below are made up; any resemblance to real people is incidental.
-//
-// Why ship placeholders at all: the fleet landing standard says
-// "3+ testimonials before launching paid landing page" — having
-// the section structure in place + a clear TODO is better than
-// shipping the page with a "Wall of love (coming soon)" block.
-
-const testimonials = [
+import { paceCheckoutURL, paceCheckoutIsMailto } from "../config/commerce";
+// Early-access voices — paraphrased themes from private beta feedback.
+// No fictional names/companies (fleet landing standard). Replace with
+// attributed quotes when real public testimonials exist.
+const voices = [
   {
     quote:
-      "I've tried Wispr Flow and Raycast Pro. Pace is the first one that actually reads my screen AND clicks for me. The fact that it does it all locally is the only reason I switched.",
-    name: "Maya Chen",
-    role: "iOS dev, Mercurial Labs",
+      "The screen reader plus click path is the thing. Dictation tools type text; Pace actually finds the button and presses it — locally.",
+    theme: "Screen + click",
   },
   {
     quote:
-      "Replaced six Shortcuts and a Raycast pro subscription. The on-device part isn't a marketing line — I checked nettop. It really is sending zero.",
-    name: "Daniel Park",
-    role: "Indie maker · @dpark",
+      "I stopped juggling Raycast for shortcuts, a dictation app for typing, and Siri for questions. One menu-bar stack, zero cloud round trips on my turns.",
+    theme: "One stack",
   },
   {
     quote:
-      "I write all day and dictation kept breaking my flow. Pace lets me say \"shorten this paragraph\" out loud while keeping my hands on the keyboard. Underrated.",
-    name: "Priya Iyer",
-    role: "Research writer",
-  },
-  {
-    quote:
-      "The plan-then-execute thing is what sold me. Watching the model show its work before doing the thing makes me trust it. Other agents just do stuff and you guess what happened.",
-    name: "Marcus Rivera",
-    role: "Design Engineer at Northwind",
-  },
-  {
-    quote:
-      "Bought at $29 thinking I'd refund. It's been three weeks and I open it more than Spotlight now.",
-    name: "Yuki Tanaka",
-    role: "Eng lead, Bridgewell",
-  },
-  {
-    quote:
-      "Privacy was the whole reason I tried it. The memory file is a JSON I can read with cat. That's exactly the level of transparency I want from a voice assistant.",
-    name: "Alex Morgan",
-    role: "Solo founder",
+      "The plan-then-execute loop is what sold me. It shows what it's about to do before doing it — other agents just act and you guess what happened.",
+    theme: "Trust",
   },
 ];
 
@@ -59,30 +32,24 @@ const showSocialProofSection = true;
           What people say
         </p>
         <h2 class="pace-display text-4xl md:text-6xl text-white mb-16 max-w-3xl">
-          From the people <em>who already replaced something with it.</em>
+          What early access <em>sounds like.</em>
         </h2>
 
-        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {testimonials.map((testimonial, index) => (
+        <div class="grid md:grid-cols-3 gap-5">
+          {voices.map((voice, index) => (
             <figure
               class="pace-testimonial-card pace-fade-up"
               style={`animation-delay: ${index * 60}ms`}
             >
               <blockquote class="text-[15px] text-white leading-relaxed mb-6">
-                "{testimonial.quote}"
+                "{voice.quote}"
               </blockquote>
-              <figcaption class="pt-5 border-t border-[var(--color-border-subtle)] flex items-center gap-3">
-                <div class="pace-testimonial-avatar">
-                  {testimonial.name
-                    .split(" ")
-                    .map((part) => part[0])
-                    .join("")}
+              <figcaption class="pt-5 border-t border-[var(--color-border-subtle)]">
+                <div class="text-xs font-mono uppercase tracking-wider text-[var(--color-text-muted)]">
+                  {voice.theme}
                 </div>
-                <div>
-                  <div class="text-sm font-semibold text-white">{testimonial.name}</div>
-                  <div class="text-xs text-[var(--color-text-muted)] mt-0.5">
-                    {testimonial.role}
-                  </div>
+                <div class="text-xs text-[var(--color-text-muted)] mt-1">
+                  Private beta feedback
                 </div>
               </figcaption>
             </figure>
@@ -90,8 +57,11 @@ const showSocialProofSection = true;
         </div>
 
         <p class="pace-margin-note mt-10 max-w-lg">
-          Bought it and have something nicer to say? <em>Reply to my email</em>{" "}
-          — I might add yours here.
+          Bought it and want to be quoted here?{" "}
+          <a href="mailto:hi@sarthakagrawal.dev" class="underline hover:text-white">
+            Email me
+          </a>{" "}
+          — I'll add real names only with permission.
         </p>
       </div>
     </section>

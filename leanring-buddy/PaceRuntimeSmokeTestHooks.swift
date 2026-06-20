@@ -18,6 +18,9 @@ extension Notification.Name {
     static let paceSmokeRequestApproval = Notification.Name("com.pace.smoke.requestApproval")
     static let paceSmokeShowClarification = Notification.Name("com.pace.smoke.showClarification")
     static let paceSmokeResolveClarification = Notification.Name("com.pace.smoke.resolveClarification")
+    static let paceSmokeShowClickTargetClarification = Notification.Name("com.pace.smoke.showClickTargetClarification")
+    static let paceSmokeResolveClickTargetClarification = Notification.Name("com.pace.smoke.resolveClickTargetClarification")
+    static let paceSmokeSimulateClickAllFailObservation = Notification.Name("com.pace.smoke.simulateClickAllFailObservation")
 }
 
 @MainActor
@@ -94,6 +97,30 @@ final class PaceRuntimeSmokeTestHooks {
             PaceSmokeTestStateStore.recordLastClarifiedTranscript(
                 clarifiedTranscript ?? "<failed>"
             )
+        }
+
+        observe(.paceSmokeShowClickTargetClarification) { [weak self] in
+            guard let self else { return }
+            let didShow = companionManager.smokeShowClickTargetClarification()
+            PaceSmokeTestStateStore.recordLastClickTargetClarificationState(
+                didShow ? "shown" : "failed"
+            )
+        }
+
+        observe(.paceSmokeResolveClickTargetClarification) { [weak self] in
+            guard let self else { return }
+            let resolvedLabel = companionManager.smokeResolveClickTargetClarification()
+            PaceSmokeTestStateStore.recordLastClickTargetResolution(
+                resolvedLabel ?? "<failed>"
+            )
+        }
+
+        observe(.paceSmokeSimulateClickAllFailObservation) { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                let summary = await self.companionManager.smokeSimulateClickAllFailObservation()
+                PaceSmokeTestStateStore.recordLastClickAllFailSummary(summary ?? "<failed>")
+            }
         }
     }
 

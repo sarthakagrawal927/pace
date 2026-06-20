@@ -1,12 +1,5 @@
 ---
-// One declarative price. No three-card grid. No "Good / Better /
-// Best." Just the number, what it gets you, and the note about
-// when it changes. Things 3 prices this way. So does Tot.
-//
-// The free tier is a footnote, not a column. The Studio tier is
-// genuinely optional — if it earns its own row it'll be added,
-// but introducing it as a tier-grid on the homepage is exactly
-// the SaaS-template move that makes everything feel generic.
+import { paceCheckoutURL, paceCheckoutIsMailto } from "../config/commerce";
 ---
 
 <section id="pricing" class="px-6 py-24 md:py-36 border-t border-[var(--color-border-subtle)]">
@@ -57,10 +50,16 @@
     <div
       class="mt-14 flex flex-col items-start gap-4 pt-10 border-t border-[var(--color-border-subtle)]"
     >
-      <a href="#" class="pace-cta-primary text-base">
-        Buy Pace — $29
+      <a href={paceCheckoutURL} class="pace-cta-primary text-base">
+        {paceCheckoutIsMailto ? "Email to buy Pace — $29" : "Buy Pace — $29"}
         <span aria-hidden="true">→</span>
       </a>
+      {paceCheckoutIsMailto && (
+        <p class="text-sm text-[var(--color-text-muted)] max-w-lg">
+          Stripe checkout lands soon — today purchases go through email and
+          I'll send a license key manually within a day.
+        </p>
+      )}
       <p class="pace-margin-note max-w-lg">
         macOS 14+, Apple Silicon, 16 GB RAM minimum.<br />
         32 GB if you want the bigger bf16 model loaded all the time —

@@ -18,9 +18,6 @@
 //   • PaceClickFollowAlongController — @MainActor state machine
 //     tracking the active step index. Pure logic, unit-testable
 //     against synthetic clicks.
-//   • PaceClickFollowAlongMonitor — listen-only CGEventTap
-//     wrapping the controller; fires the controller's
-//     `handleGlobalLeftMouseDown(...)` per global click.
 //   • PaceClickFollowAlongMatcher — pure point-in-rect check
 //     with a small tolerance margin so a click ~3 px outside the
 //     bbox still advances (drawn rectangles are rarely pixel-

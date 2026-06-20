@@ -1,0 +1,8 @@
+{
+  "name": "clear-winner-submit",
+  "candidates": [
+    { "label": "Submit", "confidence": 0.91 },
+    { "label": "Submit feedback", "confidence": 0.05 }
+  ],
+  "expectAmbiguous": false
+}

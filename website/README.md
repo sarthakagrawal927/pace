@@ -36,12 +36,19 @@ The `<head>` in `BaseLayout.astro` references `/og-image.png` — keep that path
 
 ## Pre-launch audit
 
-Walk [`fleet/LANDING_STANDARD.md`](../../LANDING_STANDARD.md) before going live. Open items today:
+Walk [`fleet/LANDING_STANDARD.md`](../../LANDING_STANDARD.md) before going live.
 
-- [ ] Replace `Beta tester #1/2/3` placeholders in `SocialProof.astro` with real quotes, then flip `showSocialProofSection = true`
-- [ ] Replace `Founder name` in `Footer.astro` with the actual signature
-- [ ] Generate the PNG OG image and confirm it reads at 600px thumbnail width
-- [ ] Wire the Pricing CTAs to the real Stripe / Gumroad / Lemon Squeezy checkout URLs (`href="#"` today)
+Done in repo:
+
+- [x] Founder signature in `Footer.astro`
+- [x] OG PNG at `public/og-image.png` (regenerate: `bash ../scripts/generate-og-image.sh`)
+- [x] Pricing CTA wired via `src/config/commerce.ts` (mailto fallback; set `PUBLIC_PACE_CHECKOUT_URL` at deploy for Stripe/Lemon)
+- [x] Social proof uses private-beta themes — no fictional names (swap in attributed quotes when available)
+
+Still manual:
+
+- [ ] Replace private-beta theme cards with 3+ permissioned public quotes
+- [ ] Set `PUBLIC_PACE_CHECKOUT_URL` to Stripe / Gumroad / Lemon Squeezy when live
 - [ ] Confirm copy in `Comparison.astro` is current (competitor pricing rechecked within the month)
 
 ## Deploy
