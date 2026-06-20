@@ -92,7 +92,7 @@ enum PaceTagParsers {
         "this", "that", "here", "there",
         // Names of screen artifacts
         "screen", "window", "page", "menu", "button", "field", "tab",
-        "panel", "icon", "toolbar", "sidebar", "dialog", "form"
+        "panel", "icon", "toolbar", "sidebar", "dialog", "form", "file"
         // NOTE: launch/navigate verbs — open, close, go to, navigate — are
         // deliberately NOT here. "open chrome" / "open hacker news" / "go to
         // github" are app/site launches that need NO screen context, so

@@ -88,8 +88,10 @@ struct PaceLazyEmbeddingSchedulerTests {
             onEmbeddingsPersisted: { persistInvocationCount += 1 }
         )
         scheduler.schedule([(id: "a", text: "first")])
-        // Give the detached task a moment to land its MainActor.run hop.
-        try await Task.sleep(nanoseconds: 200_000_000)
+        // Poll briefly — the detached task hops back to the main actor asynchronously.
+        for _ in 0..<30 where persistInvocationCount == 0 {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
         #expect(persistInvocationCount == 1)
     }
 }

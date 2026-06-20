@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-06-19. Latest test count: 1035 passing (`bash scripts/test-pace.sh`).
+Last updated: 2026-06-20. Latest test count: **1068/1068 passing** (`bash scripts/test-pace.sh`). God-class decomposition **Phase A + B complete**: `CompanionManager` main ~1100 lines + 16 extensions; `PaceActionExecutor` main ~770 lines + 8 extensions (incl. Wave 6a coordinate conversion).
 
 ## Current Scope
 
@@ -121,9 +121,7 @@ v4 + Lightning CSS, deployed to Cloudflare Pages.
 6. **Remote model manifest** (optional). Lets a new model ship between
    Sparkle releases via a Pace-controlled JSON endpoint. UX
    decisions pending (auto-swap vs prompt vs explicit check).
-7. **Continued `CompanionManager.swift` decomposition.** Agent loop body
-   is the next natural extract (the persisted-state cluster already
-   moved out as `PaceLazyEmbeddingScheduler` this cycle).
+7. **`CompanionManager.swift` + `PaceActionExecutor.swift` god-class decomposition — done.** Phase A: main ~1100 lines + 16 `CompanionManager+*.swift` extensions. Phase B: main ~770 lines + 7 `PaceActionExecutor+*.swift` extensions (+ existing `PaceActionExecutorCoordinateConversion.swift`). See `prds/pace-godclass-decomposition.md`.
 
 ## Pricing posture
 

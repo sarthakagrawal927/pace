@@ -147,12 +147,19 @@ nonisolated final class PaceScreenTimeRetrievalConnector {
 
     private static var displayNameCache: [String: String] = [:]
 
+    private static let knownBundleDisplayNames: [String: String] = [
+        "com.apple.dt.Xcode": "Xcode",
+        "com.apple.Safari": "Safari",
+    ]
+
     private static func displayName(forBundleIdentifier bundleIdentifier: String) -> String {
         if let cached = displayNameCache[bundleIdentifier] {
             return cached
         }
         let resolvedName: String
-        if let applicationURL = NSWorkspace.shared.urlForApplication(
+        if let knownName = knownBundleDisplayNames[bundleIdentifier] {
+            resolvedName = knownName
+        } else if let applicationURL = NSWorkspace.shared.urlForApplication(
             withBundleIdentifier: bundleIdentifier
         ) {
             resolvedName = FileManager.default.displayName(atPath: applicationURL.path)
