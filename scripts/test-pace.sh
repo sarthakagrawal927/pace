@@ -33,6 +33,7 @@
 # Usage
 # -----
 #   ./scripts/test-pace.sh                       # run all unit tests
+#   ./scripts/test-pace.sh --coverage            # run tests + collect coverage
 #   ./scripts/test-pace.sh PaceTagParsersTests   # filter
 #
 # Returns xcodebuild's exit code (0 on green, non-zero on failure).
@@ -78,12 +79,20 @@ if [[ ! -d "$PROJECT_PATH" ]]; then
 fi
 
 ONLY_TESTING_ARGS=()
+ENABLE_COVERAGE=0
 for filter in "$@"; do
+    if [[ "$filter" == "--coverage" ]]; then
+        ENABLE_COVERAGE=1
+        continue
+    fi
     ONLY_TESTING_ARGS+=("-only-testing:${TEST_TARGET}/${filter}")
 done
 
 echo "▶ Pace test runner — isolated DerivedData at $DERIVED_DATA_PATH"
 echo "  (will not touch ~/Library/Developer/Xcode/DerivedData/leanring-buddy-*)"
+if [[ $ENABLE_COVERAGE -eq 1 ]]; then
+    echo "  📊 Code coverage collection enabled (CLANG_ENABLE_CODE_COVERAGE=YES)"
+fi
 echo
 
 # `xcodebuild test` builds the test bundle + its host app (Pace.app)
@@ -101,6 +110,11 @@ rm -rf "$RESULT_BUNDLE_PATH"
 BUILD_LOG_FILE="$DERIVED_DATA_PATH/last-build.log"
 mkdir -p "$DERIVED_DATA_PATH"
 
+COVERAGE_ARGS=()
+if [[ $ENABLE_COVERAGE -eq 1 ]]; then
+    COVERAGE_ARGS+=("CLANG_ENABLE_CODE_COVERAGE=YES")
+fi
+
 set +e
 xcodebuild test \
     -project "$PROJECT_PATH" \
@@ -113,6 +127,7 @@ xcodebuild test \
     CODE_SIGN_IDENTITY="" \
     CODE_SIGNING_REQUIRED=NO \
     CODE_SIGNING_ALLOWED=NO \
+    "${COVERAGE_ARGS[@]}" \
     > "$BUILD_LOG_FILE" 2>&1
 EXIT_CODE=$?
 set -e
@@ -150,6 +165,35 @@ for failure in data.get("testFailures", [])[:20]:
 '
 else
     grep -E '^\*\* TEST' "$BUILD_LOG_FILE" || true
+fi
+
+# ---------------------------------------------------------------------------
+# Coverage extraction (only when --coverage was passed).
+# Uses `xcrun xccov` to read the .xcresult bundle produced above and
+# prints a per-target line-coverage summary. Wrapped in `|| true` so a
+# missing tool or malformed bundle never fails an otherwise-green run.
+# ---------------------------------------------------------------------------
+if [[ $ENABLE_COVERAGE -eq 1 && -d "$RESULT_BUNDLE_PATH" ]]; then
+    echo
+    echo "📊 Coverage report"
+    echo "  (source: $RESULT_BUNDLE_PATH)"
+    if xcrun xccov view --report --json "$RESULT_BUNDLE_PATH" > "$DERIVED_DATA_PATH/coverage-report.json" 2>/dev/null; then
+        python3 -c '
+import json
+with open("'"$DERIVED_DATA_PATH"'/coverage-report.json") as f:
+    data = json.load(f)
+    targets = data.get("targets", [])
+    if not targets:
+        print("  (no coverage targets found in result bundle)")
+    for target in targets:
+        name = target.get("name", "unknown")
+        line_cov = target.get("lineCoverage", 0) * 100
+        print(f"  {name}: {line_cov:.1f}% line coverage")
+' || true
+        echo "  full report: $DERIVED_DATA_PATH/coverage-report.json"
+    else
+        echo "  ⚠️ xccov could not read the result bundle — skipping coverage summary."
+    fi
 fi
 
 exit $EXIT_CODE

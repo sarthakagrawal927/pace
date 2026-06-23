@@ -61,6 +61,21 @@ Architecture and per-file responsibilities: see [`AGENTS.md`](./AGENTS.md).
 
 Outputs a markdown table with n, min, p50, p95, max, mean for TTFSW (time-to-first-spoken-word) and TTFT (planner time-to-first-token). The number you publish is the number you measure on your own machine — paste straight into PRs, blog posts, or the landing page.
 
+## Test coverage
+
+Pace targets an **EXEMPLARY** testing tier: **> 80%** line coverage on core logic (parser, executor, memory, planner clients) and **> 70%** on UI. The suite is 818 tests across 103 files, and coverage is collected on every CI run.
+
+<!-- coverage badge placeholder — swap in a live badge once coverage gating is wired to a reporting backend -->
+![coverage](https://img.shields.io/badge/coverage-EXEMPLARY%20tier-blue)
+
+Run coverage locally:
+
+```bash
+./scripts/test-pace.sh --coverage
+```
+
+Per-component targets, local extraction details, and how CI enforces coverage: see [`docs/test-coverage.md`](./docs/test-coverage.md).
+
 ## License
 
 MIT — see [`LICENSE`](./LICENSE).
