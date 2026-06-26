@@ -1,10 +1,14 @@
 name: Deploy pace to Cloudflare Pages
 # Reproduces the manual deploy in website/package.json:
 #   npm run build && wrangler pages deploy dist --project-name pace
-# Trigger is workflow_dispatch ONLY for now — a push trigger will be added
-# after a verified manual dispatch run confirms the build + deploy is green.
+# CI deploy verified 2026-06-26 — auto-deploys on push to main + manual dispatch.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - '.github/workflows/deploy.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
