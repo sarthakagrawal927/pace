@@ -789,6 +789,34 @@ extension CompanionManager {
             return
         }
 
+        // Cron scheduling: "every 30 minutes check my calendar"
+        if let cronCommand = PaceCronCommandParser.parse(transcript) {
+            print("⏰ Cron voice command: \(cronCommand)")
+            handleCronCommand(cronCommand, transcript: transcript)
+            return
+        }
+
+        // Background agents: "in the background, draft a reply..."
+        if let bgCommand = PaceBackgroundAgentCommandParser.parse(transcript) {
+            print("🔄 Background-agent voice command: \(bgCommand)")
+            handleBackgroundAgentCommand(bgCommand, transcript: transcript)
+            return
+        }
+
+        // Meeting mode: "start meeting mode" / "stop meeting mode"
+        if let meetingCommand = PaceMeetingModeCommandParser.parse(transcript) {
+            print("🎙️ Meeting-mode voice command: \(meetingCommand)")
+            handleMeetingModeCommand(meetingCommand, transcript: transcript)
+            return
+        }
+
+        // Skills: "install the standup skill" / "run the standup skill"
+        if let skillCommand = PaceSkillCommandParser.parse(transcript) {
+            print("📋 Skill voice command: \(skillCommand)")
+            handleSkillCommand(skillCommand, transcript: transcript)
+            return
+        }
+
         // Fast-path chitchat ("hi pace", "thanks") with a canned response
         // — skips VLM + planner + agent loop entirely. ~2200ms → ~50ms.
         // Conservative: only fires when the classifier is confident
@@ -1008,6 +1036,7 @@ extension CompanionManager {
             var stepIndex = 0
             var currentTurnUserPrompt = transcript
             var pendingPostActionFeedbackText: String?
+            var turnFullResponseText: String = ""
             let streamingMailDraftDetector = PaceStreamingMailDraftDetector()
             let streamingPlannerFieldDetector = PaceStreamingPlannerFieldDetector()
 
@@ -1052,6 +1081,17 @@ extension CompanionManager {
                     // Useful when verifying that a perceived slowdown is
                     // (e.g.) screen capture vs. planner inference.
                     print("⏱  Step \(stepIndex) screen capture: \(screenCaptureElapsedMs)ms")
+                    // Record VLM latency on the first step (when the
+                    // screen analysis actually happens). Subsequent
+                    // steps in the same agent loop re-use the capture.
+                    if isFirstStep {
+                        let elementCount = prewarmedContextForStep?.enrichedAnalysesByScreenLabel
+                            .values.flatMap(\.elements).count ?? screenCaptures.count
+                        PaceTelemetryLog.recordVLMLatency(
+                            milliseconds: screenCaptureElapsedMs,
+                            elementCount: elementCount
+                        )
+                    }
 
                     // System prompt + thread-memory injection are cheap
                     // (no VLM call) so they're computed BEFORE the planner
@@ -1148,6 +1188,7 @@ extension CompanionManager {
                             break agentStepLoop
                         }
                         fullResponseText = raceWiringResult.fullResponseTextForActionParsing
+                        turnFullResponseText = fullResponseText
                         raceLiteWonSpokenText = raceWiringResult.liteWonSpokenText
                     } else {
                         // ---- Single-planner path (byte-identical to pre-race) ----
@@ -1259,9 +1300,21 @@ extension CompanionManager {
                         )
                         fullResponseText = singlePlannerResponseText
                     }
+                    turnFullResponseText = fullResponseText
                     let plannerSectionElapsedMs = Int(
                         Date().timeIntervalSince(plannerSectionStartedAt) * 1000
                     )
+                    // Record token throughput: tokens / seconds. Only
+                    // meaningful when the planner produced output.
+                    if plannerSectionElapsedMs > 0, !fullResponseText.isEmpty {
+                        let tokenEstimate = max(1, fullResponseText.split(separator: " ").count)
+                        let tps = Double(tokenEstimate) / (Double(plannerSectionElapsedMs) / 1000.0)
+                        PaceTelemetryLog.recordTokenThroughput(
+                            tokensPerSecond: tps,
+                            totalTokens: tokenEstimate,
+                            modelIdentifier: plannerClientForThisTurn.displayName
+                        )
+                    }
                     guard !Task.isCancelled else { return }
 
                     // Clear the amber bridge indicator now that the stream has finished.
@@ -1680,6 +1733,18 @@ extension CompanionManager {
 
             if !Task.isCancelled {
                 voiceState = .idle
+                // Record end-to-end turn latency: from the moment the
+                // agent loop Task started to the moment we flip to idle.
+                // This is the metric that matters to users — "how long
+                // from when I start talking to when Pace finishes."
+                let e2eElapsedMs = Int(Date().timeIntervalSince(turnStartedAt) * 1000)
+                let spokenWordCount = turnFullResponseText.split(separator: " ").count
+                let plannerTokenEstimate = cumulativeOutputTokenEstimate
+                PaceTelemetryLog.recordEndToEndLatency(
+                    milliseconds: e2eElapsedMs,
+                    spokenWordCount: spokenWordCount,
+                    plannerTokenCount: plannerTokenEstimate
+                )
                 // Keep the bubble up while TTS is still speaking so the
                 // user can read along, then fade ~800ms after audio ends.
                 let weakTTSClient = ttsClient
@@ -1947,5 +2012,128 @@ extension CompanionManager {
             outcome: "error",
             detail: "main planner/TTS path failed"
         )
+    }
+
+    // MARK: - Automation command handlers
+
+    func handleCronCommand(_ command: PaceCronCommand, transcript: String) {
+        let scheduler = PaceCronScheduler.shared
+        switch command {
+        case .add(let prompt, let displayName):
+            let task = PaceCronTask(
+                id: "cron-\(String(UUID().uuidString.prefix(8)))",
+                displayName: displayName,
+                intervalSeconds: 1800,
+                skipWeekends: false,
+                taskPrompt: prompt
+            )
+            scheduler.addTask(task)
+            if !scheduler.isEnabled { scheduler.setEnabled(true) }
+            Task {
+                try? await ttsClient.speakText("Scheduled. I'll \(prompt) every 30 minutes.")
+                voiceState = .idle
+            }
+        case .list:
+            if scheduler.tasks.isEmpty {
+                Task { try? await ttsClient.speakText("No recurring tasks scheduled."); voiceState = .idle }
+            } else {
+                let names = scheduler.tasks.map(\.displayName).joined(separator: ", ")
+                Task { try? await ttsClient.speakText("You have \(scheduler.tasks.count) recurring tasks: \(names)."); voiceState = .idle }
+            }
+        case .remove(let name):
+            if let taskToRemove = scheduler.tasks.first(where: { $0.displayName.contains(name) }) {
+                scheduler.removeTask(id: taskToRemove.id)
+            }
+            Task { try? await ttsClient.speakText("Removed."); voiceState = .idle }
+        case .enable:
+            scheduler.setEnabled(true)
+            Task { try? await ttsClient.speakText("Scheduling enabled."); voiceState = .idle }
+        case .disable:
+            scheduler.setEnabled(false)
+            Task { try? await ttsClient.speakText("Scheduling disabled."); voiceState = .idle }
+        }
+    }
+
+    func handleBackgroundAgentCommand(_ command: PaceBackgroundAgentCommand, transcript: String) {
+        let runner = PaceBackgroundAgentRunner.shared
+        switch command {
+        case .run(let prompt, let displayName):
+            let id = runner.enqueue(prompt: prompt, displayName: displayName)
+            Task {
+                try? await ttsClient.speakText("Running that in the background. I'll let you know when it's done.")
+                voiceState = .idle
+            }
+            print("🔄 Background agent \(id) enqueued: \(displayName)")
+        case .list:
+            if runner.tasks.isEmpty {
+                Task { try? await ttsClient.speakText("No background tasks."); voiceState = .idle }
+            } else {
+                let running = runner.tasks.filter { $0.state == .running }.count
+                let completed = runner.tasks.filter { $0.state == .completed }.count
+                Task { try? await ttsClient.speakText("\(running) running, \(completed) completed."); voiceState = .idle }
+            }
+        case .cancel(let name):
+            if let taskToCancel = runner.tasks.first(where: { $0.displayName.contains(name) }) {
+                runner.cancel(taskId: taskToCancel.id)
+            }
+            Task { try? await ttsClient.speakText("Cancelled."); voiceState = .idle }
+        }
+    }
+
+    func handleMeetingModeCommand(_ command: PaceMeetingModeCommand, transcript: String) {
+        let controller = PaceMeetingModeController.shared
+        switch command {
+        case .start:
+            PaceUserPreferencesStore.setBool(true, for: .isMeetingModeEnabled)
+            controller.isEnabled = true
+            Task {
+                await controller.start()
+                try? await ttsClient.speakText("Meeting mode on. I'm listening to system audio.")
+                voiceState = .idle
+            }
+        case .stop:
+            PaceUserPreferencesStore.setBool(false, for: .isMeetingModeEnabled)
+            controller.isEnabled = false
+            Task {
+                await controller.stop()
+                try? await ttsClient.speakText("Meeting mode off.")
+                voiceState = .idle
+            }
+        case .status:
+            let status = controller.state == .active ? "active" : "inactive"
+            Task { try? await ttsClient.speakText("Meeting mode is \(status)."); voiceState = .idle }
+        }
+    }
+
+    func handleSkillCommand(_ command: PaceSkillCommand, transcript: String) {
+        switch command {
+        case .list:
+            let skills = PaceSkillLoader.loadAllSkills()
+            if skills.isEmpty {
+                Task { try? await ttsClient.speakText("No skills installed."); voiceState = .idle }
+            } else {
+                let names = skills.map(\.name).joined(separator: ", ")
+                Task { try? await ttsClient.speakText("Available skills: \(names)."); voiceState = .idle }
+            }
+        case .run(let slug, let name):
+            let skills = PaceSkillLoader.loadAllSkills()
+            if let skill = skills.first(where: { $0.slug == slug || $0.name.lowercased() == name.lowercased() }) {
+                let prompt = PaceSkillLoader.toPlannerPrompt(skill)
+                Task { try? await ttsClient.speakText("Running the \(skill.name) skill."); }
+                // Route through the normal planner pipeline.
+                sendTranscriptToPlannerWithScreenshot(transcript: prompt)
+            } else {
+                Task { try? await ttsClient.speakText("I couldn't find a skill called \(name)."); voiceState = .idle }
+            }
+        case .install(let slug, let name):
+            // Skills are auto-discovered from the skills directory; no
+            // explicit install needed. Just confirm availability.
+            let skills = PaceSkillLoader.loadAllSkills()
+            if skills.contains(where: { $0.slug == slug || $0.name.lowercased() == name.lowercased() }) {
+                Task { try? await ttsClient.speakText("The \(name) skill is available."); voiceState = .idle }
+            } else {
+                Task { try? await ttsClient.speakText("No skill called \(name) was found."); voiceState = .idle }
+            }
+        }
     }
 }

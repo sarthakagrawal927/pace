@@ -1,0 +1,311 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Nav from "../components/Nav.astro";
+import Footer from "../components/Footer.astro";
+import ScrollProgress from "../components/ScrollProgress.astro";
+import MouseSpotlight from "../components/MouseSpotlight.astro";
+import CursorFollower from "../components/CursorFollower.astro";
+import PageEnhancements from "../components/PageEnhancements.astro";
+import { competitors, comparisonRechecked, type Competitor } from "../config/competitors";
+
+const description =
+  "How Pace compares to the other macOS voice agents — 16 products across cloud, hybrid, and on-device clusters. Open-source status, standout features, and where Pace differs. Honest, including where Pace is behind.";
+
+// Group by posture so the page reads as three clusters, not a flat list.
+const groups: { label: string; blurb: string; items: Competitor[] }[] = [
+  {
+    label: "Cloud",
+    blurb:
+      "Every turn hits someone else's data center. Fast to ship, costs per turn, needs an account.",
+    items: competitors.filter((c) => c.posture === "cloud"),
+  },
+  {
+    label: "Hybrid",
+    blurb:
+      "Local by default, cloud when you ask for it. The middle path — flexible, but the privacy posture depends on which tier you picked.",
+    items: competitors.filter((c) => c.posture === "hybrid"),
+  },
+  {
+    label: "On-device",
+    blurb:
+      "Fully local. The cluster Pace lives in. Zero bytes off the machine, zero per-turn cost, works on a plane.",
+    items: competitors.filter((c) => c.posture === "on-device"),
+  },
+];
+
+const postureColor: Record<string, string> = {
+  "on-device": "var(--color-positive)",
+  cloud: "var(--color-warning)",
+  hybrid: "var(--color-text-secondary)",
+};
+
+const licenseColor: Record<string, string> = {
+  MIT: "var(--color-positive)",
+  "Apache-2.0": "var(--color-positive)",
+  "Source-available": "var(--color-warning)",
+  Proprietary: "var(--color-text-muted)",
+  "No license yet": "var(--color-warning)",
+};
+---
+
+<BaseLayout
+  title="Pace compared — macOS voice agents, honest side-by-side"
+  description={description}
+  pathname="/compared"
+>
+  <ScrollProgress />
+  <MouseSpotlight />
+  <CursorFollower />
+  <PageEnhancements />
+
+  <Nav />
+
+  <main class="px-6 pt-32 md:pt-40 pb-24">
+    <div class="max-w-5xl mx-auto">
+      <!-- ── Hero ─────────────────────────────────────────────── -->
+      <p
+        class="text-sm uppercase tracking-widest text-[var(--color-text-muted)] font-mono mb-6"
+      >
+        The field
+      </p>
+
+      <h1 class="pace-display text-4xl md:text-6xl text-white mb-10 max-w-3xl">
+        Pace isn't the only one doing this. <em>Here's who else is</em>, and
+        what each one is actually good at.
+      </h1>
+
+      <div class="pace-prose mb-20">
+        <p>
+          A lot of macOS voice agents shipped in 2026. Most of them are
+          interesting. None of them are Pace. This page is the honest version
+          of that sentence — what each product does well, whether it's open
+          source, and where Pace diverges (including the places where Pace is
+          behind).
+        </p>
+        <p>
+          No checkmark grids. If you want a feature matrix, the repos are
+          linked. What follows is the shape of each product in your head, the
+          way you'd describe it to a friend.
+        </p>
+      </div>
+
+      <!-- ── Cluster legend ──────────────────────────────────── -->
+      <div class="pace-prose mb-24">
+        <p>
+          The field splits three ways. <strong>Cloud</strong> agents round-trip
+          every turn through someone else's servers. <strong>Hybrid</strong>
+          ones default local but let you opt into cloud. <strong>On-device</strong>
+          ones — the cluster Pace lives in — never leave your machine.
+        </p>
+      </div>
+
+      <!-- ── Per-cluster sections ────────────────────────────── -->
+      {
+        groups.map((group) => (
+          <section class="mb-28">
+            <div class="flex items-baseline gap-4 mb-3">
+              <h2 class="pace-display text-3xl md:text-4xl text-white">
+                <em>{group.label}</em>
+              </h2>
+              <span
+                class="text-xs font-mono uppercase tracking-widest"
+                style={`color: ${postureColor[group.label]}`}
+              >
+                {group.items.length} {group.items.length === 1 ? "product" : "products"}
+              </span>
+            </div>
+            <p class="pace-prose mb-14">{group.blurb}</p>
+
+            <div class="space-y-16">
+              {group.items.map((c, i) => (
+                <article id={c.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")} class="scroll-mt-28">
+                  <div class="grid md:grid-cols-[1fr_16rem] gap-6 md:gap-12 items-start">
+                    {/* Main column */}
+                    <div>
+                      <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2">
+                        <h3 class="pace-display text-2xl md:text-3xl text-white">
+                          {c.name}
+                        </h3>
+                        <a
+                          href={c.url}
+                          class="text-sm text-[var(--color-text-muted)] hover:text-white transition-colors underline decoration-[var(--color-border-subtle)] underline-offset-4"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {c.url.replace(/^https?:\/\//, "").replace(/\/$/, "")}
+                        </a>
+                      </div>
+                      <p class="text-[var(--color-text-secondary)] italic mb-6 max-w-xl">
+                        {c.tagline} — <span class="not-italic text-[var(--color-text-muted)]">{c.author}</span>
+                      </p>
+
+                      {/* Stack row */}
+                      <div class="flex flex-wrap gap-x-5 gap-y-1 text-xs font-mono text-[var(--color-text-muted)] mb-6">
+                        <span><span class="text-[var(--color-text-secondary)]">STT</span> · {c.stt}</span>
+                        <span><span class="text-[var(--color-text-secondary)]">Reasoner</span> · {c.reasoner}</span>
+                        <span><span class="text-[var(--color-text-secondary)]">TTS</span> · {c.tts}</span>
+                        <span>
+                          <span class="text-[var(--color-text-secondary)]">Screen</span> · {c.screenAware ? "yes" : "no"}
+                        </span>
+                      </div>
+
+                      {/* Standout features */}
+                      <p class="text-sm font-mono uppercase tracking-widest text-[var(--color-text-muted)] mb-3">
+                        What it's good at
+                      </p>
+                      <ul class="pace-prose list-none p-0 space-y-2 mb-8">
+                        {c.standoutFeatures.map((f) => (
+                          <li class="pl-5 relative">
+                            <span class="absolute left-0 top-[0.55em] w-2 h-px bg-[var(--color-accent)]" />
+                            {f}
+                          </li>
+                        ))}
+                      </ul>
+
+                      {/* Pace differs */}
+                      <div class="border-l-2 border-[var(--color-accent)] pl-5 py-1">
+                        <p class="text-sm font-mono uppercase tracking-widest text-[var(--color-text-muted)] mb-2">
+                          Where Pace differs
+                        </p>
+                        <p class="text-[var(--color-text-secondary)] leading-relaxed">
+                          {c.paceDiffers}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Marginalia column — license + posture card */}
+                    <aside class="pace-card p-5 md:sticky md:top-24">
+                      <div class="space-y-4 text-sm">
+                        <div>
+                          <p class="text-xs font-mono uppercase tracking-widest text-[var(--color-text-muted)] mb-1">
+                            Open source
+                          </p>
+                          <p class="text-white">
+                            {c.openSource ? "Yes" : "No"}
+                          </p>
+                        </div>
+                        <div>
+                          <p class="text-xs font-mono uppercase tracking-widest text-[var(--color-text-muted)] mb-1">
+                            License
+                          </p>
+                          <p style={`color: ${licenseColor[c.license]}`}>
+                            {c.license}
+                          </p>
+                        </div>
+                        <div>
+                          <p class="text-xs font-mono uppercase tracking-widest text-[var(--color-text-muted)] mb-1">
+                            Posture
+                          </p>
+                          <p style={`color: ${postureColor[c.posture]}`}>
+                            {c.posture}
+                          </p>
+                        </div>
+                      </div>
+                    </aside>
+                  </div>
+
+                  {/* Divider between items in a cluster */}
+                  {i < group.items.length - 1 && (
+                    <hr class="mt-16 border-[var(--color-border-subtle)]" />
+                  )}
+                </article>
+              ))}
+            </div>
+          </section>
+        ))
+      }
+
+      <!-- ── Closing: where Pace is behind ──────────────────── -->
+      <section class="border-t border-[var(--color-border-subtle)] pt-20 mt-10">
+        <p
+          class="text-sm uppercase tracking-widest text-[var(--color-text-muted)] font-mono mb-6"
+        >
+          The honest part
+        </p>
+
+        <h2 class="pace-display text-3xl md:text-5xl text-white mb-10 max-w-2xl">
+          Where Pace is <em>behind</em>, not ahead.
+        </h2>
+
+        <div class="pace-prose space-y-7">
+          <p>
+            <strong>No hotword.</strong> Clicky, OpenFelix, Ora, Agent!, Cursor
+            Voice, Dottie, and Vox all have wake-word or hotkey hands-free
+            activation. Pace is push-to-talk only. That's a real gap —
+            hands-free is a feature people actually want, and Pace doesn't
+            have it yet.
+          </p>
+          <p>
+            <strong>No background agents.</strong> Clicky's "clicky agent" runs
+            multi-step tasks while you keep working — build an app, file a
+            Linear ticket, draft a Gmail. Shiro spawns parallel sub-agents with
+            depth and budget guards. Pace's agent mode is synchronous: it does
+            the thing, then hands back control. Background execution is on the
+            roadmap, not in the shipping product.
+          </p>
+          <p>
+            <strong>Smaller VLM.</strong> Pace uses a 2B screen-referential
+            model. Ora runs Qwen 3.5 VL, ORB runs Gemma 4 E4B — both heavier
+            and likely more accurate on dense screens. A "phone-a-friend" OCR
+            tier for the heavy cases is the planned answer, not a shipping one.
+          </p>
+          <p>
+            <strong>Accessibility API for screen understanding.</strong> Fazm
+            reads the structured AXUIElement tree instead of screenshotting —
+            more reliable and more token-efficient than Pace's VLM-screenshot
+            approach. Pace's VLM is more flexible (it can describe what it
+            sees), but Fazm's approach is worth studying as a complement.
+          </p>
+          <p>
+            <strong>Latency.</strong> RCLI's proprietary MetalRT engine hits
+            sub-200ms end-to-end voice latency and 550 tok/s. Pace hasn't
+            published comparable benchmarks. This is the most-trafficked
+            on-device competitor (1,523 stars) and sets the bar Pace should
+            measure against.
+          </p>
+          <p>
+            <strong>Distribution.</strong> Ora, OpenFelix, and OpenClicky ship
+            signed DMGs with Sparkle auto-updates. Pace now has a signed-DMG
+            release path in the script (set <code>PACE_DEVELOPER_ID</code> +
+            <code>PACE_NOTARY_PROFILE</code>), but no signed DMG has shipped
+            yet — current releases are ad-hoc zips.
+          </p>
+          <p>
+            <strong>Scheduled + proactive surfaces.</strong> OpenFelix ships
+            cron jobs and Telegram/Discord/Slack proactive alerts. Pace has
+            the restraint-gated morning brief and watch mode, but the
+            outbound-notification surface is narrower.
+          </p>
+          <p>
+            <strong>Self-modifying plugins.</strong> Samuel writes and
+            hot-loads its own plugins at runtime, then auto-repairs them on
+            failure. Pace's tool registry is static at launch. The
+            self-repair loop is the most interesting idea here — Pace's
+            recipe library is a fixed-catalog version of what Samuel does
+            dynamically.
+          </p>
+        </div>
+
+        <p class="pace-margin-note mt-12 max-w-md">
+          Rechecked {comparisonRechecked}.<br />
+          If anyone shipped something I missed or got cheaper since, email me
+          and I'll update this page.
+        </p>
+      </section>
+
+      <!-- ── CTA back to the landing ─────────────────────────── -->
+      <section class="text-center mt-32">
+        <p class="pace-display text-2xl md:text-3xl text-white mb-8 max-w-xl mx-auto">
+          The rest of the pitch — <em>what Pace actually does</em> — is on the
+          landing page.
+        </p>
+        <a href="/" class="pace-cta-primary">
+          See Pace
+          <span aria-hidden="true">→</span>
+        </a>
+      </section>
+    </div>
+  </main>
+
+  <Footer />
+</BaseLayout>

@@ -327,6 +327,7 @@ enum CompanionSystemPrompt {
 
     available tools:
     \(PaceToolRegistry.plannerToolListText)
+    \(CompanionSystemPrompt.dynamicPluginSection())
 
     external MCP tools:
     - use {"tool":"mcp","server":"altic","name":"notes_create","arguments":{"title":"Idea","body":"note text"}} when the user asks for an integration that is exposed by a configured MCP server.
@@ -429,4 +430,15 @@ enum CompanionSystemPrompt {
       - if you used sources, weave the most important one into the prose ("according to the anthropic docs..."). don't dump a links list at the end.
       - if the user's question is ambiguous, ask ONE clarifying question instead of guessing — pace will surface it as the spoken reply.
     """
+
+    /// Dynamic plugin tool documentation. Appended after the static
+    /// tool list so the planner knows about user-installed plugins
+    /// from `~/Library/Application Support/Pace/plugins/`. Returns an
+    /// empty string when no plugins are enabled (the common case),
+    /// so the prompt is unchanged for users who haven't installed any.
+    static func dynamicPluginSection() -> String {
+        let lines = PaceDynamicToolRegistry.shared.plannerPromptLines()
+        guard !lines.isEmpty else { return "" }
+        return "\n    dynamic plugins:\n    \(lines)\n"
+    }
 }

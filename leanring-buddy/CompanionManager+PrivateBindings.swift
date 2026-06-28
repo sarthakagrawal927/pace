@@ -113,6 +113,9 @@ extension CompanionManager {
     func attachBargeInAudioLevelSubscriptionIfNeeded() {
         guard bargeInAudioLevelCancellable == nil else { return }
         bargeInVAD.reset()
+        // Notify the VAD that TTS playback is active so the echo
+        // rejection window and raised threshold take effect.
+        bargeInVAD.setTTSPlaybackActive(true)
         bargeInAudioLevelCancellable = buddyDictationManager.audioLevelPublisher
             .sink { [weak self] normalizedLevel in
                 Task { @MainActor [weak self] in
@@ -125,6 +128,7 @@ extension CompanionManager {
     func detachBargeInAudioLevelSubscription() {
         bargeInAudioLevelCancellable?.cancel()
         bargeInAudioLevelCancellable = nil
+        bargeInVAD.setTTSPlaybackActive(false)
         bargeInVAD.reset()
     }
 
@@ -391,6 +395,8 @@ extension CompanionManager {
             responseOverlayManager.updateStreamingText("listening…")
 
             print("🎙️ PTT pressed — starting dictation (trigger=\(currentDictationTrigger))")
+            // Stamp PTT press for STT latency measurement.
+            pttPressedAt = Date()
             // Fire the screen-context pre-warm in parallel with dictation.
             // VLM + OCR run during the user's natural speech time (~2-5s)
             // and the result is awaited by the agent loop's first step —
@@ -477,6 +483,16 @@ extension CompanionManager {
                             self.liveSpeechDraft = finalTranscript
                             _ = PaceAPIAuditLog.shared.beginTurn()
                             print("🗣️ Companion received transcript: \(finalTranscript)")
+                            // Record STT latency: PTT press → final transcript.
+                            if let pressedAt = self.pttPressedAt {
+                                let sttMs = Int(Date().timeIntervalSince(pressedAt) * 1000)
+                                let wordCount = finalTranscript.split(separator: " ").count
+                                PaceTelemetryLog.recordSTTLatency(
+                                    milliseconds: sttMs,
+                                    transcriptWordCount: wordCount
+                                )
+                                self.pttPressedAt = nil
+                            }
                             PaceAnalytics.trackUserMessageSent(transcript: finalTranscript)
                             self.currentTurnHUDState = .understanding("classifying intent")
                             self.responseOverlayManager.updateStreamingText(finalTranscript)

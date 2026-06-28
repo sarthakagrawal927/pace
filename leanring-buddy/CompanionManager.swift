@@ -36,6 +36,9 @@ enum CompanionVoiceState {
 final class CompanionManager: ObservableObject {
     @Published var voiceState: CompanionVoiceState = .idle
     @Published var lastTranscript: String?
+    /// Timestamp of the most recent PTT press, used to measure STT
+    /// latency (time from key press → final transcript arrival).
+    var pttPressedAt: Date?
     /// The live speech transcript shown as an in-progress user bubble in the
     /// chat panel while the user is talking. Holds the streaming partial
     /// during listening, then the final transcript through the turn, and is
@@ -190,6 +193,10 @@ final class CompanionManager: ObservableObject {
     /// once the input is submitted or dismissed.
     @Published var isNotchChatInputFocused: Bool = false
     let overlayWindowManager = OverlayWindowManager()
+    /// Screen-edge glow border that shifts color with voice state.
+    /// Inspired by ORB's glow border phase indicator. Gated by the
+    /// `isGlowBorderEnabled` preference (default ON).
+    let glowBorderManager = GlowBorderManager()
 
     /// Tooltip-style bubble that follows the cursor and shows what's
     /// happening through the voice turn: "listening…", interim
@@ -770,6 +777,21 @@ final class CompanionManager: ObservableObject {
         areCursorAnnotationsEnabled = enabled
         PaceUserPreferencesStore.setBool(enabled, for: .areCursorAnnotationsEnabled)
         responseOverlayManager.setAnnotationsEnabled(enabled)
+    }
+
+    /// User preference for the screen-edge glow border. When toggled
+    /// at runtime, the glow border manager shows/hides immediately.
+    @Published var isGlowBorderEnabled: Bool = PaceUserPreferencesStore
+        .bool(.isGlowBorderEnabled, default: true)
+
+    func setGlowBorderEnabled(_ enabled: Bool) {
+        isGlowBorderEnabled = enabled
+        PaceUserPreferencesStore.setBool(enabled, for: .isGlowBorderEnabled)
+        glowBorderManager.setEnabled(
+            enabled,
+            screens: NSScreen.screens,
+            companionManager: self
+        )
     }
 
     func smokeSetCursorAnnotationsEnabled(_ enabled: Bool) -> Bool {

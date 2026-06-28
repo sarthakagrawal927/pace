@@ -1,0 +1,212 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Nav from "../components/Nav.astro";
+import Footer from "../components/Footer.astro";
+import ScrollProgress from "../components/ScrollProgress.astro";
+import MouseSpotlight from "../components/MouseSpotlight.astro";
+import CursorFollower from "../components/CursorFollower.astro";
+import PageEnhancements from "../components/PageEnhancements.astro";
+import releaseInfo from "../config/release-info.json";
+
+const description =
+  "Download Pace — the on-device macOS voice companion. Latest version, recent releases, and auto-update via Sparkle.";
+
+const latest = releaseInfo.latest;
+const releases = releaseInfo.releases ?? [];
+const releasesPageURL = releaseInfo.releasesPageURL;
+---
+
+<BaseLayout
+  title="Download Pace — macOS voice companion"
+  description={description}
+  pathname="/download"
+>
+  <ScrollProgress />
+  <MouseSpotlight />
+  <CursorFollower />
+  <PageEnhancements />
+
+  <Nav />
+
+  <main class="px-6 pt-32 md:pt-40 pb-24">
+    <div class="max-w-3xl mx-auto">
+      <!-- ── Hero ─────────────────────────────────────────────── -->
+      <p class="text-sm uppercase tracking-widest text-[var(--color-text-muted)] font-mono mb-6">
+        Download
+      </p>
+
+      <h1 class="pace-display text-4xl md:text-6xl text-white mb-8 max-w-2xl">
+        Get Pace <em>{latest?.version ?? ""}</em>
+      </h1>
+
+      <div class="pace-prose mb-12">
+        <p>
+          One zip. No installer, no drag-to-Applications ceremony — unzip,
+          double-click, grant the permissions it asks for. Pace lives in your
+          menu bar from there.
+        </p>
+        <p>
+          <strong>Updates itself.</strong> Once Pace is running, it checks the
+          appcast feed every hour and installs new versions automatically via
+          Sparkle. You won't need to come back to this page.
+        </p>
+      </div>
+
+      <!-- ── Download button ──────────────────────────────────── -->
+      {
+        latest && (
+          <div class="pace-card p-8 md:p-10 mb-16">
+            <div class="flex flex-col sm:flex-row items-start sm:items-center gap-6 sm:gap-8">
+              <a
+                href={latest.downloadURL}
+                class="pace-cta-primary text-lg whitespace-nowrap"
+                download
+              >
+                Download Pace {latest.version}
+                <span aria-hidden="true">↓</span>
+              </a>
+              <div class="text-sm text-[var(--color-text-muted)] font-mono space-y-1">
+                <p>{latest.lengthMB} MB · zip</p>
+                <p>macOS {latest.minimumSystemVersion}+ · Apple Silicon</p>
+                <p>Released {latest.displayDate}</p>
+              </div>
+            </div>
+
+            <div class="mt-8 pt-6 border-t border-[var(--color-border-subtle)]">
+              <p class="text-sm text-[var(--color-text-secondary)] leading-relaxed">
+                <strong class="text-white">Try it free.</strong> If your Mac has
+                Apple Intelligence, Pace runs against Apple's Foundation Models
+                tier at no cost. The $29 license is for the Pace-tuned local
+                model stack — buy it after you've tried it.
+              </p>
+              <a
+                href="/#pricing"
+                class="pace-cta-secondary text-sm mt-4 inline-flex"
+              >
+                Buy Pace — $29
+                <span aria-hidden="true">→</span>
+              </a>
+            </div>
+          </div>
+        )
+      }
+
+      <!-- ── Install steps ────────────────────────────────────── -->
+      <section class="mb-20">
+        <p class="text-sm uppercase tracking-widest text-[var(--color-text-muted)] font-mono mb-6">
+          After you download
+        </p>
+
+        <h2 class="pace-display text-2xl md:text-3xl text-white mb-8">
+          <em>Three steps</em>, then it's in your menu bar.
+        </h2>
+
+        <div class="pace-prose space-y-5">
+          <p>
+            <strong>1. Unzip.</strong> Double-click <code class="font-mono text-sm text-[var(--color-accent)]">Pace-{latest?.version ?? ""}.zip</code>.
+            You'll get <code class="font-mono text-sm text-[var(--color-accent)]">Pace.app</code>.
+          </p>
+          <p>
+            <strong>2. Open it.</strong> Double-click <code class="font-mono text-sm text-[var(--color-accent)]">Pace.app</code>.
+            macOS will ask about Accessibility, Microphone, and Screen Recording
+            permissions — grant all three. Pace needs them to hear you, see your
+            screen, and click for you.
+          </p>
+          <p>
+            <strong>3. Hold ctrl+option and talk.</strong> That's push-to-talk.
+            The first spoken word back arrives in about 420 milliseconds. Pace
+            lives in your menu bar from now on — no dock icon.
+          </p>
+        </div>
+
+        <p class="pace-margin-note mt-8 max-w-md">
+          Pace is ad-hoc signed (no Apple Developer Program). On first launch,
+          right-click → Open to bypass Gatekeeper. After that it's normal.
+        </p>
+      </section>
+
+      <!-- ── Recent releases ──────────────────────────────────── -->
+      {
+        releases.length > 0 && (
+          <section class="mb-20 border-t border-[var(--color-border-subtle)] pt-16">
+            <div class="flex items-baseline justify-between mb-8">
+              <p class="text-sm uppercase tracking-widest text-[var(--color-text-muted)] font-mono">
+                Recent releases
+              </p>
+              <a
+                href={releasesPageURL}
+                class="text-sm text-[var(--color-text-muted)] hover:text-white transition-colors underline decoration-[var(--color-border-subtle)] underline-offset-4"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                All releases →
+              </a>
+            </div>
+
+            <div class="space-y-1">
+              {releases.map((r: any) => (
+                <div class="flex items-center gap-4 py-3 border-b border-[var(--color-border-subtle)] last:border-0">
+                  <span class="font-mono text-sm text-white tabular-nums w-20 shrink-0">
+                    {r.version}
+                  </span>
+                  <span class="text-sm text-[var(--color-text-muted)] flex-1">
+                    {r.displayDate}
+                  </span>
+                  <span class="text-xs font-mono text-[var(--color-text-muted)] hidden sm:inline">
+                    {r.lengthMB} MB
+                  </span>
+                  <a
+                    href={r.downloadURL}
+                    class="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+                    download
+                    aria-label={`Download Pace ${r.version}`}
+                  >
+                    ↓
+                  </a>
+                </div>
+              ))}
+            </div>
+          </section>
+        )
+      }
+
+      <!-- ── Auto-update note ─────────────────────────────────── -->
+      <section class="border-t border-[var(--color-border-subtle)] pt-16">
+        <p class="text-sm uppercase tracking-widest text-[var(--color-text-muted)] font-mono mb-6">
+          Auto-update
+        </p>
+
+        <h2 class="pace-display text-2xl md:text-3xl text-white mb-8 max-w-xl">
+          You only download from this page <em>once</em>.
+        </h2>
+
+        <div class="pace-prose">
+          <p>
+            Pace uses <strong>Sparkle</strong> — the same auto-updater most
+            indie Mac apps use. Once it's installed, Pace pings a signed appcast
+            feed every hour. When a new version ships, it downloads, verifies
+            the EdDSA signature, and prompts you to relaunch. No App Store, no
+            notarization, no re-download from a website.
+          </p>
+          <p>
+            If you ever want to check manually: Settings → General →
+            "Check for updates…"
+          </p>
+        </div>
+      </section>
+
+      <!-- ── CTA back ─────────────────────────────────────────── -->
+      <section class="text-center mt-32">
+        <p class="pace-display text-xl md:text-2xl text-white mb-6 max-w-lg mx-auto">
+          Want to know what you're downloading <em>before</em> you download it?
+        </p>
+        <a href="/" class="pace-cta-secondary">
+          See what Pace does
+          <span aria-hidden="true">→</span>
+        </a>
+      </section>
+    </div>
+  </main>
+
+  <Footer />
+</BaseLayout>

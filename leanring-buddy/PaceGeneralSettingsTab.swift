@@ -109,6 +109,65 @@ struct PaceGeneralSettingsTab: View {
 
             morningBriefSubsection
                 .padding(.top, 18)
+
+            automationSubsection
+                .padding(.top, 18)
+        }
+    }
+
+    // MARK: - Automation subsection
+
+    /// Settings → General → Automation. Toggles for meeting mode,
+    /// cron scheduling, and dynamic plugins. All default OFF.
+    private var automationSubsection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Automation")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(DS.Colors.textSecondary)
+                .padding(.bottom, 6)
+
+            paceSettingsToggleRow(
+                title: "Meeting mode",
+                subtitle: "Capture system audio (excluding Pace) so Pace can listen during calls. Say \"start meeting mode\" or toggle here.",
+                isOn: Binding(
+                    get: { PaceUserPreferencesStore.bool(for: .isMeetingModeEnabled) },
+                    set: { newValue in
+                        PaceUserPreferencesStore.setBool(newValue, for: .isMeetingModeEnabled)
+                        Task { @MainActor in
+                            if newValue {
+                                PaceMeetingModeController.shared.isEnabled = true
+                                await PaceMeetingModeController.shared.start()
+                            } else {
+                                PaceMeetingModeController.shared.isEnabled = false
+                                await PaceMeetingModeController.shared.stop()
+                            }
+                        }
+                    }
+                )
+            )
+
+            paceSettingsToggleRow(
+                title: "Cron scheduling",
+                subtitle: "Run recurring planner tasks on a timer. Say \"every 30 minutes check my calendar\" to add a task.",
+                isOn: Binding(
+                    get: { PaceUserPreferencesStore.bool(for: .isCronSchedulerEnabled) },
+                    set: { newValue in
+                        PaceUserPreferencesStore.setBool(newValue, for: .isCronSchedulerEnabled)
+                        PaceCronScheduler.shared.setEnabled(newValue)
+                    }
+                )
+            )
+
+            paceSettingsToggleRow(
+                title: "Dynamic plugins",
+                subtitle: "Load user-installed tool plugins from ~/Library/Application Support/Pace/plugins/. Auto-repair failed commands via the planner.",
+                isOn: Binding(
+                    get: { PaceUserPreferencesStore.bool(.areDynamicPluginsEnabled, default: false) },
+                    set: { newValue in
+                        PaceUserPreferencesStore.setBool(newValue, for: .areDynamicPluginsEnabled)
+                    }
+                )
+            )
         }
     }
 

@@ -20,6 +20,17 @@
 //  to real coordinates. Coordinates can no longer be hallucinated
 //  because the model never writes coordinates — only indices.
 //
+//  Multi-step tool-calling (from Agent!/macOS26)
+//  ----------------------------------------------
+//  The original schema only supported a single point + single click.
+//  Agent! showed that Apple FM can do multi-step tool-calling where
+//  the model emits a sequence of tool calls that the agent loop
+//  executes one by one. We extend the schema with an optional
+//  `toolCalls` array — each entry is a tool name + JSON arguments.
+//  The agent loop serializes these into the same `<tool_calls>` JSON
+//  format that PaceActionTagParser already understands, so the
+//  existing execution path works unchanged.
+//
 //  Streaming caveat
 //  ----------------
 //  We were using `streamResponse(to: ..., generating: String.self)`
@@ -37,6 +48,16 @@ import FoundationModels
 
 @available(macOS 26.0, *)
 @Generable
+struct PaceFMToolCall {
+    @Guide(description: "Tool name from the available tools list. Must be one of: click, type, key, scroll, open_app, open_url, music, volume, brightness, calendar, reminder, create_note, append_note, compose_mail, create_reminder, create_calendar_event, clipboard_read, clipboard_write, download_file, run_flow, record_flow, mcp, draw_annotation, clear_annotations, undo.")
+    let tool: String
+
+    @Guide(description: "JSON object with the tool's arguments. Example: {\"x\":400,\"y\":300} for click, {\"text\":\"hello\"} for type, {\"app\":\"Safari\"} for open_app.")
+    let arguments: String
+}
+
+@available(macOS 26.0, *)
+@Generable
 struct PaceFMTurnResponse {
     @Guide(description: "What to say to the user, read aloud by text-to-speech. One or two short casual sentences. Lowercase, no markdown.")
     let spokenText: String
@@ -46,4 +67,48 @@ struct PaceFMTurnResponse {
 
     @Guide(description: "ID of an element to click. Use the integer in brackets from the element list. Use -1 if no click is requested or if the target is not in the element list. Only emit a non-negative value when the user explicitly asked to click, tap, or press something.")
     let clickElementId: Int
+
+    @Guide(description: "Optional list of tool calls for multi-step actions. Each call has a tool name and JSON arguments. Leave empty for simple point/click actions. The agent loop executes these in order after speaking.")
+    var toolCalls: [PaceFMToolCall]?
+}
+
+// MARK: - Tool call serialization
+
+@available(macOS 26.0, *)
+extension PaceFMTurnResponse {
+    /// Serialize the tool calls into the `<tool_calls>` JSON format
+    /// that PaceActionTagParser expects. Returns nil if no tool calls
+    /// are present.
+    func serializedToolCallsJSON() -> String? {
+        guard let calls = toolCalls, !calls.isEmpty else { return nil }
+
+        var jsonArray: [[String: Any]] = []
+        for call in calls {
+            // Parse the arguments string as JSON; if it fails, wrap
+            // it as a plain string value.
+            var args: [String: Any] = [:]
+            if let argsData = call.arguments.data(using: .utf8),
+               let parsed = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any] {
+                args = parsed
+            } else if !call.arguments.isEmpty {
+                args["value"] = call.arguments
+            }
+
+            var entry: [String: Any] = ["tool": call.tool]
+            for (key, value) in args {
+                entry[key] = value
+            }
+            jsonArray.append(entry)
+        }
+
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: [jsonArray],
+            options: [.fragmentsAllowed]
+        ),
+        let jsonString = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+
+        return "<tool_calls>\n\(jsonString)\n</tool_calls>"
+    }
 }

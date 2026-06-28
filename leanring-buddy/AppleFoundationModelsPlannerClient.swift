@@ -256,6 +256,14 @@ final class AppleFoundationModelsPlannerClient: BuddyPlannerClient {
             pieces.append("[CLICK:\(clickTarget.pixelX),\(clickTarget.pixelY)]")
         }
 
+        // Multi-step tool calls (from Agent!/macOS26). Serialize
+        // the optional toolCalls array into <tool_calls> JSON that
+        // PaceActionTagParser already understands. When nil or empty,
+        // this is a no-op — the existing point/click path is unchanged.
+        if let toolCallsJSON = typedResponse.serializedToolCallsJSON() {
+            pieces.append(toolCallsJSON)
+        }
+
         return pieces.joined(separator: " ")
     }
 

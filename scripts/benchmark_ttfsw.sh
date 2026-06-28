@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
 #
-# benchmark_ttfsw.sh — aggregate Pace's per-turn TTFSW (time-to-first-
-# spoken-word) numbers from the macOS unified log.
+# benchmark_ttfsw.sh — aggregate Pace's per-turn latency + throughput
+# numbers from the macOS unified log.
 #
 # Why this exists
 # ---------------
 # The product positioning is "the fastest voice tool in the market."
 # The research agent that surveyed the May-2026 landscape was explicit:
 # the speed claim is empty without a published, reproducible benchmark.
-# This script is the lowest-friction harness that turns each voice
-# interaction into a row in a latency distribution.
+# RCLI publishes sub-200ms E2E and 550 tok/s — this script lets Pace
+# publish comparable numbers.
 #
-# The Swift app emits two metrics on every turn:
+# The Swift app emits these metrics on every turn:
 #   - TTFSW=NNNms  (PTT-release → first TTS dispatch)  — the headline
 #   - TTFT=NNNms   (planner HTTP send → first SSE token) — diagnostic
-# Both go through `PaceTelemetryLog` (OSLog subsystem `com.pace.app`,
+#   - E2E=NNNms    (PTT press → last spoken word)       — user-perceived
+#   - STT=NNNms    (PTT press → transcript ready)       — STT isolation
+#   - VLM=NNNms    (screenshot → element map)           — VLM isolation
+#   - TPS=N.N      (planner tokens/second)              — throughput
+#   - RAG=NNNms    (retrieval query latency)            — RAG isolation
+# All go through `PaceTelemetryLog` (OSLog subsystem `com.pace.app`,
 # category `metrics`), which is what makes the unified log queryable.
 #
 # Usage
@@ -65,18 +70,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# stats_from_stream: read a stream of `TTFSW=NNNms` or `TTFT=NNNms`
-# strings on stdin, print a markdown row for each metric.
+# stats_from_stream: read a stream of metric strings on stdin,
+# print a markdown row for each metric. Handles both <key>=NNNms
+# (latency metrics) and TPS=N.N (throughput metric).
 stats_from_stream() {
     awk '
-        # Pull all <key>=<digits>ms occurrences from each line.
         {
-            while (match($0, /(TTFSW|TTFT)=([0-9]+)ms/)) {
+            while (match($0, /(TTFSW|TTFT|E2E|STT|VLM|RAG)=([0-9]+)ms/)) {
                 kv = substr($0, RSTART, RLENGTH)
                 eq = index(kv, "=")
                 key = substr(kv, 1, eq - 1)
                 value = substr(kv, eq + 1, length(kv) - eq - 2)
                 samples[key] = samples[key] " " value
+                $0 = substr($0, RSTART + RLENGTH)
+            }
+            while (match($0, /TPS=([0-9]+\.[0-9]+)/)) {
+                kv = substr($0, RSTART, RLENGTH)
+                eq = index(kv, "=")
+                value = substr(kv, eq + 1)
+                samples["TPS"] = samples["TPS"] " " value
                 $0 = substr($0, RSTART + RLENGTH)
             }
         }
@@ -85,7 +97,6 @@ stats_from_stream() {
             print "|---|---:|---:|---:|---:|---:|---:|"
             for (key in samples) {
                 n = split(samples[key], values, " ")
-                # Filter out the leading empty token from the leading space.
                 count = 0
                 for (i = 1; i <= n; i++) {
                     if (values[i] != "") {
@@ -95,7 +106,6 @@ stats_from_stream() {
                     }
                 }
                 if (count == 0) continue
-                # Insertion sort — fine for the sample counts we expect.
                 for (i = 2; i <= count; i++) {
                     cur = sorted[i]
                     j = i - 1
@@ -106,13 +116,19 @@ stats_from_stream() {
                     sorted[j+1] = cur
                 }
                 p50_idx = int((count + 1) / 2)
-                p95_idx = int((count * 95) / 100)
+                p95_idx = int(count * 95 / 100)
                 if (p95_idx < 1) p95_idx = 1
                 if (p95_idx > count) p95_idx = count
-                mean = int(sum / count)
-                printf "| %s | %d | %d | %d | %d | %d | %d |\n", \
-                    key, count, sorted[1], sorted[p50_idx], sorted[p95_idx], \
-                    sorted[count], mean
+                mean = sum / count
+                if (key == "TPS") {
+                    printf "| %s | %d | %.1f | %.1f | %.1f | %.1f | %.1f |\n", \
+                        key, count, sorted[1], sorted[p50_idx], sorted[p95_idx], \
+                        sorted[count], mean
+                } else {
+                    printf "| %s | %d | %d | %d | %d | %d | %d |\n", \
+                        key, count, sorted[1], sorted[p50_idx], sorted[p95_idx], \
+                        sorted[count], int(mean)
+                }
                 sum = 0
                 delete sorted
             }

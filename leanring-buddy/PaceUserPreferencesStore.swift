@@ -99,6 +99,24 @@ enum PaceUserPreferenceKey: String {
     /// first pace-tuned LoRA dataset. Default OFF — see
     /// docs/plans/pace-tuned-model-v1.md.
     case isPaceTunedTurnExportEnabled
+    /// Screen-edge glow border that shifts color with the agent's
+    /// voice state (listening → green, processing → blue, responding →
+    /// purple). Inspired by ORB's glow border phase indicator. Default
+    /// ON — it's subtle and helps users know what Pace is doing at a
+    /// glance without looking at the menu bar.
+    case isGlowBorderEnabled
+    /// Meeting mode: captures system audio via ScreenCaptureKit for
+    /// live transcription and action item extraction. Inspired by
+    /// Shiro's meeting mode. Default OFF — requires Screen Recording
+    /// permission and is privacy-sensitive.
+    case isMeetingModeEnabled
+    /// General cron scheduling: allows Pace to run tasks on a
+    /// recurring schedule (e.g. "every hour check my email"). Inspired
+    /// by OpenFelix's cron jobs. Default OFF.
+    case isCronSchedulerEnabled
+    /// Dynamic tool plugins: load user-installed shell-command plugins
+    /// from ~/Library/Application Support/Pace/plugins/. Default OFF.
+    case areDynamicPluginsEnabled
 }
 
 enum PaceUserPreferencesStore {
@@ -109,6 +127,11 @@ enum PaceUserPreferencesStore {
             return defaultValue
         }
         return stored
+    }
+
+    /// Read a boolean preference, defaulting to `false` when unset.
+    static func bool(for key: PaceUserPreferenceKey) -> Bool {
+        bool(key, default: false)
     }
 
     /// Read a boolean preference, falling back to an Info.plist string

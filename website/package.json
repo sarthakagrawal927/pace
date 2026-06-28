@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "dev": "astro dev",
-    "prebuild": "bash ../scripts/generate-og-image.sh || true",
+    "prebuild": "bash ../scripts/generate-og-image.sh || true && bash ../scripts/generate-release-info.sh || true",
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro",

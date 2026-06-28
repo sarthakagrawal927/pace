@@ -6,19 +6,34 @@
 #   1. Reads the current version from leanring-buddy/Info.plist (or bumps it).
 #   2. Builds Pace.app in Release with the test scheme's signing setup
 #      (ad-hoc signed — Sparkle verifies updates via EdDSA, not Apple).
-#   3. Zips Pace.app.
-#   4. Signs the zip with Sparkle's sign_update (uses the private key
+#   3. Packages Pace.app:
+#        - If a Developer ID cert + notary profile exist → signed DMG
+#          (codesign → create DMG → sign DMG → notarize → staple).
+#        - Otherwise → zip (ad-hoc, Sparkle EdDSA only).
+#   4. Signs the package with Sparkle's sign_update (uses the private key
 #      stored in your Mac's Keychain — generated once via Sparkle's
 #      generate_keys; see SUPublicEDKey in Info.plist for the matching
 #      public key).
-#   5. Pushes the zip + release notes to a GitHub Release via `gh`.
+#   5. Pushes the package + release notes to a GitHub Release via `gh`.
 #   6. Regenerates appcast.xml with the new entry on top.
 #   7. Commits + pushes appcast.xml so the SUFeedURL serves it instantly.
+#
+# Signed DMG mode (optional, requires Apple Developer Program):
+#   Set these env vars before running:
+#     PACE_NOTARY_PROFILE  — keychain profile name created via:
+#       xcrun notarytool store-credentials "pace-notary" \
+#         --apple-id <apple-id> --team-id <team-id> --password <app-password>
+#     PACE_DEVELOPER_ID    — Developer ID Application cert name
+#       (e.g. "Developer ID Application: Your Name (XXXXXXXXXX)")
+#   When both are set, the script produces a signed + notarized DMG
+#   instead of an ad-hoc zip. This passes Gatekeeper without the
+#   right-click → Open workaround.
 #
 # Prereqs (one-time):
 #   - Xcode with command-line tools (`xcode-select --install`)
 #   - `brew install gh`, `gh auth login` (personal GitHub account)
 #   - Sparkle EdDSA key already generated (was: ./generate_keys)
+#   - For signed DMG: Apple Developer Program + notarytool profile
 #
 # Usage:
 #   ./scripts/release-pace.sh           # bump patch, e.g. 0.3.0 → 0.3.1
@@ -225,23 +240,94 @@ codesign --verify --deep "${APP_PATH}" && echo "✅ Codesign verify passed"
 # kept.
 codesign -dvv "${APP_PATH}" 2>&1 | grep -E "Authority|Identifier" | head -3
 
-# ── Zip + Sparkle-sign ─────────────────────────────────────────────────────
+# ── Package (DMG if Developer ID + notary profile, else zip) ──────────────
 
-zip_name="Pace-${next_version}.zip"
-zip_path="${RELEASES_DIR}/${zip_name}"
-rm -f "$zip_path"
+# Signed DMG mode: requires PACE_DEVELOPER_ID (cert name) and
+# PACE_NOTARY_PROFILE (keychain profile for notarytool). When both
+# are present, produce a signed + notarized DMG that passes
+# Gatekeeper without the right-click → Open workaround.
+# Otherwise, fall back to the ad-hoc zip flow (Sparkle EdDSA only).
 
-echo "🗜  Zipping Pace.app → $zip_name"
-(cd "$(dirname "$APP_PATH")" && ditto -ck --sequesterRsrc --keepParent "$(basename "$APP_PATH")" "$zip_path")
+use_signed_dmg="no"
+if [ -n "${PACE_DEVELOPER_ID:-}" ] && [ -n "${PACE_NOTARY_PROFILE:-}" ]; then
+    # Verify the Developer ID cert actually exists in the keychain.
+    if security find-identity -p codesigning -v | grep -q "$PACE_DEVELOPER_ID"; then
+        use_signed_dmg="yes"
+    else
+        echo "⚠️  PACE_DEVELOPER_ID set but cert not found in keychain — falling back to zip."
+    fi
+fi
 
-echo "🔐 Signing zip with Sparkle EdDSA key..."
-signature_line=$("${SPARKLE_BIN_DIR}/sign_update" "$zip_path")
-echo "   ${signature_line}"
-ed_signature=$(echo "$signature_line" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')
-zip_size=$(echo "$signature_line" | sed -n 's/.*length="\([^"]*\)".*/\1/p')
-if [ -z "$ed_signature" ] || [ -z "$zip_size" ]; then
-    echo "❌ Could not parse sign_update output." >&2
-    exit 1
+package_name=""
+package_path=""
+
+if [ "$use_signed_dmg" = "yes" ]; then
+    # ── Signed DMG path ───────────────────────────────────────────────────
+    # Pattern borrowed from Ora (scripts/ci-release.sh) and OpenClicky
+    # (docs/APP_UPDATES.md): build ad-hoc first → deep-sign with Developer
+    # ID → create DMG → sign DMG → notarize → staple → Sparkle-sign.
+
+    echo "🔏 Deep-signing Pace.app with Developer ID..."
+    codesign --force --deep --sign "$PACE_DEVELOPER_ID" "$APP_PATH"
+    codesign --verify --deep "$APP_PATH" && echo "✅ Developer ID codesign verify passed"
+
+    dmg_name="Pace-${next_version}.dmg"
+    dmg_path="${RELEASES_DIR}/${dmg_name}"
+    rm -f "$dmg_path"
+    package_name="$dmg_name"
+    package_path="$dmg_path"
+
+    echo "💿 Creating DMG → $dmg_name"
+    # hdiutil create with -srcfolder is the simplest DMG creation path.
+    # -format UDZO gives compressed read-only DMG. -fs HFS+ for max compat.
+    hdiutil create \
+        -volname "Pace ${next_version}" \
+        -srcfolder "$APP_PATH" \
+        -fs HFS+ \
+        -format UDZO \
+        -imagekey zlib-level=9 \
+        "$dmg_path"
+
+    echo "🔏 Signing DMG with Developer ID..."
+    codesign --force --sign "$PACE_DEVELOPER_ID" "$dmg_path"
+    codesign --verify "$dmg_path" && echo "✅ DMG codesign verify passed"
+
+    echo "📤 Notarizing DMG with Apple (this can take 2-10 minutes)..."
+    xcrun notarytool submit "$dmg_path" \
+        --keychain-profile "$PACE_NOTARY_PROFILE" \
+        --wait
+
+    echo "📎 Stapling notarization ticket to DMG..."
+    xcrun stapler staple "$dmg_path"
+    xcrun stapler validate "$dmg_path" && echo "✅ Notarization staple validated"
+
+    echo "🔐 Signing DMG with Sparkle EdDSA key..."
+    signature_line=$("${SPARKLE_BIN_DIR}/sign_update" "$dmg_path")
+    echo "   ${signature_line}"
+    ed_signature=$(echo "$signature_line" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')
+    package_size=$(echo "$signature_line" | sed -n 's/.*length="\([^"]*\)".*/\1/p')
+    if [ -z "$ed_signature" ] || [ -z "$package_size" ]; then
+        echo "❌ Could not parse sign_update output." >&2
+        exit 1
+    fi
+else
+    # ── Ad-hoc zip path (existing behavior) ───────────────────────────────
+    package_name="Pace-${next_version}.zip"
+    package_path="${RELEASES_DIR}/${package_name}"
+    rm -f "$package_path"
+
+    echo "🗜  Zipping Pace.app → $package_name"
+    (cd "$(dirname "$APP_PATH")" && ditto -ck --sequesterRsrc --keepParent "$(basename "$APP_PATH")" "$package_path")
+
+    echo "🔐 Signing zip with Sparkle EdDSA key..."
+    signature_line=$("${SPARKLE_BIN_DIR}/sign_update" "$package_path")
+    echo "   ${signature_line}"
+    ed_signature=$(echo "$signature_line" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')
+    package_size=$(echo "$signature_line" | sed -n 's/.*length="\([^"]*\)".*/\1/p')
+    if [ -z "$ed_signature" ] || [ -z "$package_size" ]; then
+        echo "❌ Could not parse sign_update output." >&2
+        exit 1
+    fi
 fi
 
 # ── Publish GitHub Release ─────────────────────────────────────────────────

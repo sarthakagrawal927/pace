@@ -49,4 +49,39 @@ enum PaceTelemetryLog {
     ) {
         logger.info("RAG=\(milliseconds, privacy: .public)ms results=\(resultCount, privacy: .public) sources=\(sourceCount, privacy: .public)")
     }
+
+    /// End-to-end turn latency: PTT press → last spoken word. This is
+    /// the metric that matters to users — "how long from when I start
+    /// talking to when Pace finishes talking back." RCLI publishes
+    /// sub-200ms; this lets Pace publish a comparable number.
+    static func recordEndToEndLatency(
+        milliseconds: Int,
+        spokenWordCount: Int,
+        plannerTokenCount: Int
+    ) {
+        logger.info("E2E=\(milliseconds, privacy: .public)ms words=\(spokenWordCount, privacy: .public) tokens=\(plannerTokenCount, privacy: .public)")
+    }
+
+    /// STT latency: PTT press → final transcript ready. Isolates the
+    /// speech recognition cost from the rest of the pipeline.
+    static func recordSTTLatency(milliseconds: Int, transcriptWordCount: Int) {
+        logger.info("STT=\(milliseconds, privacy: .public)ms words=\(transcriptWordCount, privacy: .public)")
+    }
+
+    /// VLM latency: screenshot capture → element map ready. Isolates
+    /// the screen analysis cost.
+    static func recordVLMLatency(milliseconds: Int, elementCount: Int) {
+        logger.info("VLM=\(milliseconds, privacy: .public)ms elements=\(elementCount, privacy: .public)")
+    }
+
+    /// Token throughput: planner tokens generated per second. RCLI
+    /// publishes 550 tok/s with MetalRT; this lets Pace publish a
+    /// comparable number for LM Studio / Apple FM / Direct API.
+    static func recordTokenThroughput(
+        tokensPerSecond: Double,
+        totalTokens: Int,
+        modelIdentifier: String
+    ) {
+        logger.info("TPS=\(String(format: "%.1f", tokensPerSecond), privacy: .public) total=\(totalTokens, privacy: .public) model=\(modelIdentifier, privacy: .public)")
+    }
 }

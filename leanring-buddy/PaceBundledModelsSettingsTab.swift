@@ -21,6 +21,7 @@ import SwiftUI
 
 struct PaceBundledModelsSettingsTab: View {
     @ObservedObject var companionManager: CompanionManager
+    @ObservedObject private var downloadManager = PaceModelDownloadManager.shared
 
     @State private var isUsingMLXPlanner: Bool = false
     @State private var isUsingMLXEmbedder: Bool = false
@@ -54,7 +55,10 @@ struct PaceBundledModelsSettingsTab: View {
             Divider().background(DS.Colors.borderSubtle)
             qualityCaveatSection
         }
-        .onAppear(perform: loadCurrentSettings)
+        .onAppear {
+            loadCurrentSettings()
+            downloadManager.refreshStates()
+        }
     }
 
     // MARK: - VLM section (Phase C)
@@ -318,7 +322,71 @@ struct PaceBundledModelsSettingsTab: View {
                 .font(.system(size: 11))
                 .foregroundColor(DS.Colors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            // Pausable download row — shows current state + cancel/
+            // resume buttons. Inspired by ORB's pausable model
+            // downloads.
+            if isUsingMLXEmbedder, let entry = embedderDownloadEntry {
+                embedderDownloadRow(entry: entry)
+            }
         }
+    }
+
+    /// The MLX embedder's download entry from the shared download
+    /// manager, if it exists.
+    private var embedderDownloadEntry: PaceModelDownloadEntry? {
+        PaceModelDownloadManager.shared.entries.first(where: { $0.id == "mlx-embedder" })
+    }
+
+    /// Download state row with cancel/resume buttons.
+    private func embedderDownloadRow(entry: PaceModelDownloadEntry) -> some View {
+        HStack(spacing: 10) {
+            switch entry.state {
+            case .idle:
+                Button("Download now") {
+                    PaceModelDownloadManager.shared.startDownload(entryId: entry.id)
+                }
+                .buttonStyle(.bordered)
+                Text("Not downloaded yet — first use will fetch it.")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.textSecondary)
+            case .downloading:
+                ProgressView()
+                    .scaleEffect(0.7)
+                    .frame(width: 16, height: 16)
+                Text("Downloading…")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.textSecondary)
+                Spacer()
+                Button("Cancel") {
+                    PaceModelDownloadManager.shared.cancelDownload(entryId: entry.id)
+                }
+                .buttonStyle(.bordered)
+            case .cancelled:
+                Text("Download cancelled — partial cache saved.")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.textSecondary)
+                Spacer()
+                Button("Resume") {
+                    PaceModelDownloadManager.shared.startDownload(entryId: entry.id)
+                }
+                .buttonStyle(.bordered)
+            case .ready:
+                Text("Model ready")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.success)
+            case .failed(let message):
+                Text("Download failed: \(message)")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.warning)
+                Spacer()
+                Button("Retry") {
+                    PaceModelDownloadManager.shared.startDownload(entryId: entry.id)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(.top, 4)
     }
 
     // MARK: - Pace-tuned dataset export

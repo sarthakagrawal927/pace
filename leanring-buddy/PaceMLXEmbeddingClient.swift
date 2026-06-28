@@ -156,5 +156,26 @@ final class PaceMLXEmbeddingClient: PaceTextEmbedding {
         modelLoadLock.unlock()
         return loaded
     }
+
+    // MARK: - Pausable download support
+
+    /// Returns true if the model is already loaded in memory (cached
+    /// container). Used by `PaceModelDownloadManager` to set initial
+    /// state. A return of `false` doesn't mean the model isn't on
+    /// disk — just that it hasn't been loaded into Pace's process.
+    nonisolated static func isModelCached() -> Bool {
+        modelLoadLock.lock()
+        defer { modelLoadLock.unlock() }
+        return cachedModelContainer != nil
+    }
+
+    /// Pre-load the model without running an embedding. Used by
+    /// `PaceModelDownloadManager` to trigger the download in a
+    /// cancellable context. On success the model is cached in
+    /// `cachedModelContainer` and subsequent `embed()` calls skip
+    /// the load.
+    static func preloadModel(modelIdentifier: String) async throws {
+        _ = try await sharedModelContainer(modelIdentifier: modelIdentifier)
+    }
     #endif
 }

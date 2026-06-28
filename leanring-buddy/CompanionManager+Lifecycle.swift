@@ -221,6 +221,14 @@ extension CompanionManager {
             isOverlayVisible = true
         }
 
+        // Glow border: show on all screens once onboarded. The border
+        // is click-through and sits below the cursor overlay, so it
+        // doesn't interfere with interaction. Gated by the
+        // `isGlowBorderEnabled` preference (default ON).
+        if hasCompletedOnboarding {
+            glowBorderManager.show(onScreens: NSScreen.screens, companionManager: self)
+        }
+
         // Foreground app-usage journaling: permission-free NSWorkspace
         // observation that powers "how did I spend my time?" answers.
         // Honors the per-source retrieval toggle like every other source.
@@ -239,6 +247,114 @@ extension CompanionManager {
         refreshScreenTimeRetrievalDocumentsIfAllowed()
 
         startThreadMemoryIdleSweepTimer()
+
+        // — Automation module wiring —
+        // Each module is a standalone singleton that needs a callback
+        // to actually DO things in the app. We wire them here so the
+        // modules can execute planner turns, speak results, and react
+        // to preference changes without each needing its own Companion
+        // reference.
+
+        // 1. Background agent runner: when a background task fires, it
+        //    runs a headless planner turn and speaks the result when done.
+        PaceBackgroundAgentRunner.shared.executePlannerTurn = { [weak self] prompt in
+            guard let self else { return "Background agent: CompanionManager unavailable." }
+            return await withCheckedContinuation { continuation in
+                Task { @MainActor [weak self] in
+                    guard let self else {
+                        continuation.resume(returning: "Background agent: CompanionManager unavailable.")
+                        return
+                    }
+                    // Run a text-only planner turn (no screen capture).
+                    let systemPrompt = CompanionSystemPrompt.build(
+                        includeAgentMode: false,
+                        threadSummaryInjection: nil
+                    )
+                    do {
+                        let (text, _) = try await self.plannerClient.generateResponseStreaming(
+                            images: [],
+                            systemPrompt: systemPrompt,
+                            conversationHistory: [],
+                            userPrompt: prompt,
+                            onTextChunk: { _ in }
+                        )
+                        continuation.resume(returning: text)
+                    } catch {
+                        continuation.resume(returning: "Background agent error: \(error.localizedDescription)")
+                    }
+                }
+            }
+        }
+        PaceBackgroundAgentRunner.shared.speakResult = { [weak self] result in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let summary = String(result.prefix(200))
+                try? await self.ttsClient.speakText(summary)
+            }
+        }
+
+        // 2. Cron scheduler: each fire runs a planner turn and speaks
+        //    the result. Enabled by the isCronSchedulerEnabled pref.
+        PaceCronScheduler.shared.executeTaskCallback = { [weak self] task in
+            guard let self else { return }
+            let systemPrompt = CompanionSystemPrompt.build(
+                includeAgentMode: false,
+                threadSummaryInjection: nil
+            )
+            do {
+                let (text, _) = try await self.plannerClient.generateResponseStreaming(
+                    images: [],
+                    systemPrompt: systemPrompt,
+                    conversationHistory: [],
+                    userPrompt: task.taskPrompt,
+                    onTextChunk: { _ in }
+                )
+                let summary = String(text.prefix(200))
+                try? await self.ttsClient.speakText(summary)
+            } catch {
+                try? await self.ttsClient.speakText("Scheduled task failed: \(error.localizedDescription)")
+            }
+        }
+        if PaceUserPreferencesStore.bool(for: .isCronSchedulerEnabled) {
+            PaceCronScheduler.shared.setEnabled(true)
+        }
+
+        // 3. Dynamic tool registry: auto-repair callback generates a
+        //    fixed command via the planner when a plugin's shell
+        //    command fails.
+        PaceDynamicToolRegistry.shared.generatePluginFix = { [weak self] plugin, errorMessage in
+            guard let self else { return nil }
+            let prompt = "The plugin '\(plugin.name)' failed with error: \(errorMessage). The plugin command template is: \(plugin.command). Generate a corrected shell command that achieves the same goal. Reply with ONLY the command, no explanation."
+            let systemPrompt = CompanionSystemPrompt.build(
+                includeAgentMode: false,
+                threadSummaryInjection: nil
+            )
+            do {
+                let (text, _) = try await self.plannerClient.generateResponseStreaming(
+                    images: [],
+                    systemPrompt: systemPrompt,
+                    conversationHistory: [],
+                    userPrompt: prompt,
+                    onTextChunk: { _ in }
+                )
+                let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .replacingOccurrences(of: "```", with: "")
+                    .replacingOccurrences(of: "bash", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return cleaned.isEmpty ? nil : cleaned
+            } catch {
+                return nil
+            }
+        }
+
+        // 4. Meeting mode: resume across launches when the user left it on.
+        if PaceUserPreferencesStore.bool(for: .isMeetingModeEnabled) {
+            PaceMeetingModeController.shared.isEnabled = true
+            Task { @MainActor in
+                await PaceMeetingModeController.shared.start()
+            }
+        }
+
 
         // Daily morning brief — opt-in. The scheduler stays inert
         // (no timer, no fire) until the user enables it in Settings.
